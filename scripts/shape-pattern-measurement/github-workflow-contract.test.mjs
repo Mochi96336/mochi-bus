@@ -41,8 +41,9 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(unset).toBeGreaterThan(acquisition)
     expect(live).toBeGreaterThan(unset)
     expect(replay).toBeGreaterThan(live)
-    expect(measurement.slice(unset)).not.toContain('TDX_CLIENT_ID')
-    expect(measurement.slice(unset)).not.toContain('TDX_CLIENT_SECRET')
+    const afterUnset = measurement.slice(measurement.indexOf('\n', unset) + 1)
+    expect(afterUnset).not.toContain('TDX_CLIENT_ID')
+    expect(afterUnset).not.toContain('TDX_CLIENT_SECRET')
   })
 
   it('uses the reviewed nine-city plus InterCity protocol and three fresh replay processes', () => {
