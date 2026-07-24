@@ -46,6 +46,13 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(measurement).toContain('deterministicContentHash')
   })
 
+  it('binds every verified report to the exact workflow checkout commit', () => {
+    const measurement = stepBlock('Run credentialed measurement gate')
+    expect(measurement).toContain('metadata.repositoryMainSha')
+    expect(measurement).toContain('process.env.GITHUB_SHA')
+    expect(measurement).toContain('Report source commit differs from workflow checkout')
+  })
+
   it('keeps raw data in runner temp and uploads only the verified artifact directory', () => {
     const measurement = stepBlock('Run credentialed measurement gate')
     const upload = stepBlock('Upload verified measurement reports')
