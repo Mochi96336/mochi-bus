@@ -35,6 +35,7 @@ lerna-debug.log*
 .DS_Store
 /.transit-snapshot/
 /.a6-production-acceptance/
+/.tdx-measurement/
 
 # playwright
 /test-results/

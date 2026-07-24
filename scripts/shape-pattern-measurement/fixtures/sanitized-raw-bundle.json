@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 2,
+  "fetchedAt": "2026-07-01T00:00:00.000Z",
+  "sources": [
+    {
+      "scope": "city",
+      "city": "Taipei",
+      "stopOfRoute": [
+        {
+          "RouteUID": "TPE-R1",
+          "SubRouteUID": "TPE-SR1",
+          "Direction": 0,
+          "Stops": [
+            { "StopUID": "TPE-A", "StopSequence": 1, "StopPosition": { "PositionLon": 121.5000, "PositionLat": 25.0400 } },
+            { "StopUID": "TPE-B", "StopSequence": 2, "StopPosition": { "PositionLon": 121.5100, "PositionLat": 25.0450 } },
+            { "StopUID": "TPE-C", "StopSequence": 3, "StopPosition": { "PositionLon": 121.5200, "PositionLat": 25.0500 } }
+          ],
+          "UpdateTime": "2026-07-01T00:00:00+08:00"
+        },
+        {
+          "RouteUID": "TPE-R2",
+          "SubRouteUID": "TPE-SR2",
+          "Direction": 2,
+          "Stops": [
+            { "StopUID": "TPE-D", "StopSequence": 1, "StopPosition": { "PositionLon": 121.6000, "PositionLat": 25.0600 } },
+            { "StopUID": "TPE-E", "StopSequence": 2, "StopPosition": { "PositionLon": 121.6100, "PositionLat": 25.0700 } },
+            { "StopUID": "TPE-F", "StopSequence": 3, "StopPosition": { "PositionLon": 121.6000, "PositionLat": 25.0800 } }
+          ],
+          "UpdateTime": "2026-07-01T00:00:00+08:00"
+        }
+      ],
+      "shapes": [
+        {
+          "RouteUID": "TPE-R1",
+          "SubRouteUID": "TPE-SR1",
+          "Direction": 0,
+          "Coordinates": [[121.5000, 25.0400], [121.5100, 25.0450], [121.5200, 25.0500]],
+          "UpdateTime": "2026-07-01T00:00:00+08:00"
+        },
+        {
+          "RouteUID": "TPE-R2",
+          "SubRouteUID": "TPE-SR2",
+          "Direction": 2,
+          "Coordinates": [[121.6000, 25.0600], [121.6100, 25.0700], [121.6000, 25.0800], [121.5900, 25.0700], [121.6000, 25.0600]],
+          "UpdateTime": "2026-07-01T00:00:00+08:00"
+        }
+      ]
+    }
+  ]
+}
