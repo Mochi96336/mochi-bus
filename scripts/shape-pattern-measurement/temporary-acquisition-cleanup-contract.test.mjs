@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, readdir, rm } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMeasurementReport, publishMeasurementReport } from './report.mjs'
@@ -152,6 +152,6 @@ describe('temporary resource acquisition cleanup', () => {
       temporaryPath: expect.stringMatching(/^\./),
     }])
     expect(JSON.stringify(error)).not.toContain('raw cleanup detail')
-    expect((await readdir(root)).map(basename).some((name) => name.startsWith('.'))).toBe(true)
+    expect((await readdir(root)).some((name) => name.startsWith('.'))).toBe(true)
   })
 })
