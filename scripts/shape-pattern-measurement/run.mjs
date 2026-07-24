@@ -51,6 +51,9 @@ export async function runMeasurement(options, dependencies = {}) {
     source = null
     emitProgress(progress, candidateSummary(candidateBundle))
 
+    const materializedPartitions = candidateBundle.partitions
+    candidateBundle.partitions = releasingPartitions(materializedPartitions, progress)
+
     const repositoryMainSha = dependencies.repositoryMainSha ?? await resolveRepositoryMainSha()
     const report = await (dependencies.createMeasurementReport ?? createMeasurementReport)({
       candidateBundle,
@@ -163,6 +166,31 @@ function candidateSummary(candidateBundle) {
     totalPatternCount: partitions.reduce((sum, partition) => sum + partition.stats.patternCount, 0),
     totalShapeCount: partitions.reduce((sum, partition) => sum + partition.stats.shapeCount, 0),
     largestPartitions,
+  }
+}
+
+function* releasingPartitions(partitions, progress) {
+  for (const partition of partitions) {
+    const identity = {
+      partitionId: partition.partitionId,
+      sourceScope: partition.sourceScope,
+      city: partition.city,
+      direction: partition.direction,
+      patternCount: partition.stats.patternCount,
+      shapeCount: partition.stats.shapeCount,
+      minSideCount: partition.stats.minSideCount,
+      candidateMultiplicity: partition.stats.candidateMultiplicity,
+    }
+    emitProgress(progress, { phase: 'partition-start', ...identity })
+    let completed = false
+    try {
+      yield partition
+      completed = true
+    } finally {
+      if (Array.isArray(partition.patterns)) partition.patterns.length = 0
+      if (Array.isArray(partition.shapes)) partition.shapes.length = 0
+      emitProgress(progress, { phase: completed ? 'partition-complete' : 'partition-aborted', ...identity })
+    }
   }
 }
 
