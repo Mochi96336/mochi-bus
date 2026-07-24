@@ -361,14 +361,20 @@ export async function publishMeasurementReport(report, reportRoot, dependencies 
   const atomicWriter = dependencies.atomicWriter ?? atomicWrite
   const validateDirectory = dependencies.validateDirectory ?? validateTemporaryReportDirectory
   const makeTemporary = dependencies.mkdtemp ?? mkdtemp
+  const canonicalize = dependencies.realpath ?? realpath
   const renameDirectory = dependencies.rename ?? rename
   const removeDirectory = dependencies.rm ?? rm
   const paths = await prepareReportPublicationPaths(reportRoot, report.metadata.runId)
   if (await exists(paths.finalDirectory)) throw new Error(`Report run already exists: ${report.metadata.runId}`)
   const temporaryDirectory = await makeTemporary(paths.temporaryPrefix)
-  const resolvedTemporary = await realpath(temporaryDirectory)
-  assertStrictChild(paths.resolvedRoot, resolvedTemporary, 'Temporary report directory')
+  const requestedTemporary = resolve(temporaryDirectory)
+  let cleanupTarget = null
   try {
+    assertStrictChild(paths.resolvedRoot, requestedTemporary, 'Temporary report directory')
+    cleanupTarget = requestedTemporary
+    const resolvedTemporary = await canonicalize(requestedTemporary)
+    assertStrictChild(paths.resolvedRoot, resolvedTemporary, 'Temporary report directory')
+    cleanupTarget = resolvedTemporary
     const contents = reportFileContents(report)
     for (const file of REPORT_FILES) await atomicWriter(join(resolvedTemporary, file), contents[file])
     await validateDirectory(resolvedTemporary)
@@ -393,10 +399,11 @@ export async function publishMeasurementReport(report, reportRoot, dependencies 
     await renameDirectory(resolvedTemporary, paths.finalDirectory)
     return paths.finalDirectory
   } catch (error) {
+    if (cleanupTarget === null) throw error
     try {
-      await removeDirectory(resolvedTemporary, { recursive: true, force: true })
+      await removeDirectory(cleanupTarget, { recursive: true, force: true })
     } catch {
-      throw attachCleanupFailure(error, { stage: 'report-temporary-cleanup', temporaryPath: resolvedTemporary })
+      throw attachCleanupFailure(error, { stage: 'report-temporary-cleanup', temporaryPath: cleanupTarget })
     }
     throw error
   }
