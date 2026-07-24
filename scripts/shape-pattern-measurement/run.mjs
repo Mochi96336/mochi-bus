@@ -16,13 +16,15 @@ import { stableStringify } from './util.mjs'
 
 const execFileAsync = promisify(execFile)
 const OWNERSHIP_MARKER = '.measurement-run-owner'
+const NOOP_PROGRESS = () => undefined
 
 export async function runMeasurement(options, dependencies = {}) {
   const generatedOwnership = await createOwnedGeneratedChild(options.generatedRoot)
+  const progress = dependencies.progress ?? NOOP_PROGRESS
   let primaryError = null
   let result = null
   try {
-    const source = options.replay
+    let source = options.replay
       ? await (dependencies.replayRawBundle ?? replayRawBundle)({ rawDir: options.rawDir })
       : await (dependencies.fetchRawBundle ?? fetchRawBundle)({
           cities: options.cities,
@@ -31,24 +33,38 @@ export async function runMeasurement(options, dependencies = {}) {
           concurrency: options.fetchConcurrency,
           fetcher: dependencies.fetcher,
           credentials: dependencies.credentials,
-          progress: dependencies.progress,
+          progress,
         })
-    if (options.replay) assertReplayScope(options, source.manifest)
-    const candidateBundle = buildCandidatePartitions(source.bundle)
+    const rawManifest = source.manifest
+    if (options.replay) assertReplayScope(options, rawManifest)
+
+    let rawBundle = source.bundle
+    const buildCandidates = dependencies.buildCandidatePartitions ?? buildCandidatePartitions
+    const candidateBundle = buildCandidates(rawBundle)
+
+    // The raw TDX object graph is substantially larger than the normalized matcher
+    // candidates. Measurement owns the replay result and deliberately severs that
+    // graph before any matcher invocation so both representations are never retained
+    // for the complete multi-hour run.
+    Reflect.set(source, 'bundle', null)
+    rawBundle = null
+    source = null
+    emitProgress(progress, candidateSummary(candidateBundle))
+
     const repositoryMainSha = dependencies.repositoryMainSha ?? await resolveRepositoryMainSha()
     const report = await (dependencies.createMeasurementReport ?? createMeasurementReport)({
       candidateBundle,
-      rawManifest: source.manifest,
+      rawManifest,
       options: {
         ...options,
-        cities: [...source.manifest.cities],
-        includeIntercity: source.manifest.includeIntercity,
+        cities: [...rawManifest.cities],
+        includeIntercity: rawManifest.includeIntercity,
         generatedRunDir: generatedOwnership.child,
       },
       repositoryMainSha,
-    })
+    }, { progress })
     const runDir = await (dependencies.publishMeasurementReport ?? publishMeasurementReport)(report, options.reportDir)
-    result = { report, runDir, candidateBundle, manifest: source.manifest }
+    result = { report, runDir, manifest: rawManifest }
   } catch (error) {
     primaryError = error
   }
@@ -122,6 +138,40 @@ export async function cleanupOwnedGeneratedChild(ownership, { rawDir, reportDir 
   await rm(resolvedChild, { recursive: true, force: false })
 }
 
+function candidateSummary(candidateBundle) {
+  const partitions = Array.isArray(candidateBundle?.partitions) ? candidateBundle.partitions : []
+  const largestPartitions = [...partitions]
+    .sort((left, right) =>
+      (right.stats?.minSideCount ?? 0) - (left.stats?.minSideCount ?? 0)
+      || (right.stats?.candidateMultiplicity ?? 0) - (left.stats?.candidateMultiplicity ?? 0)
+      || left.partitionId.localeCompare(right.partitionId))
+    .slice(0, 20)
+    .map((partition) => ({
+      partitionId: partition.partitionId,
+      sourceScope: partition.sourceScope,
+      city: partition.city,
+      direction: partition.direction,
+      patternCount: partition.stats.patternCount,
+      shapeCount: partition.stats.shapeCount,
+      minSideCount: partition.stats.minSideCount,
+      candidateMultiplicity: partition.stats.candidateMultiplicity,
+    }))
+  return {
+    phase: 'candidate-summary',
+    partitionCount: partitions.length,
+    rejectedSourceRecordCount: Array.isArray(candidateBundle?.rejected) ? candidateBundle.rejected.length : 0,
+    totalPatternCount: partitions.reduce((sum, partition) => sum + partition.stats.patternCount, 0),
+    totalShapeCount: partitions.reduce((sum, partition) => sum + partition.stats.shapeCount, 0),
+    largestPartitions,
+  }
+}
+
+function emitProgress(progress, entry) {
+  try { progress(entry) } catch {
+    // Progress is diagnostic-only and must not replace measurement settlement.
+  }
+}
+
 function assertStrictOwnedChild(root, child) {
   const path = relative(root, child)
   if (path === '' || path === '..' || path.startsWith(`..${sep}`)) {
@@ -148,6 +198,10 @@ async function resolveRepositoryMainSha() {
   throw new Error('Unable to determine repository revision')
 }
 
+function writeProgress(entry) {
+  process.stdout.write(`${stableStringify(entry)}\n`)
+}
+
 async function main() {
   let options
   try {
@@ -156,7 +210,7 @@ async function main() {
       process.stdout.write(helpText)
       return
     }
-    const result = await runMeasurement(options)
+    const result = await runMeasurement(options, { progress: writeProgress })
     process.stdout.write(`${stableStringify({ phase: 'complete', runDir: result.runDir, runId: result.report.metadata.runId })}\n`)
   } catch (error) {
     const record = safeErrorRecord(error)
