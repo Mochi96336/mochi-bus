@@ -64,7 +64,7 @@ function candidatePartition(index) {
   const shapeId = `city-Taipei:shape:s${index}`
   return {
     partitionId: String(index).repeat(24),
-    key: `city\0Taipei\0${routeUid}\00`,
+    key: ['city', 'Taipei', routeUid, '0'].join('\0'),
     sourceScope: 'city',
     city: 'Taipei',
     routeUid,
