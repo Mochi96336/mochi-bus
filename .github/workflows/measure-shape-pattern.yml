@@ -1,0 +1,233 @@
+name: Measure Shape-to-pattern matcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type MEASURE to run the credentialed gate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shape-pattern-measurement
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Run credentialed measurement gate
+        shell: bash
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          MEASUREMENT_ROOT: ${{ runner.temp }}/shape-pattern-measurement-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
+            echo 'Credentialed measurement must run from main.' >&2
+            exit 1
+          }
+          [[ "${INPUT_CONFIRMATION}" == "MEASURE" ]] || {
+            echo 'Credentialed measurement requires confirmation MEASURE.' >&2
+            exit 1
+          }
+          [[ -n "${TDX_CLIENT_ID}" && -n "${TDX_CLIENT_SECRET}" ]] || {
+            echo 'TDX repository secrets are not configured.' >&2
+            exit 1
+          }
+
+          raw_dir="${MEASUREMENT_ROOT}/raw"
+          reports_dir="${MEASUREMENT_ROOT}/reports"
+          generated_dir="${MEASUREMENT_ROOT}/generated"
+          logs_dir="${MEASUREMENT_ROOT}/logs"
+          artifact_dir="${MEASUREMENT_ROOT}/artifact"
+          mkdir -p "${reports_dir}" "${generated_dir}" "${logs_dir}" \
+            "${artifact_dir}/reports" "${artifact_dir}/verification"
+
+          extract_run_dir() {
+            node - "$1" <<'NODE'
+          const fs = require('node:fs')
+          const file = process.argv[2]
+          const lines = fs.readFileSync(file, 'utf8').trim().split(/\r?\n/).reverse()
+          for (const line of lines) {
+            try {
+              const record = JSON.parse(line)
+              if (record?.phase === 'complete' && typeof record.runDir === 'string' && record.runDir) {
+                process.stdout.write(`${record.runDir}\n`)
+                process.exit(0)
+              }
+            } catch {
+              // npm and progress output may contain non-JSON lines.
+            }
+          }
+          process.stderr.write('Measurement output did not contain a completion record.\n')
+          process.exit(1)
+          NODE
+          }
+
+          run_measurement() {
+            local label="$1"
+            shift
+            local log_file="${logs_dir}/${label}.jsonl"
+            node scripts/shape-pattern-measurement/run.mjs "$@" | tee "${log_file}" >&2
+            extract_run_dir "${log_file}"
+          }
+
+          live_dir="$(run_measurement live-fetch \
+            --cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty \
+            --include-intercity \
+            --raw-dir "${raw_dir}" \
+            --report-dir "${reports_dir}" \
+            --generated-dir "${generated_dir}" \
+            --warmup 1 \
+            --iterations 1 \
+            --top-outliers 20)"
+          unset TDX_CLIENT_ID TDX_CLIENT_SECRET
+
+          plain_dir="$(run_measurement replay-uninstrumented \
+            --replay \
+            --raw-dir "${raw_dir}" \
+            --report-dir "${reports_dir}" \
+            --generated-dir "${generated_dir}" \
+            --warmup 2 \
+            --iterations 5 \
+            --top-outliers 20)"
+
+          matcher_sha="$(node -e "const fs=require('node:fs');const c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync('src/domain/map/shape-pattern-matcher.ts')).digest('hex'))")"
+
+          instrumented_dir="$(run_measurement replay-instrumented \
+            --replay \
+            --instrumented \
+            --matcher-sha "${matcher_sha}" \
+            --raw-dir "${raw_dir}" \
+            --report-dir "${reports_dir}" \
+            --generated-dir "${generated_dir}" \
+            --warmup 2 \
+            --iterations 5 \
+            --top-outliers 20)"
+
+          verify_report() {
+            local label="$1"
+            local run_dir="$2"
+            local target="${artifact_dir}/reports/$(basename "${run_dir}")"
+            cp -R -- "${run_dir}" "${target}"
+            node scripts/shape-pattern-measurement/verify-report.mjs "${target}" \
+              | tee "${artifact_dir}/verification/${label}.json"
+          }
+
+          verify_report live-fetch "${live_dir}"
+          verify_report replay-uninstrumented "${plain_dir}"
+          verify_report replay-instrumented "${instrumented_dir}"
+
+          node - "${artifact_dir}" <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const artifactDir = process.argv[2]
+          const roles = [
+            ['live-fetch', 'uninstrumented'],
+            ['replay-uninstrumented', 'uninstrumented'],
+            ['replay-instrumented', 'instrumented'],
+          ]
+          const expectedCities = [
+            'Taipei', 'NewTaipei', 'Taoyuan', 'Keelung', 'Taichung',
+            'Tainan', 'Kaohsiung', 'Chiayi', 'MiaoliCounty',
+          ]
+          const reports = roles.map(([role, expectedMode]) => {
+            const file = path.join(artifactDir, 'verification', `${role}.json`)
+            const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+            if (record.phase !== 'verified' || record.mode !== expectedMode) {
+              throw new Error(`Unexpected verification identity for ${role}`)
+            }
+            if (JSON.stringify(record.selectedCities) !== JSON.stringify(expectedCities)
+              || record.includeIntercity !== true) {
+              throw new Error(`Unexpected measurement scope for ${role}`)
+            }
+            for (const key of [
+              'matcherSourceSha256', 'matcherSourceGitBlobSha1',
+              'bundleContentHash', 'deterministicContentHash',
+            ]) {
+              if (typeof record[key] !== 'string' || !/^[a-f0-9]+$/.test(record[key])) {
+                throw new Error(`Invalid ${key} for ${role}`)
+              }
+            }
+            const metadataFile = path.join(artifactDir, 'reports', record.runId, 'metadata.json')
+            const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'))
+            if (metadata.runId !== record.runId
+              || metadata.matcherSourceSha256 !== record.matcherSourceSha256
+              || metadata.matcherSourceGitBlobSha1 !== record.matcherSourceGitBlobSha1
+              || metadata.provenance?.bundleContentHash !== record.bundleContentHash
+              || metadata.deterministicContentHash !== record.deterministicContentHash) {
+              throw new Error(`Artifact report identity differs from verification for ${role}`)
+            }
+            if (metadata.repositoryMainSha !== process.env.GITHUB_SHA) {
+              throw new Error('Report source commit differs from workflow checkout')
+            }
+            return { role, repositoryMainSha: metadata.repositoryMainSha, ...record }
+          })
+          for (const key of [
+            'repositoryMainSha', 'matcherSourceSha256',
+            'matcherSourceGitBlobSha1', 'bundleContentHash',
+          ]) {
+            if (new Set(reports.map((report) => report[key])).size !== 1) {
+              throw new Error(`${key} differs across measurement modes`)
+            }
+          }
+          if (new Set(reports.map((report) => report.runId)).size !== reports.length) {
+            throw new Error('Measurement run IDs are not unique')
+          }
+          const index = {
+            schemaVersion: 1,
+            sourceCommit: process.env.GITHUB_SHA,
+            workflowRunId: process.env.GITHUB_RUN_ID,
+            workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            reports,
+          }
+          fs.writeFileSync(path.join(artifactDir, 'index.json'), `${JSON.stringify(index, null, 2)}\n`, { mode: 0o600 })
+          const summary = [
+            '## Shape matcher credentialed measurement',
+            '',
+            `- Source commit: \`${index.sourceCommit}\``,
+            `- Dataset bundle: \`${reports[0].bundleContentHash}\``,
+            `- Matcher SHA-256: \`${reports[0].matcherSourceSha256}\``,
+            `- Reports: ${reports.map((report) => `\`${report.role}:${report.runId}\``).join(', ')}`,
+            '',
+            'Production integration remains blocked pending report review.',
+            '',
+          ].join('\n')
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary)
+          NODE
+
+          test ! -e "${artifact_dir}/raw"
+          test ! -e "${artifact_dir}/generated"
+          test ! -e "${artifact_dir}/logs"
+          rm -rf "${raw_dir}" "${generated_dir}" "${logs_dir}" "${reports_dir}"
+      - name: Upload verified measurement reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shape-pattern-measurement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/shape-pattern-measurement-${{ github.run_id }}-${{ github.run_attempt }}/artifact
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+      - name: Cleanup measurement workspace
+        if: always()
+        shell: bash
+        env:
+          MEASUREMENT_ROOT: ${{ runner.temp }}/shape-pattern-measurement-${{ github.run_id }}-${{ github.run_attempt }}
+        run: rm -rf "${MEASUREMENT_ROOT}"
