@@ -75,16 +75,33 @@ export async function runMeasurement(options, dependencies = {}) {
   return result
 }
 
-export async function createOwnedGeneratedChild(generatedRoot) {
+export async function createOwnedGeneratedChild(generatedRoot, {
+  makeTemporary = mkdtemp,
+  writeMarker = writeFile,
+  removeDirectory = rm,
+  createToken = randomUUID,
+} = {}) {
   const root = resolve(generatedRoot)
   await mkdir(root, { recursive: true })
   const rootStat = await lstat(root)
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Generated root must be a real directory')
-  const child = await mkdtemp(join(root, 'run-'))
-  const token = randomUUID()
-  const marker = join(child, OWNERSHIP_MARKER)
-  await writeFile(marker, `${token}\n`, { flag: 'wx', mode: 0o600 })
-  return { root, child, marker, token }
+  const child = await makeTemporary(join(root, 'run-'))
+  try {
+    const token = createToken()
+    const marker = join(child, OWNERSHIP_MARKER)
+    await writeMarker(marker, `${token}\n`, { flag: 'wx', mode: 0o600 })
+    return { root, child, marker, token }
+  } catch (error) {
+    try {
+      await removeDirectory(child, { recursive: true, force: true })
+    } catch {
+      throw attachCleanupFailure(error, {
+        stage: 'generated-run-initialization-cleanup',
+        temporaryPath: child,
+      })
+    }
+    throw error
+  }
 }
 
 export async function cleanupOwnedGeneratedChild(ownership, { rawDir, reportDir }) {
