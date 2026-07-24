@@ -89,7 +89,17 @@ jobs:
             extract_run_dir "${log_file}"
           }
 
-          live_dir="$(run_measurement live-fetch \
+          node scripts/shape-pattern-measurement/acquire-raw.mjs \
+            --cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty \
+            --include-intercity \
+            --raw-dir "${raw_dir}" \
+            --report-dir "${reports_dir}" \
+            --generated-dir "${generated_dir}" \
+            | tee "${logs_dir}/acquire-raw.jsonl" >&2
+          unset TDX_CLIENT_ID TDX_CLIENT_SECRET
+
+          live_dir="$(run_measurement live-acquisition-uninstrumented \
+            --replay \
             --cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty \
             --include-intercity \
             --raw-dir "${raw_dir}" \
@@ -98,10 +108,11 @@ jobs:
             --warmup 1 \
             --iterations 1 \
             --top-outliers 20)"
-          unset TDX_CLIENT_ID TDX_CLIENT_SECRET
 
           plain_dir="$(run_measurement replay-uninstrumented \
             --replay \
+            --cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty \
+            --include-intercity \
             --raw-dir "${raw_dir}" \
             --report-dir "${reports_dir}" \
             --generated-dir "${generated_dir}" \
@@ -113,6 +124,8 @@ jobs:
 
           instrumented_dir="$(run_measurement replay-instrumented \
             --replay \
+            --cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty \
+            --include-intercity \
             --instrumented \
             --matcher-sha "${matcher_sha}" \
             --raw-dir "${raw_dir}" \
@@ -131,7 +144,7 @@ jobs:
               | tee "${artifact_dir}/verification/${label}.json"
           }
 
-          verify_report live-fetch "${live_dir}"
+          verify_report live-acquisition-uninstrumented "${live_dir}"
           verify_report replay-uninstrumented "${plain_dir}"
           verify_report replay-instrumented "${instrumented_dir}"
 
@@ -140,7 +153,7 @@ jobs:
           const path = require('node:path')
           const artifactDir = process.argv[2]
           const roles = [
-            ['live-fetch', 'uninstrumented'],
+            ['live-acquisition-uninstrumented', 'uninstrumented'],
             ['replay-uninstrumented', 'uninstrumented'],
             ['replay-instrumented', 'instrumented'],
           ]
