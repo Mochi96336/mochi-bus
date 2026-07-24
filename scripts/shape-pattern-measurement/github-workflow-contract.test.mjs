@@ -22,7 +22,7 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(source).toMatch(/^    timeout-minutes: 180$/m)
   })
 
-  it('requires deliberate confirmation and injects TDX secrets only into the measurement step', () => {
+  it('requires deliberate confirmation and limits TDX secrets to live acquisition', () => {
     const measurement = stepBlock('Run credentialed measurement gate')
     expect(source).toContain('description: Type MEASURE to run the credentialed gate')
     expect(measurement).toContain('INPUT_CONFIRMATION: ${{ inputs.confirmation }}')
@@ -32,6 +32,13 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(measurement).toContain('[[ "${INPUT_CONFIRMATION}" == "MEASURE" ]]')
     expect(source.match(/secrets\.TDX_CLIENT_ID/g)).toHaveLength(1)
     expect(source.match(/secrets\.TDX_CLIENT_SECRET/g)).toHaveLength(1)
+
+    const live = measurement.indexOf('live_dir="$(run_measurement live-fetch')
+    const unset = measurement.indexOf('unset TDX_CLIENT_ID TDX_CLIENT_SECRET')
+    const replay = measurement.indexOf('plain_dir="$(run_measurement replay-uninstrumented')
+    expect(live).toBeGreaterThanOrEqual(0)
+    expect(unset).toBeGreaterThan(live)
+    expect(replay).toBeGreaterThan(unset)
   })
 
   it('uses the reviewed nine-city plus InterCity protocol and verified two-mode replay', () => {
