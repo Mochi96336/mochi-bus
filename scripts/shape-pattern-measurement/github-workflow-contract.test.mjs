@@ -49,7 +49,7 @@ describe('credentialed Shape matcher measurement workflow', () => {
     const measurement = stepBlock('Run credentialed measurement gate')
     expect(measurement).toContain('--cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty')
     expect(measurement).toContain('--include-intercity')
-    expect(measurement.match(/run_measurement /g)).toHaveLength(4) // function definition plus three invocations
+    expect(measurement.match(/run_measurement /g)).toHaveLength(3)
     expect(measurement.match(/--replay/g)).toHaveLength(3)
     expect(measurement).toContain('--instrumented')
     expect(measurement).toContain('--matcher-sha "${matcher_sha}"')
