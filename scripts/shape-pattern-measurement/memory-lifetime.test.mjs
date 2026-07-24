@@ -2,7 +2,6 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createMeasurementReport } from './report.mjs'
 import { runMeasurement } from './run.mjs'
 
 const roots = []
@@ -93,41 +92,17 @@ function candidatePartition(index) {
   }
 }
 
-function fakeLoader(onSecondInvoke) {
-  let invocation = 0
-  return async () => ({
-    sourceSha256: '2'.repeat(64),
-    sourceGitBlobSha1: '3'.repeat(40),
-    loaderTimings: { sourceVerificationTimeMs: 0, transpileTimeMs: 0, importTimeMs: 0 },
-    invoke: (patterns, shapes) => {
-      invocation += 1
-      if (invocation === 2) onSecondInvoke()
-      return {
-        matches: [{
-          patternId: patterns[0].patternId,
-          shapeId: shapes[0].shapeId,
-          basis: 'exact-identity',
-          costMeters: null,
-          metrics: null,
-        }],
-        unresolved: [],
-        rejectedShapes: [],
-        unusedShapeIds: [],
-      }
-    },
-    takeCollectorError: () => null,
-    dispose: async () => undefined,
-    outputPath: 'generated-test.mjs',
-  })
+function replaySource() {
+  return {
+    bundle: { schemaVersion: 2, fetchedAt: '2026-07-24T00:00:00.000Z', sources: [] },
+    manifest: rawManifest(),
+  }
 }
 
 describe('measurement working-set ownership', () => {
   it('detaches the verified raw bundle before report measurement begins', async () => {
     const root = await workspace()
-    const source = {
-      bundle: { schemaVersion: 2, fetchedAt: '2026-07-24T00:00:00.000Z', sources: [] },
-      manifest: rawManifest(),
-    }
+    const source = replaySource()
     const candidateBundle = { partitions: [], rejected: [], rejectionCounts: {} }
     const buildCandidates = vi.fn(() => candidateBundle)
     const createReport = vi.fn(async ({ candidateBundle: received }) => {
@@ -148,39 +123,43 @@ describe('measurement working-set ownership', () => {
     expect(createReport).toHaveBeenCalledTimes(1)
   })
 
-  it('releases each measured partition before invoking the next partition', async () => {
+  it('releases each measured partition before yielding the next partition', async () => {
     const root = await workspace()
+    const source = replaySource()
     const first = candidatePartition(1)
     const second = candidatePartition(2)
     const candidateBundle = { partitions: [first, second], rejected: [], rejectionCounts: {} }
     const progress = vi.fn()
+    const createReport = vi.fn(async ({ candidateBundle: received }) => {
+      let index = 0
+      for (const partition of received.partitions) {
+        if (index === 1) {
+          expect(first.patterns).toEqual([])
+          expect(first.shapes).toEqual([])
+        }
+        expect(partition.patterns).toHaveLength(1)
+        expect(partition.shapes).toHaveLength(1)
+        index += 1
+      }
+      expect(index).toBe(2)
+      return { metadata: { runId: 'partition-release-test' } }
+    })
 
-    const report = await createMeasurementReport({
-      candidateBundle,
-      rawManifest: rawManifest(),
-      options: {
-        instrumented: false,
-        expectedMatcherSha256: null,
-        generatedRunDir: root.generatedRoot,
-        warmup: 0,
-        iterations: 1,
-        topOutliers: 2,
-      },
+    await runMeasurement(runOptions(root), {
+      replayRawBundle: async () => source,
+      buildCandidatePartitions: () => candidateBundle,
+      createMeasurementReport: createReport,
+      publishMeasurementReport: async () => join(root.reportDir, 'partition-release-test'),
       repositoryMainSha: '1'.repeat(40),
-    }, {
-      loadMatcherModule: fakeLoader(() => {
-        expect(first.patterns).toEqual([])
-        expect(first.shapes).toEqual([])
-      }),
       progress,
     })
 
-    expect(report.partitions).toHaveLength(2)
     expect(first.patterns).toEqual([])
     expect(first.shapes).toEqual([])
     expect(second.patterns).toEqual([])
     expect(second.shapes).toEqual([])
     expect(progress.mock.calls.map(([entry]) => entry.phase)).toEqual([
+      'candidate-summary',
       'partition-start', 'partition-complete',
       'partition-start', 'partition-complete',
     ])
