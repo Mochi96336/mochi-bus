@@ -124,9 +124,10 @@ jobs:
           verify_report() {
             local label="$1"
             local run_dir="$2"
-            node scripts/shape-pattern-measurement/verify-report.mjs "${run_dir}" \
+            local target="${artifact_dir}/reports/$(basename "${run_dir}")"
+            cp -R -- "${run_dir}" "${target}"
+            node scripts/shape-pattern-measurement/verify-report.mjs "${target}" \
               | tee "${artifact_dir}/verification/${label}.json"
-            cp -R -- "${run_dir}" "${artifact_dir}/reports/$(basename "${run_dir}")"
           }
 
           verify_report live-fetch "${live_dir}"
@@ -164,9 +165,24 @@ jobs:
                 throw new Error(`Invalid ${key} for ${role}`)
               }
             }
-            return { role, ...record }
+            const metadataFile = path.join(artifactDir, 'reports', record.runId, 'metadata.json')
+            const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'))
+            if (metadata.runId !== record.runId
+              || metadata.matcherSourceSha256 !== record.matcherSourceSha256
+              || metadata.matcherSourceGitBlobSha1 !== record.matcherSourceGitBlobSha1
+              || metadata.provenance?.bundleContentHash !== record.bundleContentHash
+              || metadata.deterministicContentHash !== record.deterministicContentHash) {
+              throw new Error(`Artifact report identity differs from verification for ${role}`)
+            }
+            if (metadata.repositoryMainSha !== process.env.GITHUB_SHA) {
+              throw new Error('Report source commit differs from workflow checkout')
+            }
+            return { role, repositoryMainSha: metadata.repositoryMainSha, ...record }
           })
-          for (const key of ['matcherSourceSha256', 'matcherSourceGitBlobSha1', 'bundleContentHash']) {
+          for (const key of [
+            'repositoryMainSha', 'matcherSourceSha256',
+            'matcherSourceGitBlobSha1', 'bundleContentHash',
+          ]) {
             if (new Set(reports.map((report) => report[key])).size !== 1) {
               throw new Error(`${key} differs across measurement modes`)
             }
