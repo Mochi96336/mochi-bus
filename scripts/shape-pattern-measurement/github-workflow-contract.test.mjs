@@ -46,6 +46,15 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(measurement).toContain('deterministicContentHash')
   })
 
+  it('verifies the exact report copies that cross the artifact boundary', () => {
+    const measurement = stepBlock('Run credentialed measurement gate')
+    const copy = measurement.indexOf('cp -R -- "${run_dir}" "${target}"')
+    const verify = measurement.indexOf('verify-report.mjs "${target}"')
+    expect(copy).toBeGreaterThanOrEqual(0)
+    expect(verify).toBeGreaterThan(copy)
+    expect(measurement).not.toContain('verify-report.mjs "${run_dir}"')
+  })
+
   it('binds every verified report to the exact workflow checkout commit', () => {
     const measurement = stepBlock('Run credentialed measurement gate')
     expect(measurement).toContain('metadata.repositoryMainSha')
