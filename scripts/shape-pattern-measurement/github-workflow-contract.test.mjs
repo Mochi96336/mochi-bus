@@ -22,7 +22,7 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(source).toMatch(/^    timeout-minutes: 180$/m)
   })
 
-  it('requires deliberate confirmation and limits TDX secrets to live acquisition', () => {
+  it('requires deliberate confirmation and limits TDX secrets to a separate acquisition process', () => {
     const measurement = stepBlock('Run credentialed measurement gate')
     expect(source).toContain('description: Type MEASURE to run the credentialed gate')
     expect(measurement).toContain('INPUT_CONFIRMATION: ${{ inputs.confirmation }}')
@@ -33,19 +33,24 @@ describe('credentialed Shape matcher measurement workflow', () => {
     expect(source.match(/secrets\.TDX_CLIENT_ID/g)).toHaveLength(1)
     expect(source.match(/secrets\.TDX_CLIENT_SECRET/g)).toHaveLength(1)
 
-    const live = measurement.indexOf('live_dir="$(run_measurement live-fetch')
+    const acquisition = measurement.indexOf('node scripts/shape-pattern-measurement/acquire-raw.mjs')
     const unset = measurement.indexOf('unset TDX_CLIENT_ID TDX_CLIENT_SECRET')
+    const live = measurement.indexOf('live_dir="$(run_measurement live-acquisition-uninstrumented')
     const replay = measurement.indexOf('plain_dir="$(run_measurement replay-uninstrumented')
-    expect(live).toBeGreaterThanOrEqual(0)
-    expect(unset).toBeGreaterThan(live)
-    expect(replay).toBeGreaterThan(unset)
+    expect(acquisition).toBeGreaterThanOrEqual(0)
+    expect(unset).toBeGreaterThan(acquisition)
+    expect(live).toBeGreaterThan(unset)
+    expect(replay).toBeGreaterThan(live)
+    expect(measurement.slice(unset)).not.toContain('TDX_CLIENT_ID')
+    expect(measurement.slice(unset)).not.toContain('TDX_CLIENT_SECRET')
   })
 
-  it('uses the reviewed nine-city plus InterCity protocol and verified two-mode replay', () => {
+  it('uses the reviewed nine-city plus InterCity protocol and three fresh replay processes', () => {
     const measurement = stepBlock('Run credentialed measurement gate')
     expect(measurement).toContain('--cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty')
     expect(measurement).toContain('--include-intercity')
-    expect(measurement.match(/--replay/g)).toHaveLength(2)
+    expect(measurement.match(/run_measurement /g)).toHaveLength(4) // function definition plus three invocations
+    expect(measurement.match(/--replay/g)).toHaveLength(3)
     expect(measurement).toContain('--instrumented')
     expect(measurement).toContain('--matcher-sha "${matcher_sha}"')
     expect(measurement.match(/verify-report\.mjs/g)).toHaveLength(1)
