@@ -1,6 +1,6 @@
 # Mochi Bus 生產可觀測性與故障復原實作狀態 — 2026-07-22
 
-> 本文件是目前 repository implementation tracker，不是即時 production health dashboard，也不取代 2026-07-19 的審計判斷。狀態於 2026-07-26 重新核對 `main` commit `7481ec742dcc84b203b61e5d5ac3a2bc8e0b9c9f`。Repository 能力、PR checks、Deploy workflow 結果與 production acceptance 是不同證據層級；沒有 durable workflow／artifact 證據時，不得把「已合併」寫成「production 現在健康」。
+> 本文件是目前 repository implementation tracker，不是即時 production health dashboard，也不取代 2026-07-19 的審計判斷。狀態於 2026-07-26 重新核對 `main` commit `7996e8026006278b1fb3de6db63ee2a8e4cdd4ab`。Repository 能力、PR checks、Deploy workflow 結果與 production acceptance 是不同證據層級；沒有 durable workflow／artifact 證據時，不得把「已合併」寫成「production 現在健康」。
 
 原始審計的故障模型、telemetry contract、decision matrix 與三階段方案，保留在 [2026-07-19 immutable audit snapshot](https://github.com/a20030824/mochi-bus/blob/c76d75a454d1c552b90e31fa6cedb90df5805dbb/docs/audits/2026-07-19-production-observability-recovery-audit.md)。
 
@@ -75,8 +75,7 @@ Shape-to-pattern matcher 的 production integration 不屬於 A1–A9。其量�
 
 ### Repository settings
 
-1. `main` ruleset 的 **Require branches to be up to date before merging** 狀態只存在 GitHub setting；tracker 不把程式碼 PR 當成設定證據。
-2. 觀察 `Visual regression` 經過一般 UI 變更的穩定度，再決定是否加入 required status checks。
+1. 觀察 `Visual regression` 經過一般 UI 變更的穩定度，再決定是否加入 required status checks。
 
 ### Product／operations capability
 
