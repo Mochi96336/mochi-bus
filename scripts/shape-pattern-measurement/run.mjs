@@ -49,14 +49,20 @@ export async function runMeasurement(options, dependencies = {}) {
     Reflect.set(source, 'bundle', null)
     rawBundle = null
     source = null
-    emitProgress(progress, candidateSummary(candidateBundle))
+
+    // Compute each static geometry descriptor once. Sorting comparators must not rescan
+    // the largest stop/coordinate arrays repeatedly before formal matcher measurement.
+    const partitionPlans = candidateBundle.partitions.map((partition) => ({
+      partition,
+      geometry: partitionGeometry(partition),
+    }))
+    emitProgress(progress, candidateSummary(candidateBundle, partitionPlans))
 
     // Formal report records are sorted canonically before publication. Execution order
     // is therefore free to front-load the largest deterministic geometry working sets,
     // making an unbounded exact projection partition fail early with useful evidence.
-    const materializedPartitions = [...candidateBundle.partitions]
-      .sort(compareMeasurementPriority)
-    candidateBundle.partitions = releasingPartitions(materializedPartitions, progress)
+    partitionPlans.sort(compareMeasurementPriority)
+    candidateBundle.partitions = releasingPartitions(partitionPlans, progress)
 
     const repositoryMainSha = dependencies.repositoryMainSha ?? await resolveRepositoryMainSha()
     const report = await (dependencies.createMeasurementReport ?? createMeasurementReport)({
@@ -145,37 +151,41 @@ export async function cleanupOwnedGeneratedChild(ownership, { rawDir, reportDir 
   await rm(resolvedChild, { recursive: true, force: false })
 }
 
-function candidateSummary(candidateBundle) {
-  const partitions = Array.isArray(candidateBundle?.partitions) ? candidateBundle.partitions : []
-  const largestPartitions = [...partitions]
+function candidateSummary(candidateBundle, partitionPlans) {
+  const largestPartitions = [...partitionPlans]
     .sort((left, right) =>
-      descendingNumber(left.stats?.minSideCount ?? 0, right.stats?.minSideCount ?? 0)
-      || descendingNumber(left.stats?.candidateMultiplicity ?? 0, right.stats?.candidateMultiplicity ?? 0)
-      || left.partitionId.localeCompare(right.partitionId))
+      descendingNumber(left.partition.stats?.minSideCount ?? 0, right.partition.stats?.minSideCount ?? 0)
+      || descendingNumber(left.partition.stats?.candidateMultiplicity ?? 0, right.partition.stats?.candidateMultiplicity ?? 0)
+      || left.partition.partitionId.localeCompare(right.partition.partitionId))
     .slice(0, 20)
-    .map(partitionProgressIdentity)
-  const highestProjectionWorkPartitions = [...partitions]
+    .map(partitionPlanIdentity)
+  const highestProjectionWorkPartitions = [...partitionPlans]
     .sort(compareMeasurementPriority)
     .slice(0, 20)
-    .map(partitionProgressIdentity)
-  const geometry = partitions.map(partitionGeometry)
+    .map(partitionPlanIdentity)
   return {
     phase: 'candidate-summary',
-    partitionCount: partitions.length,
+    partitionCount: partitionPlans.length,
     rejectedSourceRecordCount: Array.isArray(candidateBundle?.rejected) ? candidateBundle.rejected.length : 0,
-    totalPatternCount: partitions.reduce((sum, partition) => sum + partition.stats.patternCount, 0),
-    totalShapeCount: partitions.reduce((sum, partition) => sum + partition.stats.shapeCount, 0),
-    totalStopCount: geometry.reduce((sum, entry) => saturatingAdd(sum, entry.totalStopCount), 0),
-    totalRawCoordinateCount: geometry.reduce((sum, entry) => saturatingAdd(sum, entry.totalRawCoordinateCount), 0),
-    totalNormalizedCoordinateCount: geometry.reduce((sum, entry) => saturatingAdd(sum, entry.totalNormalizedCoordinateCount), 0),
+    totalPatternCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.partition.stats.patternCount), 0),
+    totalShapeCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.partition.stats.shapeCount), 0),
+    totalStopCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.geometry.totalStopCount), 0),
+    totalRawCoordinateCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.geometry.totalRawCoordinateCount), 0),
+    totalNormalizedCoordinateCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.geometry.totalNormalizedCoordinateCount), 0),
     largestPartitions,
     highestProjectionWorkPartitions,
   }
 }
 
-function* releasingPartitions(partitions, progress) {
-  for (const partition of partitions) {
-    const identity = partitionProgressIdentity(partition)
+function* releasingPartitions(partitionPlans, progress) {
+  for (const plan of partitionPlans) {
+    const { partition } = plan
+    const identity = partitionPlanIdentity(plan)
     emitProgress(progress, { phase: 'partition-start', ...identity })
     let completed = false
     try {
@@ -189,7 +199,7 @@ function* releasingPartitions(partitions, progress) {
   }
 }
 
-function partitionProgressIdentity(partition) {
+function partitionPlanIdentity({ partition, geometry }) {
   return {
     partitionId: partition.partitionId,
     sourceScope: partition.sourceScope,
@@ -199,7 +209,7 @@ function partitionProgressIdentity(partition) {
     shapeCount: partition.stats.shapeCount,
     minSideCount: partition.stats.minSideCount,
     candidateMultiplicity: partition.stats.candidateMultiplicity,
-    ...partitionGeometry(partition),
+    ...geometry,
   }
 }
 
@@ -231,14 +241,12 @@ function partitionGeometry(partition) {
 }
 
 function compareMeasurementPriority(left, right) {
-  const leftGeometry = partitionGeometry(left)
-  const rightGeometry = partitionGeometry(right)
-  return descendingNumber(leftGeometry.projectionWorkUnits, rightGeometry.projectionWorkUnits)
-    || descendingNumber(leftGeometry.maxSegmentCount, rightGeometry.maxSegmentCount)
-    || descendingNumber(leftGeometry.maxStopCount, rightGeometry.maxStopCount)
-    || descendingNumber(leftGeometry.maxRawCoordinateCount, rightGeometry.maxRawCoordinateCount)
-    || descendingNumber(left.stats?.candidateMultiplicity ?? 0, right.stats?.candidateMultiplicity ?? 0)
-    || left.partitionId.localeCompare(right.partitionId)
+  return descendingNumber(left.geometry.projectionWorkUnits, right.geometry.projectionWorkUnits)
+    || descendingNumber(left.geometry.maxSegmentCount, right.geometry.maxSegmentCount)
+    || descendingNumber(left.geometry.maxStopCount, right.geometry.maxStopCount)
+    || descendingNumber(left.geometry.maxRawCoordinateCount, right.geometry.maxRawCoordinateCount)
+    || descendingNumber(left.partition.stats?.candidateMultiplicity ?? 0, right.partition.stats?.candidateMultiplicity ?? 0)
+    || left.partition.partitionId.localeCompare(right.partition.partitionId)
 }
 
 function descendingNumber(left, right) {
@@ -269,7 +277,7 @@ function saturatingProduct(...values) {
 }
 
 function maxOrZero(values) {
-  return values.length ? Math.max(...values) : 0
+  return values.reduce((maximum, value) => Math.max(maximum, value), 0)
 }
 
 function emitProgress(progress, entry) {
