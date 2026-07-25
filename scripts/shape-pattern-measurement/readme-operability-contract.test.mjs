@@ -44,11 +44,14 @@ describe('measurement README operability', () => {
     expect(readme).toContain('fc67cdecd785e89b9b08937edab156ade430198b')
   })
 
-  it('keeps the production and review gates closed after harness verification', () => {
-    expect(readme).toContain('C. Temporarily not ready for production integration.')
-    expect(readme).toMatch(/Production PR 2 remains blocked/i)
+  it('records the deferred production gate after real-data review', () => {
+    expect(readme).toContain('C. Temporarily not ready for production integration; integration deferred.')
+    expect(readme).toMatch(/Production PR 2 will not start/i)
+    expect(readme).toMatch(/Production PR 3 remains unstarted/i)
     expect(readme).toMatch(/sanitized fixture.*must not/i)
-    expect(readme).toMatch(/remain Draft.*fourth narrow review/i)
+    expect(readme).toMatch(/Issue #166/i)
+    expect(readme).toMatch(/reproducible user-visible wrong Shape/i)
+    expect(readme).toMatch(/counts must not be interpreted as proven wrong matches/i)
   })
 
   it('uses inspection patterns matching only actual raw, report and generated staging names', async () => {

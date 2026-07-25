@@ -2,11 +2,11 @@
 
 This directory contains the measurement-only MB-C01 harness for the deterministic Shape-to-pattern matcher. It is isolated under `scripts/` and is not imported by `src/`, `web/`, Vite, the Worker, the snapshot producer, public APIs, journey ranking, rendering, or production telemetry.
 
-The harness creates replayable evidence. It does **not** establish a production guard or authorize production integration. Until real credentialed TDX reports are reviewed, the gate remains:
+The harness creates replayable evidence. It does **not** establish a production guard or authorize production integration. Real credentialed runs, worst-case prioritization, and the bounded ambiguity viewer were reviewed through Issue #166. The current gate decision is:
 
-> C. Temporarily not ready for production integration.
+> C. Temporarily not ready for production integration; integration deferred.
 
-Production PR 2 remains blocked. Production PR 3 has not started.
+Production PR 2 will not start. Production PR 3 remains unstarted. Revisit MB-C01 only when there is a reproducible user-visible wrong Shape／branch／direction, a material TDX identity-model change, a product requirement for strict one-to-one assignment, or a meaningful visible difference in the remaining route-direction groups.
 
 ## Evidence boundary
 
@@ -274,15 +274,18 @@ Before manually deleting an orphan:
 3. confirm it is dot-prefixed report staging, `raw.tmp-*`, or an owned generated `run-*` directory; and
 4. delete only that verified child, never the raw, report, generated, or repository root.
 
-## 8. Keep the production gate closed
+## 8. Current production disposition
 
-After successful verification:
+The real-data review is complete for now:
 
-- sanitized fixture results still must not select a guard;
-- merging the harness still does not prove production readiness;
-- a credentialed nine-city plus InterCity measurement and review are still required;
-- production PR 2 remains blocked; and
-- production PR 3 must not start.
+- credentialed exact-matcher runs repeatedly reached unacceptable runtime／memory pressure in large exact-projection partitions before producing a complete verified production report;
+- worst-case prioritization narrowed the risk but did not make the exact solver suitable for production integration;
+- the bounded ambiguity viewer removed unique complete identity pairs and exposed residual selection-risk structure without executing the production matcher;
+- manual review found that most residual groups were duplicate records, visually identical Shapes, or many-patterns-to-one-Shape competition, with no evident user-visible impact in the remaining differences;
+- Production PR 2 will not start, and Production PR 3 remains unstarted;
+- no further matcher OOM remediation, projection optimization, Shape simplification, or ambiguity-viewer classification is planned now.
+
+The harness and viewer remain isolated diagnostics. Their counts must not be interpreted as proven wrong matches. Reopen the gate only when the criteria stated at the top of this document are met.
 
 # Metric and transaction contracts
 
@@ -334,4 +337,4 @@ The focused measurement tests include absolute Worker deadline races, bounded te
 
 CI does not call live TDX, receive production TDX credentials, or upload raw payloads or real route-level reports.
 
-This PR must remain Draft until the fourth narrow review is complete.
+Future changes to the harness or viewer must preserve the isolated diagnostic boundary, bounded artifact/privacy contracts, and fail-closed production gate.
