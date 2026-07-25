@@ -1,0 +1,128 @@
+name: Inspect Shape-to-pattern ambiguity
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type INSPECT to build the credentialed ambiguity viewer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shape-pattern-ambiguity-inspection
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build credentialed ambiguity viewer
+        shell: bash
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          INSPECTION_ROOT: ${{ runner.temp }}/shape-pattern-ambiguity-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
+            echo 'Credentialed ambiguity inspection must run from main.' >&2
+            exit 1
+          }
+          [[ "${INPUT_CONFIRMATION}" == "INSPECT" ]] || {
+            echo 'Credentialed ambiguity inspection requires confirmation INSPECT.' >&2
+            exit 1
+          }
+          [[ -n "${TDX_CLIENT_ID}" && -n "${TDX_CLIENT_SECRET}" ]] || {
+            echo 'TDX repository secrets are not configured.' >&2
+            exit 1
+          }
+
+          raw_dir="${INSPECTION_ROOT}/raw"
+          reports_dir="${INSPECTION_ROOT}/reports"
+          generated_dir="${INSPECTION_ROOT}/generated"
+          artifact_dir="${INSPECTION_ROOT}/artifact"
+          mkdir -p "${INSPECTION_ROOT}" "${reports_dir}" "${generated_dir}"
+
+          node scripts/shape-pattern-measurement/acquire-raw.mjs \
+            --cities Taipei,NewTaipei,Taoyuan,Keelung,Taichung,Tainan,Kaohsiung,Chiayi,MiaoliCounty \
+            --include-intercity \
+            --raw-dir "${raw_dir}" \
+            --report-dir "${reports_dir}" \
+            --generated-dir "${generated_dir}"
+          unset TDX_CLIENT_ID TDX_CLIENT_SECRET
+
+          node scripts/shape-pattern-measurement/ambiguity-viewer.mjs \
+            --raw-dir "${raw_dir}" \
+            --output-dir "${artifact_dir}" \
+            --max-partitions 120 \
+            --max-patterns 16 \
+            --max-shapes 16 \
+            --max-stops 250 \
+            --max-coordinates 400
+
+          test -f "${artifact_dir}/index.json"
+          test -f "${artifact_dir}/ambiguity-viewer.html"
+          test ! -e "${artifact_dir}/raw"
+          test ! -e "${artifact_dir}/generated"
+
+          node - "${artifact_dir}/index.json" <<'NODE'
+          const fs = require('node:fs')
+          const index = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          if (index.schemaVersion !== 1) throw new Error('Unexpected ambiguity viewer schema')
+          if (index.provenance?.sourceCommit !== process.env.GITHUB_SHA) {
+            throw new Error('Ambiguity viewer source commit differs from workflow checkout')
+          }
+          if (index.provenance?.includeIntercity !== true) {
+            throw new Error('Ambiguity viewer did not include InterCity')
+          }
+          if (!Array.isArray(index.partitions)
+            || index.partitions.length !== index.summary?.includedPartitionCount) {
+            throw new Error('Ambiguity viewer index count mismatch')
+          }
+          const summary = [
+            '## Shape／站序歧義檢視',
+            '',
+            `- Source commit: \`${index.provenance.sourceCommit}\``,
+            `- Dataset bundle: \`${index.provenance.bundleContentHash}\``,
+            `- Candidate partitions: ${index.summary.candidatePartitionCount}`,
+            `- Selection-risk partitions: ${index.summary.riskyPartitionCount}`,
+            `- Included in viewer: ${index.summary.includedPartitionCount}`,
+            `- Omitted by viewer cap: ${index.summary.omittedPartitionCount}`,
+            '',
+            'This artifact is identity-structure diagnostics only. It does not run or change the production matcher.',
+            '',
+          ].join('\n')
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary)
+          NODE
+
+          rm -rf "${raw_dir}"
+          rm -rf "${reports_dir}" "${generated_dir}"
+      - name: Upload ambiguity viewer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shape-pattern-ambiguity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/shape-pattern-ambiguity-${{ github.run_id }}-${{ github.run_attempt }}/artifact
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+      - name: Cleanup ambiguity workspace
+        if: always()
+        shell: bash
+        env:
+          INSPECTION_ROOT: ${{ runner.temp }}/shape-pattern-ambiguity-${{ github.run_id }}-${{ github.run_attempt }}
+        run: rm -rf "${INSPECTION_ROOT}"
