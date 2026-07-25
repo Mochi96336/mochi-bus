@@ -51,7 +51,11 @@ export async function runMeasurement(options, dependencies = {}) {
     source = null
     emitProgress(progress, candidateSummary(candidateBundle))
 
-    const materializedPartitions = candidateBundle.partitions
+    // Formal report records are sorted canonically before publication. Execution order
+    // is therefore free to front-load the largest deterministic geometry working sets,
+    // making an unbounded exact projection partition fail early with useful evidence.
+    const materializedPartitions = [...candidateBundle.partitions]
+      .sort(compareMeasurementPriority)
     candidateBundle.partitions = releasingPartitions(materializedPartitions, progress)
 
     const repositoryMainSha = dependencies.repositoryMainSha ?? await resolveRepositoryMainSha()
@@ -145,42 +149,33 @@ function candidateSummary(candidateBundle) {
   const partitions = Array.isArray(candidateBundle?.partitions) ? candidateBundle.partitions : []
   const largestPartitions = [...partitions]
     .sort((left, right) =>
-      (right.stats?.minSideCount ?? 0) - (left.stats?.minSideCount ?? 0)
-      || (right.stats?.candidateMultiplicity ?? 0) - (left.stats?.candidateMultiplicity ?? 0)
+      descendingNumber(left.stats?.minSideCount ?? 0, right.stats?.minSideCount ?? 0)
+      || descendingNumber(left.stats?.candidateMultiplicity ?? 0, right.stats?.candidateMultiplicity ?? 0)
       || left.partitionId.localeCompare(right.partitionId))
     .slice(0, 20)
-    .map((partition) => ({
-      partitionId: partition.partitionId,
-      sourceScope: partition.sourceScope,
-      city: partition.city,
-      direction: partition.direction,
-      patternCount: partition.stats.patternCount,
-      shapeCount: partition.stats.shapeCount,
-      minSideCount: partition.stats.minSideCount,
-      candidateMultiplicity: partition.stats.candidateMultiplicity,
-    }))
+    .map(partitionProgressIdentity)
+  const highestProjectionWorkPartitions = [...partitions]
+    .sort(compareMeasurementPriority)
+    .slice(0, 20)
+    .map(partitionProgressIdentity)
+  const geometry = partitions.map(partitionGeometry)
   return {
     phase: 'candidate-summary',
     partitionCount: partitions.length,
     rejectedSourceRecordCount: Array.isArray(candidateBundle?.rejected) ? candidateBundle.rejected.length : 0,
     totalPatternCount: partitions.reduce((sum, partition) => sum + partition.stats.patternCount, 0),
     totalShapeCount: partitions.reduce((sum, partition) => sum + partition.stats.shapeCount, 0),
+    totalStopCount: geometry.reduce((sum, entry) => saturatingAdd(sum, entry.totalStopCount), 0),
+    totalRawCoordinateCount: geometry.reduce((sum, entry) => saturatingAdd(sum, entry.totalRawCoordinateCount), 0),
+    totalNormalizedCoordinateCount: geometry.reduce((sum, entry) => saturatingAdd(sum, entry.totalNormalizedCoordinateCount), 0),
     largestPartitions,
+    highestProjectionWorkPartitions,
   }
 }
 
 function* releasingPartitions(partitions, progress) {
   for (const partition of partitions) {
-    const identity = {
-      partitionId: partition.partitionId,
-      sourceScope: partition.sourceScope,
-      city: partition.city,
-      direction: partition.direction,
-      patternCount: partition.stats.patternCount,
-      shapeCount: partition.stats.shapeCount,
-      minSideCount: partition.stats.minSideCount,
-      candidateMultiplicity: partition.stats.candidateMultiplicity,
-    }
+    const identity = partitionProgressIdentity(partition)
     emitProgress(progress, { phase: 'partition-start', ...identity })
     let completed = false
     try {
@@ -192,6 +187,89 @@ function* releasingPartitions(partitions, progress) {
       emitProgress(progress, { phase: completed ? 'partition-complete' : 'partition-aborted', ...identity })
     }
   }
+}
+
+function partitionProgressIdentity(partition) {
+  return {
+    partitionId: partition.partitionId,
+    sourceScope: partition.sourceScope,
+    city: partition.city,
+    direction: partition.direction,
+    patternCount: partition.stats.patternCount,
+    shapeCount: partition.stats.shapeCount,
+    minSideCount: partition.stats.minSideCount,
+    candidateMultiplicity: partition.stats.candidateMultiplicity,
+    ...partitionGeometry(partition),
+  }
+}
+
+function partitionGeometry(partition) {
+  const patterns = Array.isArray(partition?.patterns) ? partition.patterns : []
+  const shapes = Array.isArray(partition?.shapes) ? partition.shapes : []
+  const stopCounts = patterns.map((pattern) => Array.isArray(pattern?.stops) ? pattern.stops.length : 0)
+  const normalizedCoordinateCounts = shapes.map((shape) =>
+    Array.isArray(shape?.coordinates) ? shape.coordinates.length : 0)
+  const rawCoordinateCounts = shapes.map((shape, index) => {
+    const value = shape?.measurement?.rawCoordinateCount
+    return Number.isSafeInteger(value) && value >= 0 ? value : normalizedCoordinateCounts[index]
+  })
+  const segmentCounts = normalizedCoordinateCounts.map((count) => Math.max(0, count - 1))
+  const totalStopCount = safeSum(stopCounts)
+  const totalSegmentCount = safeSum(segmentCounts)
+  const orientationObjectiveFactor = partition?.direction === 2 ? 4 : 2
+  return {
+    totalStopCount,
+    maxStopCount: maxOrZero(stopCounts),
+    totalRawCoordinateCount: safeSum(rawCoordinateCounts),
+    maxRawCoordinateCount: maxOrZero(rawCoordinateCounts),
+    totalNormalizedCoordinateCount: safeSum(normalizedCoordinateCounts),
+    maxNormalizedCoordinateCount: maxOrZero(normalizedCoordinateCounts),
+    totalSegmentCount,
+    maxSegmentCount: maxOrZero(segmentCounts),
+    projectionWorkUnits: saturatingProduct(totalStopCount, totalSegmentCount, orientationObjectiveFactor),
+  }
+}
+
+function compareMeasurementPriority(left, right) {
+  const leftGeometry = partitionGeometry(left)
+  const rightGeometry = partitionGeometry(right)
+  return descendingNumber(leftGeometry.projectionWorkUnits, rightGeometry.projectionWorkUnits)
+    || descendingNumber(leftGeometry.maxSegmentCount, rightGeometry.maxSegmentCount)
+    || descendingNumber(leftGeometry.maxStopCount, rightGeometry.maxStopCount)
+    || descendingNumber(leftGeometry.maxRawCoordinateCount, rightGeometry.maxRawCoordinateCount)
+    || descendingNumber(left.stats?.candidateMultiplicity ?? 0, right.stats?.candidateMultiplicity ?? 0)
+    || left.partitionId.localeCompare(right.partitionId)
+}
+
+function descendingNumber(left, right) {
+  if (left === right) return 0
+  return left > right ? -1 : 1
+}
+
+function safeSum(values) {
+  return values.reduce((sum, value) => saturatingAdd(sum, value), 0)
+}
+
+function saturatingAdd(left, right) {
+  const normalizedLeft = Number.isSafeInteger(left) && left >= 0 ? left : 0
+  const normalizedRight = Number.isSafeInteger(right) && right >= 0 ? right : 0
+  if (normalizedLeft > Number.MAX_SAFE_INTEGER - normalizedRight) return Number.MAX_SAFE_INTEGER
+  return normalizedLeft + normalizedRight
+}
+
+function saturatingProduct(...values) {
+  let result = 1
+  for (const value of values) {
+    const normalized = Number.isSafeInteger(value) && value >= 0 ? value : 0
+    if (result === 0 || normalized === 0) return 0
+    if (result > Number.MAX_SAFE_INTEGER / normalized) return Number.MAX_SAFE_INTEGER
+    result *= normalized
+  }
+  return result
+}
+
+function maxOrZero(values) {
+  return values.length ? Math.max(...values) : 0
 }
 
 function emitProgress(progress, entry) {
