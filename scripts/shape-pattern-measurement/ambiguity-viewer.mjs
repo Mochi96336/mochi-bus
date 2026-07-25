@@ -4,6 +4,7 @@ import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildCandidatePartitions } from './build-candidates.mjs'
+import { attachCleanupFailure } from './measurement-errors.mjs'
 import {
   assertRedacted,
   replayRawBundle,
@@ -27,7 +28,6 @@ const RISK_LABELS = Object.freeze({
   'many-to-one-after-exact-identity': '多組站序競爭同一條 Shape',
   'missing-pattern-identity': '站序缺少 SubRouteUID',
   'missing-shape-identity': 'Shape 缺少 SubRouteUID',
-  'contradictory-complete-identity': '完整 identity 互相矛盾',
 })
 
 export function buildAmbiguityViewerData(rawBundle, provenance = {}, requestedLimits = {}) {
@@ -38,9 +38,8 @@ export function buildAmbiguityViewerData(rawBundle, provenance = {}, requestedLi
     .map((partition) => analyzePartition(partition, metadata.get(partition.key), limits))
     .filter(Boolean)
     .sort(compareRiskPartition)
-
   const included = analyzed.slice(0, limits.maxPartitions)
-  const riskReasonCounts = countBy(analyzed.flatMap((partition) => partition.riskReasons))
+
   return {
     schemaVersion: 1,
     title: 'Shape／站序歧義檢視',
@@ -58,7 +57,7 @@ export function buildAmbiguityViewerData(rawBundle, provenance = {}, requestedLi
       riskyPartitionCount: analyzed.length,
       includedPartitionCount: included.length,
       omittedPartitionCount: Math.max(0, analyzed.length - included.length),
-      riskReasonCounts,
+      riskReasonCounts: countBy(analyzed.flatMap((partition) => partition.riskReasons)),
     },
     riskLabels: RISK_LABELS,
     partitions: included,
@@ -66,18 +65,18 @@ export function buildAmbiguityViewerData(rawBundle, provenance = {}, requestedLi
 }
 
 function analyzePartition(partition, metadata, limits) {
-  const patternCounts = identityCounts(partition.patterns, 'pattern')
-  const shapeCounts = identityCounts(partition.shapes, 'shape')
+  const patternCounts = identityCounts(partition.patterns)
+  const shapeCounts = identityCounts(partition.shapes)
   const uniqueExactIdentities = [...patternCounts.entries()]
     .filter(([identity, count]) => identity !== null && count === 1 && shapeCounts.get(identity) === 1)
     .map(([identity]) => identity)
     .sort()
   const exactSet = new Set(uniqueExactIdentities)
   const remainingPatterns = partition.patterns
-    .filter((pattern) => pattern.subRouteUid === null || pattern.subRouteUid === undefined || !exactSet.has(pattern.subRouteUid))
+    .filter((pattern) => !exactSet.has(normalizeIdentity(pattern.subRouteUid)))
     .sort((a, b) => a.patternId.localeCompare(b.patternId))
   const remainingShapes = partition.shapes
-    .filter((shape) => shape.subRouteUid === null || shape.subRouteUid === undefined || !exactSet.has(shape.subRouteUid))
+    .filter((shape) => !exactSet.has(normalizeIdentity(shape.subRouteUid)))
     .sort((a, b) => a.shapeId.localeCompare(b.shapeId))
 
   const patternCandidateCounts = new Map(remainingPatterns.map((pattern) => [
@@ -93,12 +92,16 @@ function analyzePartition(partition, metadata, limits) {
   const competingShapeCount = [...shapeCandidateCounts.values()].filter((count) => count > 1).length
   const duplicatePatternIdentityCount = duplicateCompleteIdentityCount(patternCounts)
   const duplicateShapeIdentityCount = duplicateCompleteIdentityCount(shapeCounts)
-  const contradictoryCompleteIdentityCount = contradictoryIdentityCount(remainingPatterns, remainingShapes)
 
   const riskReasons = []
-  if (duplicatePatternIdentityCount > 0) riskReasons.push('duplicate-pattern-identity')
-  if (duplicateShapeIdentityCount > 0) riskReasons.push('duplicate-shape-identity')
-  if (remainingPatterns.length > 1 && remainingShapes.length > 1 && compatiblePairCount > 1) {
+  if (duplicatePatternIdentityCount > 0 && competingShapeCount > 0) {
+    riskReasons.push('duplicate-pattern-identity')
+  }
+  if (duplicateShapeIdentityCount > 0 && atRiskPatternCount > 0) {
+    riskReasons.push('duplicate-shape-identity')
+  }
+  if (remainingPatterns.length > 1 && remainingShapes.length > 1
+    && (atRiskPatternCount > 0 || competingShapeCount > 0)) {
     riskReasons.push('many-to-many-after-exact-identity')
   } else if (remainingPatterns.length === 1 && atRiskPatternCount > 0) {
     riskReasons.push('one-to-many-after-exact-identity')
@@ -111,13 +114,11 @@ function analyzePartition(partition, metadata, limits) {
   if (remainingShapes.some((shape) => !normalizeIdentity(shape.subRouteUid)) && competingShapeCount > 0) {
     riskReasons.push('missing-shape-identity')
   }
-  if (contradictoryCompleteIdentityCount > 0) riskReasons.push('contradictory-complete-identity')
-
   if (!riskReasons.length) return null
 
   const patterns = remainingPatterns.slice(0, limits.maxPatternsPerPartition).map((pattern) => {
     const displayStops = sampleSequence(
-      pattern.stops.map((stop) => [stop.coordinate[0], stop.coordinate[1]]),
+      pattern.stops.map((stop) => stop.coordinate),
       limits.maxStopsPerPattern,
     )
     return {
@@ -165,7 +166,6 @@ function analyzePartition(partition, metadata, limits) {
     competingShapeCount,
     duplicatePatternIdentityCount,
     duplicateShapeIdentityCount,
-    contradictoryCompleteIdentityCount,
     patternDisplayOmittedCount: Math.max(0, remainingPatterns.length - patterns.length),
     shapeDisplayOmittedCount: Math.max(0, remainingShapes.length - shapes.length),
     identities: identitySummary(patternCounts, shapeCounts, metadata),
@@ -176,7 +176,7 @@ function analyzePartition(partition, metadata, limits) {
 
 function buildMetadataIndex(rawBundle) {
   const result = new Map()
-  for (const source of Array.isArray(rawBundle?.sources) ? rawBundle.sources : []) {
+  for (const source of safeArray(rawBundle?.sources)) {
     for (const item of [...safeArray(source?.stopOfRoute), ...safeArray(source?.shapes)]) {
       const routeUid = normalizeIdentity(item?.RouteUID)
       const direction = item?.Direction
@@ -191,23 +191,21 @@ function buildMetadataIndex(rawBundle) {
       if (routeName) entry.routeNames.add(routeName)
       const subRouteUid = normalizeIdentity(item?.SubRouteUID)
       const subRouteName = localizedName(item?.SubRouteName)
-      if (subRouteName) {
-        const identityKey = subRouteUid ?? ''
-        let names = entry.subRouteNames.get(identityKey)
-        if (!names) {
-          names = new Set()
-          entry.subRouteNames.set(identityKey, names)
-        }
-        names.add(subRouteName)
+      if (!subRouteName) continue
+      const identityKey = subRouteUid ?? ''
+      let names = entry.subRouteNames.get(identityKey)
+      if (!names) {
+        names = new Set()
+        entry.subRouteNames.set(identityKey, names)
       }
+      names.add(subRouteName)
     }
   }
   return result
 }
 
 function identitySummary(patternCounts, shapeCounts, metadata) {
-  const identities = new Set([...patternCounts.keys(), ...shapeCounts.keys()])
-  return [...identities]
+  return [...new Set([...patternCounts.keys(), ...shapeCounts.keys()])]
     .sort(compareNullableText)
     .map((identity) => ({
       subRouteUid: identity,
@@ -234,14 +232,6 @@ function duplicateCompleteIdentityCount(counts) {
     sum + (identity === null ? 0 : Math.max(0, count - 1)), 0)
 }
 
-function contradictoryIdentityCount(patterns, shapes) {
-  const shapeIdentities = new Set(shapes.map((shape) => normalizeIdentity(shape.subRouteUid)).filter(Boolean))
-  const hasMissingShapeIdentity = shapes.some((shape) => !normalizeIdentity(shape.subRouteUid))
-  if (hasMissingShapeIdentity || shapeIdentities.size === 0) return 0
-  return new Set(patterns.map((pattern) => normalizeIdentity(pattern.subRouteUid)).filter(Boolean))
-    .difference(shapeIdentities).size
-}
-
 function identitiesCompatible(patternIdentity, shapeIdentity) {
   const pattern = normalizeIdentity(patternIdentity)
   const shape = normalizeIdentity(shapeIdentity)
@@ -249,8 +239,7 @@ function identitiesCompatible(patternIdentity, shapeIdentity) {
 }
 
 function metadataName(metadata, identity) {
-  const key = normalizeIdentity(identity) ?? ''
-  return firstSorted(metadata?.subRouteNames?.get(key))
+  return firstSorted(metadata?.subRouteNames?.get(normalizeIdentity(identity) ?? ''))
 }
 
 function localizedName(value) {
@@ -351,19 +340,19 @@ export function renderAmbiguityViewerHtml(report) {
 const data=JSON.parse(document.getElementById('viewer-data').textContent)
 const palette=['#b43b2b','#2474a6','#8d5aa8','#2f8c69','#c07824','#5b68c4','#a84f75','#477b2f','#8a6540','#2b8f94','#6756a5','#a5522f','#3971a8','#80851f','#b3415d','#53606f']
 const summary=document.getElementById('summary'),list=document.getElementById('list'),search=document.getElementById('search'),reason=document.getElementById('reason'),detail=document.getElementById('detail'),empty=document.getElementById('empty')
-const metric=(label,value)=>{const node=document.createElement('span');node.className='metric';node.textContent=label+' '+value;return node}
+const metric=(label,value)=>{const n=document.createElement('span');n.className='metric';n.textContent=label+' '+value;return n}
 summary.append(metric('候選 partition',data.summary.candidatePartitionCount),metric('有選錯風險',data.summary.riskyPartitionCount),metric('本檔顯示',data.summary.includedPartitionCount),metric('省略',data.summary.omittedPartitionCount))
 for(const key of Object.keys(data.riskLabels)){const option=document.createElement('option');option.value=key;option.textContent=data.riskLabels[key];reason.append(option)}
 let activeId=null
 function filtered(){const q=search.value.trim().toLowerCase(),r=reason.value;return data.partitions.filter(p=>(!q||(p.routeName+' '+p.routeUid+' '+(p.city||'')).toLowerCase().includes(q))&&(!r||p.riskReasons.includes(r)))}
 function renderList(){list.replaceChildren();for(const p of filtered()){const button=document.createElement('button');button.className='route'+(p.partitionId===activeId?' active':'');const title=document.createElement('strong');title.textContent=p.routeName+' · 方向 '+p.direction;const meta=document.createElement('small');meta.textContent=(p.city||'InterCity')+' · '+p.routeUid+' · '+p.remainingPatternCount+' 站序 × '+p.remainingShapeCount+' Shape';const chips=document.createElement('div');chips.className='chips';for(const r of p.riskReasons){const chip=document.createElement('span');chip.className='chip';chip.textContent=data.riskLabels[r]||r;chips.append(chip)}button.append(title,meta,chips);button.addEventListener('click',()=>{activeId=p.partitionId;renderList();renderDetail(p)});list.append(button)}}
-function node(tag,attrs={}){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));return n}
+function svgNode(tag,attrs={}){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));return n}
 function bounds(p){const points=[];for(const x of p.patterns)points.push(...x.displayStops);for(const x of p.shapes)points.push(...x.displayCoordinates);const xs=points.map(x=>x[0]),ys=points.map(x=>x[1]);let minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);if(!Number.isFinite(minX)){minX=0;maxX=1;minY=0;maxY=1}if(maxX===minX)maxX=minX+1e-6;if(maxY===minY)maxY=minY+1e-6;return{minX,maxX,minY,maxY}}
 function project(point,b){const pad=38,w=1000-pad*2,h=700-pad*2,scale=Math.min(w/(b.maxX-b.minX),h/(b.maxY-b.minY)),usedW=(b.maxX-b.minX)*scale,usedH=(b.maxY-b.minY)*scale;return[pad+(w-usedW)/2+(point[0]-b.minX)*scale,pad+(h-usedH)/2+(b.maxY-point[1])*scale]}
-function renderDetail(p){empty.hidden=true;detail.hidden=false;detail.replaceChildren();const head=document.createElement('div');head.className='heading';const h=document.createElement('h2');h.textContent=p.routeName+' · 方向 '+p.direction;const id=document.createElement('code');id.textContent=p.routeUid;head.append(h,id);const facts=document.createElement('div');facts.className='facts';facts.append(metric('唯一 identity 已排除',p.uniqueExactPairCount),metric('剩餘候選',p.remainingPatternCount+' × '+p.remainingShapeCount),metric('相容 pair',p.compatiblePairCount),metric('高風險站序',p.atRiskPatternCount));const svg=node('svg',{class:'map',viewBox:'0 0 1000 700',role:'img','aria-label':'候選 Shape 與站序疊圖'}),b=bounds(p),legend=document.createElement('div');legend.className='legend';let colorIndex=0
+function renderDetail(p){empty.hidden=true;detail.hidden=false;detail.replaceChildren();const head=document.createElement('div');head.className='heading';const h=document.createElement('h2');h.textContent=p.routeName+' · 方向 '+p.direction;const id=document.createElement('code');id.textContent=p.routeUid;head.append(h,id);const facts=document.createElement('div');facts.className='facts';facts.append(metric('唯一 identity 已排除',p.uniqueExactPairCount),metric('剩餘候選',p.remainingPatternCount+' × '+p.remainingShapeCount),metric('相容 pair',p.compatiblePairCount),metric('高風險站序',p.atRiskPatternCount));const svg=svgNode('svg',{class:'map',viewBox:'0 0 1000 700',role:'img','aria-label':'候選 Shape 與站序疊圖'}),b=bounds(p),legend=document.createElement('div');legend.className='legend';let colorIndex=0
 const addLegend=(label,meta,color,target)=>{const item=document.createElement('label');item.className='legend-item';const check=document.createElement('input');check.type='checkbox';check.checked=true;check.style.width='auto';const sw=document.createElement('span');sw.className='swatch';sw.style.background=color;const text=document.createElement('span');const strong=document.createElement('strong');strong.textContent=label;const small=document.createElement('small');small.textContent=meta;text.append(strong,small);item.append(check,sw,text);check.addEventListener('change',()=>target.style.display=check.checked?'':'none');legend.append(item)}
-for(const s of p.shapes){const color=palette[colorIndex++%palette.length],g=node('g'),points=s.displayCoordinates.map(x=>project(x,b).join(',')).join(' ');g.append(node('polyline',{points,fill:'none',stroke:color,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round',opacity:.78}));svg.append(g);addLegend('Shape '+(s.subRouteName||s.subRouteUid||'缺少 SubRouteUID'),s.coordinateCount+' 點 · 相容 '+s.compatiblePatternCount+' 組站序'+(s.displayTruncated?' · 圖形已抽樣':''),color,g)}
-for(const ptn of p.patterns){const color=palette[colorIndex++%palette.length],g=node('g'),coords=ptn.displayStops.map(x=>project(x,b));g.append(node('polyline',{points:coords.map(x=>x.join(',')).join(' '),fill:'none',stroke:color,'stroke-width':2,'stroke-dasharray':'7 6',opacity:.9}));coords.forEach((x,i)=>g.append(node('circle',{cx:x[0],cy:x[1],r:i===0||i===coords.length-1?5:3,fill:color,stroke:'white','stroke-width':1})));svg.append(g);addLegend('站序 '+(ptn.subRouteName||ptn.subRouteUid||'缺少 SubRouteUID'),ptn.stopCount+' 站 · 相容 '+ptn.compatibleShapeCount+' 條 Shape'+(ptn.displayTruncated?' · 站點已抽樣':''),color,g)}
+for(const s of p.shapes){const color=palette[colorIndex++%palette.length],g=svgNode('g'),points=s.displayCoordinates.map(x=>project(x,b).join(',')).join(' ');g.append(svgNode('polyline',{points,fill:'none',stroke:color,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round',opacity:.78}));svg.append(g);addLegend('Shape '+(s.subRouteName||s.subRouteUid||'缺少 SubRouteUID'),s.coordinateCount+' 點 · 相容 '+s.compatiblePatternCount+' 組站序'+(s.displayTruncated?' · 圖形已抽樣':''),color,g)}
+for(const ptn of p.patterns){const color=palette[colorIndex++%palette.length],g=svgNode('g'),coords=ptn.displayStops.map(x=>project(x,b));g.append(svgNode('polyline',{points:coords.map(x=>x.join(',')).join(' '),fill:'none',stroke:color,'stroke-width':2,'stroke-dasharray':'7 6',opacity:.9}));coords.forEach((x,i)=>g.append(svgNode('circle',{cx:x[0],cy:x[1],r:i===0||i===coords.length-1?5:3,fill:color,stroke:'white','stroke-width':1})));svg.append(g);addLegend('站序 '+(ptn.subRouteName||ptn.subRouteUid||'缺少 SubRouteUID'),ptn.stopCount+' 站 · 相容 '+ptn.compatibleShapeCount+' 條 Shape'+(ptn.displayTruncated?' · 站點已抽樣':''),color,g)}
 const table=document.createElement('table'),thead=document.createElement('thead'),tr=document.createElement('tr');for(const text of ['SubRouteUID','名稱','站序數','Shape 數','唯一 exact']){const th=document.createElement('th');th.textContent=text;tr.append(th)}thead.append(tr);const tbody=document.createElement('tbody');for(const row of p.identities){const r=document.createElement('tr');for(const value of [row.subRouteUid||'（缺少）',row.subRouteName||'—',row.patternCount,row.shapeCount,row.uniqueExact?'是':'否']){const td=document.createElement('td');td.textContent=String(value);r.append(td)}tbody.append(r)}table.append(thead,tbody);detail.append(head,facts,svg,legend,table)}
 search.addEventListener('input',renderList);reason.addEventListener('change',renderList);renderList();if(data.partitions[0]){activeId=data.partitions[0].partitionId;renderList();renderDetail(data.partitions[0])}
 </script>
@@ -374,7 +363,10 @@ search.addEventListener('input',renderList);reason.addEventListener('change',ren
 
 export async function publishAmbiguityViewer(report, outputDir) {
   const target = resolve(outputDir)
-  const existing = await lstat(target).catch((error) => error?.code === 'ENOENT' ? null : Promise.reject(error))
+  const existing = await lstat(target).catch((error) => {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  })
   if (existing) throw new Error('Ambiguity viewer output directory already exists')
   await mkdir(dirname(target), { recursive: true })
   const temporary = `${target}.tmp-${randomUUID()}`
@@ -406,7 +398,14 @@ export async function publishAmbiguityViewer(report, outputDir) {
     await rename(temporary, target)
     return target
   } catch (error) {
-    await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    try {
+      await rm(temporary, { recursive: true, force: true })
+    } catch {
+      throw attachCleanupFailure(error, {
+        stage: 'ambiguity-viewer-temporary-cleanup',
+        temporaryPath: temporary,
+      })
+    }
     throw error
   }
 }
