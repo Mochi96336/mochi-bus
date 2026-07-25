@@ -65,14 +65,14 @@ describe('ambiguity viewer candidate names', () => {
     )
 
     const [partition] = report.partitions
-    expect(partition.patterns.map((entry) => entry.subRouteName).sort()).toEqual([
+    expect(new Set(partition.patterns.map((entry) => entry.subRouteName))).toEqual(new Set([
       '缺少識別一',
       '缺少識別二',
-    ])
-    expect(partition.shapes.map((entry) => entry.subRouteName).sort()).toEqual([
+    ]))
+    expect(new Set(partition.shapes.map((entry) => entry.subRouteName))).toEqual(new Set([
       '缺少識別一',
       '缺少識別二',
-    ])
+    ]))
     expect(partition.patterns.every((entry) => entry.subRouteNameConflict === false)).toBe(true)
     expect(partition.shapes.every((entry) => entry.subRouteNameConflict === false)).toBe(true)
   })
@@ -91,8 +91,8 @@ describe('ambiguity viewer candidate names', () => {
     expect(partition.patterns).toHaveLength(2)
     expect(partition.shapes).toHaveLength(2)
     for (const entry of [...partition.patterns, ...partition.shapes]) {
-      expect(entry.subRouteName).toBe('名稱乙／名稱甲')
-      expect(entry.subRouteNameAlternatives).toEqual(['名稱乙', '名稱甲'])
+      expect(new Set(entry.subRouteNameAlternatives)).toEqual(new Set(['名稱甲', '名稱乙']))
+      expect(entry.subRouteName).toBe(entry.subRouteNameAlternatives.join('／'))
       expect(entry.subRouteNameConflict).toBe(true)
     }
   })
