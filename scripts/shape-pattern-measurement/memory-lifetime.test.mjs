@@ -58,27 +58,35 @@ function rawManifest() {
   }
 }
 
-function candidatePartition(index) {
+function candidatePartition(index, {
+  stopCount = 2,
+  coordinateCount = 2,
+  direction = 0,
+} = {}) {
   const routeUid = `R${index}`
   const patternId = `city-Taipei:pattern:p${index}`
   const shapeId = `city-Taipei:shape:s${index}`
+  const stops = Array.from({ length: stopCount }, (_value, stopIndex) => ({
+    stopUid: `S${index}-${stopIndex}`,
+    coordinate: [121 + stopIndex * 0.0001, 25 + stopIndex * 0.0001],
+  }))
+  const coordinates = Array.from({ length: coordinateCount }, (_value, coordinateIndex) => [
+    121 + coordinateIndex * 0.00001,
+    25 + coordinateIndex * 0.00001,
+  ])
   return {
     partitionId: String(index).repeat(24),
-    key: ['city', 'Taipei', routeUid, '0'].join('\0'),
+    key: ['city', 'Taipei', routeUid, String(direction)].join('\0'),
     sourceScope: 'city',
     city: 'Taipei',
     routeUid,
-    direction: 0,
+    direction,
     patterns: [{
-      patternId, routeUid, subRouteUid: `SR${index}`, direction: 0,
-      stops: [
-        { stopUid: `A${index}`, coordinate: [121, 25] },
-        { stopUid: `B${index}`, coordinate: [121.01, 25.01] },
-      ],
+      patternId, routeUid, subRouteUid: `SR${index}`, direction, stops,
     }],
     shapes: [{
-      shapeId, routeUid, subRouteUid: `SR${index}`, direction: 0,
-      coordinates: [[121, 25], [121.01, 25.01]],
+      shapeId, routeUid, subRouteUid: `SR${index}`, direction, coordinates,
+      measurement: { rawCoordinateCount: coordinateCount, updateTime: null },
     }],
     stats: {
       patternCount: 1,
@@ -169,6 +177,62 @@ describe('measurement working-set ownership', () => {
       patternCount: 1,
       shapeCount: 1,
       candidateMultiplicity: 1,
+    }))
+  })
+
+  it('front-loads the highest static projection work and emits bounded geometry dimensions', async () => {
+    const root = await workspace()
+    const source = replaySource()
+    const small = candidatePartition(1, { stopCount: 2, coordinateCount: 2 })
+    const circular = candidatePartition(2, { stopCount: 3, coordinateCount: 21, direction: 2 })
+    const large = candidatePartition(3, { stopCount: 5, coordinateCount: 101 })
+    const candidateBundle = {
+      partitions: [small, circular, large],
+      rejected: [],
+      rejectionCounts: {},
+    }
+    const progress = vi.fn()
+    const measuredOrder = []
+
+    await runMeasurement(runOptions(root), {
+      replayRawBundle: async () => source,
+      buildCandidatePartitions: () => candidateBundle,
+      createMeasurementReport: async ({ candidateBundle: received }) => {
+        for (const partition of received.partitions) measuredOrder.push(partition.partitionId)
+        return { metadata: { runId: 'geometry-priority-test' } }
+      },
+      publishMeasurementReport: async () => join(root.reportDir, 'geometry-priority-test'),
+      repositoryMainSha: '1'.repeat(40),
+      progress,
+    })
+
+    expect(measuredOrder).toEqual([large.partitionId, circular.partitionId, small.partitionId])
+    const summary = progress.mock.calls.map(([entry]) => entry)
+      .find((entry) => entry.phase === 'candidate-summary')
+    expect(summary.highestProjectionWorkPartitions[0]).toEqual(expect.objectContaining({
+      partitionId: large.partitionId,
+      totalStopCount: 5,
+      maxStopCount: 5,
+      totalRawCoordinateCount: 101,
+      maxRawCoordinateCount: 101,
+      totalNormalizedCoordinateCount: 101,
+      maxNormalizedCoordinateCount: 101,
+      totalSegmentCount: 100,
+      maxSegmentCount: 100,
+      projectionWorkUnits: 1_000,
+    }))
+    expect(progress).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'partition-start',
+      partitionId: large.partitionId,
+      totalStopCount: 5,
+      maxStopCount: 5,
+      totalRawCoordinateCount: 101,
+      maxRawCoordinateCount: 101,
+      totalNormalizedCoordinateCount: 101,
+      maxNormalizedCoordinateCount: 101,
+      totalSegmentCount: 100,
+      maxSegmentCount: 100,
+      projectionWorkUnits: 1_000,
     }))
   })
 })

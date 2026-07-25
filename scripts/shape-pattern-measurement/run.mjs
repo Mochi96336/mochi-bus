@@ -49,10 +49,20 @@ export async function runMeasurement(options, dependencies = {}) {
     Reflect.set(source, 'bundle', null)
     rawBundle = null
     source = null
-    emitProgress(progress, candidateSummary(candidateBundle))
 
-    const materializedPartitions = candidateBundle.partitions
-    candidateBundle.partitions = releasingPartitions(materializedPartitions, progress)
+    // Compute each static geometry descriptor once. Sorting comparators must not rescan
+    // the largest stop/coordinate arrays repeatedly before formal matcher measurement.
+    const partitionPlans = candidateBundle.partitions.map((partition) => ({
+      partition,
+      geometry: partitionGeometry(partition),
+    }))
+    emitProgress(progress, candidateSummary(candidateBundle, partitionPlans))
+
+    // Formal report records are sorted canonically before publication. Execution order
+    // is therefore free to front-load the largest deterministic geometry working sets,
+    // making an unbounded exact projection partition fail early with useful evidence.
+    partitionPlans.sort(compareMeasurementPriority)
+    candidateBundle.partitions = releasingPartitions(partitionPlans, progress)
 
     const repositoryMainSha = dependencies.repositoryMainSha ?? await resolveRepositoryMainSha()
     const report = await (dependencies.createMeasurementReport ?? createMeasurementReport)({
@@ -141,46 +151,41 @@ export async function cleanupOwnedGeneratedChild(ownership, { rawDir, reportDir 
   await rm(resolvedChild, { recursive: true, force: false })
 }
 
-function candidateSummary(candidateBundle) {
-  const partitions = Array.isArray(candidateBundle?.partitions) ? candidateBundle.partitions : []
-  const largestPartitions = [...partitions]
+function candidateSummary(candidateBundle, partitionPlans) {
+  const largestPartitions = [...partitionPlans]
     .sort((left, right) =>
-      (right.stats?.minSideCount ?? 0) - (left.stats?.minSideCount ?? 0)
-      || (right.stats?.candidateMultiplicity ?? 0) - (left.stats?.candidateMultiplicity ?? 0)
-      || left.partitionId.localeCompare(right.partitionId))
+      descendingNumber(left.partition.stats?.minSideCount ?? 0, right.partition.stats?.minSideCount ?? 0)
+      || descendingNumber(left.partition.stats?.candidateMultiplicity ?? 0, right.partition.stats?.candidateMultiplicity ?? 0)
+      || left.partition.partitionId.localeCompare(right.partition.partitionId))
     .slice(0, 20)
-    .map((partition) => ({
-      partitionId: partition.partitionId,
-      sourceScope: partition.sourceScope,
-      city: partition.city,
-      direction: partition.direction,
-      patternCount: partition.stats.patternCount,
-      shapeCount: partition.stats.shapeCount,
-      minSideCount: partition.stats.minSideCount,
-      candidateMultiplicity: partition.stats.candidateMultiplicity,
-    }))
+    .map(partitionPlanIdentity)
+  const highestProjectionWorkPartitions = [...partitionPlans]
+    .sort(compareMeasurementPriority)
+    .slice(0, 20)
+    .map(partitionPlanIdentity)
   return {
     phase: 'candidate-summary',
-    partitionCount: partitions.length,
+    partitionCount: partitionPlans.length,
     rejectedSourceRecordCount: Array.isArray(candidateBundle?.rejected) ? candidateBundle.rejected.length : 0,
-    totalPatternCount: partitions.reduce((sum, partition) => sum + partition.stats.patternCount, 0),
-    totalShapeCount: partitions.reduce((sum, partition) => sum + partition.stats.shapeCount, 0),
+    totalPatternCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.partition.stats.patternCount), 0),
+    totalShapeCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.partition.stats.shapeCount), 0),
+    totalStopCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.geometry.totalStopCount), 0),
+    totalRawCoordinateCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.geometry.totalRawCoordinateCount), 0),
+    totalNormalizedCoordinateCount: partitionPlans.reduce((sum, plan) =>
+      saturatingAdd(sum, plan.geometry.totalNormalizedCoordinateCount), 0),
     largestPartitions,
+    highestProjectionWorkPartitions,
   }
 }
 
-function* releasingPartitions(partitions, progress) {
-  for (const partition of partitions) {
-    const identity = {
-      partitionId: partition.partitionId,
-      sourceScope: partition.sourceScope,
-      city: partition.city,
-      direction: partition.direction,
-      patternCount: partition.stats.patternCount,
-      shapeCount: partition.stats.shapeCount,
-      minSideCount: partition.stats.minSideCount,
-      candidateMultiplicity: partition.stats.candidateMultiplicity,
-    }
+function* releasingPartitions(partitionPlans, progress) {
+  for (const plan of partitionPlans) {
+    const { partition } = plan
+    const identity = partitionPlanIdentity(plan)
     emitProgress(progress, { phase: 'partition-start', ...identity })
     let completed = false
     try {
@@ -192,6 +197,87 @@ function* releasingPartitions(partitions, progress) {
       emitProgress(progress, { phase: completed ? 'partition-complete' : 'partition-aborted', ...identity })
     }
   }
+}
+
+function partitionPlanIdentity({ partition, geometry }) {
+  return {
+    partitionId: partition.partitionId,
+    sourceScope: partition.sourceScope,
+    city: partition.city,
+    direction: partition.direction,
+    patternCount: partition.stats.patternCount,
+    shapeCount: partition.stats.shapeCount,
+    minSideCount: partition.stats.minSideCount,
+    candidateMultiplicity: partition.stats.candidateMultiplicity,
+    ...geometry,
+  }
+}
+
+function partitionGeometry(partition) {
+  const patterns = Array.isArray(partition?.patterns) ? partition.patterns : []
+  const shapes = Array.isArray(partition?.shapes) ? partition.shapes : []
+  const stopCounts = patterns.map((pattern) => Array.isArray(pattern?.stops) ? pattern.stops.length : 0)
+  const normalizedCoordinateCounts = shapes.map((shape) =>
+    Array.isArray(shape?.coordinates) ? shape.coordinates.length : 0)
+  const rawCoordinateCounts = shapes.map((shape, index) => {
+    const value = shape?.measurement?.rawCoordinateCount
+    return Number.isSafeInteger(value) && value >= 0 ? value : normalizedCoordinateCounts[index]
+  })
+  const segmentCounts = normalizedCoordinateCounts.map((count) => Math.max(0, count - 1))
+  const totalStopCount = safeSum(stopCounts)
+  const totalSegmentCount = safeSum(segmentCounts)
+  const orientationObjectiveFactor = partition?.direction === 2 ? 4 : 2
+  return {
+    totalStopCount,
+    maxStopCount: maxOrZero(stopCounts),
+    totalRawCoordinateCount: safeSum(rawCoordinateCounts),
+    maxRawCoordinateCount: maxOrZero(rawCoordinateCounts),
+    totalNormalizedCoordinateCount: safeSum(normalizedCoordinateCounts),
+    maxNormalizedCoordinateCount: maxOrZero(normalizedCoordinateCounts),
+    totalSegmentCount,
+    maxSegmentCount: maxOrZero(segmentCounts),
+    projectionWorkUnits: saturatingProduct(totalStopCount, totalSegmentCount, orientationObjectiveFactor),
+  }
+}
+
+function compareMeasurementPriority(left, right) {
+  return descendingNumber(left.geometry.projectionWorkUnits, right.geometry.projectionWorkUnits)
+    || descendingNumber(left.geometry.maxSegmentCount, right.geometry.maxSegmentCount)
+    || descendingNumber(left.geometry.maxStopCount, right.geometry.maxStopCount)
+    || descendingNumber(left.geometry.maxRawCoordinateCount, right.geometry.maxRawCoordinateCount)
+    || descendingNumber(left.partition.stats?.candidateMultiplicity ?? 0, right.partition.stats?.candidateMultiplicity ?? 0)
+    || left.partition.partitionId.localeCompare(right.partition.partitionId)
+}
+
+function descendingNumber(left, right) {
+  if (left === right) return 0
+  return left > right ? -1 : 1
+}
+
+function safeSum(values) {
+  return values.reduce((sum, value) => saturatingAdd(sum, value), 0)
+}
+
+function saturatingAdd(left, right) {
+  const normalizedLeft = Number.isSafeInteger(left) && left >= 0 ? left : 0
+  const normalizedRight = Number.isSafeInteger(right) && right >= 0 ? right : 0
+  if (normalizedLeft > Number.MAX_SAFE_INTEGER - normalizedRight) return Number.MAX_SAFE_INTEGER
+  return normalizedLeft + normalizedRight
+}
+
+function saturatingProduct(...values) {
+  let result = 1
+  for (const value of values) {
+    const normalized = Number.isSafeInteger(value) && value >= 0 ? value : 0
+    if (result === 0 || normalized === 0) return 0
+    if (result > Number.MAX_SAFE_INTEGER / normalized) return Number.MAX_SAFE_INTEGER
+    result *= normalized
+  }
+  return result
+}
+
+function maxOrZero(values) {
+  return values.reduce((maximum, value) => Math.max(maximum, value), 0)
 }
 
 function emitProgress(progress, entry) {
