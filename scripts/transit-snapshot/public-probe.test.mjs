@@ -86,6 +86,36 @@ describe('public surface probe', () => {
     })
   })
 
+  it('uses ordinary public GET URLs and keeps case identity out of band', async () => {
+    const api = fakeApi(responses())
+    await probePublicSurface({
+      city: 'Taipei', probeDate, reference: reference(), publicApi: api,
+      now: () => new Date('2026-07-19T00:20:00.000Z'),
+    })
+
+    const paths = api.getJson.mock.calls.map(([path]) => path)
+    expect(paths).toEqual([
+      '/api/v1/map/routes?city=Taipei',
+      '/api/v1/map/route?city=Taipei&route=307',
+      '/api/v1/map/place/place-1/arrivals?city=Taipei',
+      '/api/v1/map/vehicles?city=Taipei&route=307',
+    ])
+    for (const path of paths) {
+      const url = new URL(path, 'https://bus.example')
+      expect(url.searchParams.has('probe')).toBe(false)
+      expect(url.searchParams.has('snapshot')).toBe(false)
+      expect(url.searchParams.has('publicProbe')).toBe(false)
+    }
+    expect(api.postJson).toHaveBeenCalledWith('/api/v1/map/journey-eta', {
+      city: 'Taipei',
+      legs: [{
+        key: expect.stringMatching(/^probe:pub_[a-f0-9]{12}$/),
+        patternId: 'TPE307:0',
+        sequence: 1,
+      }],
+    })
+  })
+
   it('turns a version mismatch red and records what the public surface actually served', async () => {
     await expect(probe({ responseOverrides: { routes: { snapshotVersion: 'v0' } } })).resolves.toMatchObject({
       status: 'hard_failed', failureClass: 'public_version_mismatch', activeVersion: 'v1', observedVersion: 'v0',

@@ -42,7 +42,7 @@ export async function probePublicSurface({
     if (counts.routeWithoutPattern !== 0) throw hardFailure('route_without_pattern')
     hardChecksPassed += 1
 
-    const routes = await publicJson(publicApi, `/api/v1/map/routes?city=${encodeURIComponent(city)}&probe=${encodeURIComponent(sampleCaseId)}`, 'public_routes_failed')
+    const routes = await publicJson(publicApi, `/api/v1/map/routes?city=${encodeURIComponent(city)}`, 'public_routes_failed')
     if (routes?.schemaVersion !== 2 || !Array.isArray(routes.routes)) throw hardFailure('public_schema_invalid')
     hardChecksPassed += 1
     if (routes.source !== 'snapshot') throw hardFailure('public_source_not_snapshot')
@@ -58,7 +58,7 @@ export async function probePublicSurface({
 
     const sample = reference.sample
     if (!validSample(sample)) throw hardFailure('route_sample_failed')
-    const route = await publicJson(publicApi, `/api/v1/map/route?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}&probe=${encodeURIComponent(sampleCaseId)}`, 'route_sample_failed')
+    const route = await publicJson(publicApi, `/api/v1/map/route?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}`, 'route_sample_failed')
     const variant = Array.isArray(route?.variants)
       ? route.variants.find((candidate) => candidate?.variantKey === sample.patternId)
       : undefined
@@ -67,7 +67,7 @@ export async function probePublicSurface({
     }
     hardChecksPassed += 1
 
-    const arrivals = await publicJson(publicApi, `/api/v1/map/place/${encodeURIComponent(sample.placeId)}/arrivals?city=${encodeURIComponent(city)}&probe=${encodeURIComponent(sampleCaseId)}`, 'place_bundle_sample_failed')
+    const arrivals = await publicJson(publicApi, `/api/v1/map/place/${encodeURIComponent(sample.placeId)}/arrivals?city=${encodeURIComponent(city)}`, 'place_bundle_sample_failed')
     if (arrivals?.schemaVersion !== 1
       || arrivals?.scheduleSource !== 'place-bundle'
       || arrivals?.snapshotVersion !== activeVersion
@@ -153,7 +153,7 @@ async function realtimeDiagnostics({ city, sample, arrivals, publicApi, sampleCa
   }
 
   try {
-    const vehicles = await publicApi.getJson(`/api/v1/map/vehicles?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}&probe=${encodeURIComponent(sampleCaseId)}`)
+    const vehicles = await publicApi.getJson(`/api/v1/map/vehicles?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}`)
     // An empty vehicles list is legal data (no bus on the road right now).
     if (vehicles?.schemaVersion !== 1 || !Array.isArray(vehicles.vehicles) || vehicles.warning) {
       warnings.add('vehicles_upstream_degraded')
