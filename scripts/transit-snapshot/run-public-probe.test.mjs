@@ -121,7 +121,8 @@ describe('public probe runner', () => {
     const api = healthyApi()
     const baseGetJson = api.getJson
     api.getJson = vi.fn(async (path) => {
-      if (path.startsWith('/api/v1/map/routes') && path.includes('city=Taipei&')) {
+      const url = new URL(path, 'https://bus.example')
+      if (url.pathname === '/api/v1/map/routes' && url.searchParams.get('city') === 'Taipei') {
         return { schemaVersion: 2, source: 'snapshot', snapshotVersion: 'v0', routes: [{ routeName: '307' }] }
       }
       return baseGetJson(path)

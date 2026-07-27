@@ -8,6 +8,8 @@ GitHub public network → DNS/TLS → Worker release → public API → active s
 
 A6a watchdog 只讀 D1、不打公開 API;它的 Green 不能代替公網可用性。這個 probe 反向:每日 08:20 Asia/Taipei(UTC cron `20 0 * * *`)對全部 22 個 snapshot 城市走真實公開路徑。D1 只作唯讀參考(`dataset_versions.active_version`、counts、deterministic sample),所有 hard 判定都來自公開 API 的實際回應。Probe 只寫自己的 `public_probe_*` 表,不修改 dataset_versions、R2、artifacts 或 snapshot window/watchdog 結果。
 
+每日 public probe 的 GET 必須使用與一般使用者相同的公開 URL，不附加 synthetic case query、`snapshot` 或 publisher `probe`。`sampleCaseId` 只用於 deterministic rotation、journey leg identity、D1 evidence 與 telemetry。`probe` 仍保留給帶 exact active `snapshot=<version>` 與 bounded city/window identity 的 publisher snapshot-pinned reads。
+
 ## 兩個健康平面
 
 Snapshot hard health 與 realtime health 是分開的平面;`hard = Green、realtime = Degraded` 是完全合法且必須如實表達的狀態。
