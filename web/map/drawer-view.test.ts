@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  drawerHeightForLayout,
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   shouldAnimateDrawerTransition,
+  shouldPreserveDrawerHeight,
 } from './drawer-view'
 
 describe('drawer view transitions', () => {
@@ -32,11 +32,13 @@ describe('drawer view transitions', () => {
     expect(drawerMinHeightForTransition(true, Number.NaN)).toBe('')
   })
 
-  it('uses one stable desktop work area only for map lists', () => {
-    expect(drawerHeightForLayout('map-list', true)).toBe('min(56vh, 600px)')
-    expect(drawerHeightForLayout('map-list', false)).toBe('')
-    expect(drawerHeightForLayout('compact', true)).toBe('')
-    expect(drawerHeightForLayout('results', true)).toBe('')
-    expect(drawerHeightForLayout('timetable', true)).toBe('')
+  it('preserves height only in the explicitly enabled responsive layout', () => {
+    expect(shouldPreserveDrawerHeight(true, false, true, false)).toBe(true)
+    expect(shouldPreserveDrawerHeight(true, false, false, true)).toBe(false)
+    expect(shouldPreserveDrawerHeight(false, true, false, true)).toBe(true)
+    expect(shouldPreserveDrawerHeight(false, true, true, false)).toBe(false)
+    expect(shouldPreserveDrawerHeight(true, true, true, false)).toBe(true)
+    expect(shouldPreserveDrawerHeight(true, true, false, true)).toBe(true)
+    expect(shouldPreserveDrawerHeight(undefined, undefined, false, true)).toBe(false)
   })
 })
