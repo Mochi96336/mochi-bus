@@ -7,7 +7,7 @@ import {
   observeTDXResponseSuccess,
   transportFailureClass,
 } from './error-classification'
-import { dataCircuitKey } from './circuit-breaker'
+import { dataCircuitKey, dataRateLimitCircuitKey } from './circuit-breaker'
 import {
   TDXPayloadTooLargeError,
   logTDXResponseTooLarge,
@@ -54,7 +54,7 @@ export type TDXUpstreamResult = {
 
 export type TDXUpstreamDataClientDependencies = {
   requestTimeoutMs: number
-  assertCircuitClosed: (key: string) => void
+  assertCircuitsClosed: (keys: readonly string[]) => void
   recordCircuitFailure: (key: string, error: TDXServiceError, retryAfter?: string | null) => void
   recordCircuitSuccess: (key: string) => void
   responseError: (
@@ -68,10 +68,8 @@ export type TDXUpstreamDataClientDependencies = {
 }
 
 // Upstream data ownership lives here. This boundary owns request timeout, one-retry policy,
-// response parsing and data singleflight. The resolution façade still validates schemas,
-// records final success, emits logical telemetry and chooses memory/edge/stale data sources.
-// A parsed JSON success deliberately leaves the circuit unchanged until façade validation passes.
-// Global fetch is resolved at request time so Worker/test injection remains effective.
+// response parsing and data singleflight. Availability circuits are scoped by operation and TDX
+// service area, while rate-limit/quota cooldown remains shared by credential.
 export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientDependencies): {
   fetchUpstream: (request: TDXUpstreamRequest) => Promise<TDXUpstreamResult>
   resetTDXUpstreamState: () => void
@@ -80,17 +78,22 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
   const maxSingleflightEntries = dependencies.maxSingleflightEntries ?? DEFAULT_MAX_SINGLEFLIGHT_ENTRIES
 
   const fetchUpstream = async (request: TDXUpstreamRequest): Promise<TDXUpstreamResult> => {
-    const circuitKey = dataCircuitKey(request.credentialKey)
     const resource = tdxResponseResource(request.url)
+    const circuitKey = dataCircuitKey(
+      request.credentialKey,
+      request.operation ?? resource,
+      tdxResponseScope(request.url),
+    )
+    const rateLimitCircuitKey = dataRateLimitCircuitKey(request.credentialKey)
     const flightKey = dataFlightKey(request)
     const existingFlight = dataFlights.get(flightKey)
-    if (!existingFlight) dependencies.assertCircuitClosed(circuitKey)
+    if (!existingFlight) dependencies.assertCircuitsClosed([rateLimitCircuitKey, circuitKey])
 
     const { promise, leader } = joinSingleflight(
       dataFlights,
       flightKey,
       maxSingleflightEntries,
-      () => fetchTDXUpstream(request, circuitKey, resource),
+      () => fetchTDXUpstream(request, circuitKey, rateLimitCircuitKey, resource),
     )
     return {
       outcome: await promise,
@@ -103,6 +106,7 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
   const fetchTDXUpstream = async (
     request: TDXUpstreamRequest,
     circuitKey: string,
+    rateLimitCircuitKey: string,
     resource: string,
   ): Promise<TDXUpstreamOutcome> => {
     let retryCount = 0
@@ -125,6 +129,9 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
           initialFailureClass = serviceError.failureKind
           continue
         }
+        // A transport failure cannot confirm a credential cooldown. Release any half-open
+        // credential probe and let the scoped availability circuit own the failure.
+        dependencies.recordCircuitSuccess(rateLimitCircuitKey)
         dependencies.recordCircuitFailure(circuitKey, serviceError)
         return { ok: false, error: serviceError, retryCount, initialFailureClass }
       }
@@ -134,15 +141,19 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
           operation: request.operation,
           resource,
         })
+        if (error.rateLimited) dependencies.recordCircuitSuccess(circuitKey)
+        else dependencies.recordCircuitSuccess(rateLimitCircuitKey)
         if (shouldRetryResolution(error, request.operation, retryCount)) {
           retryCount += 1
           initialFailureClass = error.failureKind
           continue
         }
-        dependencies.recordCircuitFailure(circuitKey, error, response.headers.get('Retry-After'))
+        const failureKey = error.rateLimited ? rateLimitCircuitKey : circuitKey
+        dependencies.recordCircuitFailure(failureKey, error, response.headers.get('Retry-After'))
         return { ok: false, error, retryCount, initialFailureClass }
       }
       observeTDXResponseSuccess(request.isShared)
+      dependencies.recordCircuitSuccess(rateLimitCircuitKey)
 
       try {
         const parsed = await readJsonResponse(response, request.maxResponseBytes)
@@ -240,4 +251,13 @@ function tdxResponseResource(url: URL): string {
   ].includes(resource)
     ? resource
     : 'other'
+}
+
+function tdxResponseScope(url: URL): string {
+  const segments = url.pathname.split('/').filter(Boolean)
+  const busIndex = segments.indexOf('Bus')
+  const scopeType = busIndex >= 0 ? segments[busIndex + 2] : undefined
+  if (scopeType === 'City' && segments[busIndex + 3]) return `City/${segments[busIndex + 3]}`
+  if (scopeType === 'InterCity') return 'InterCity'
+  return 'global'
 }
