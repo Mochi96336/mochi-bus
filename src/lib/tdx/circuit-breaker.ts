@@ -102,9 +102,7 @@ export function createTDXCircuitBreaker(options: TDXCircuitBreakerOptions = {}):
 
   const recordFailure = (key: string, error: TDXServiceError, retryAfter: string | null = null): void => {
     const status = error.status
-    // Schema compatibility is a data-contract concern, not evidence that TDX is unavailable.
-    const transient = error.failureKind !== 'invalid_schema'
-      && (status === undefined || status === 408 || (status >= 500 && status <= 599))
+    const transient = status === undefined || status === 408 || (status >= 500 && status <= 599)
     if (!error.rateLimited && !transient) {
       recordSuccess(key)
       return
@@ -156,6 +154,14 @@ export const dataCircuitKey = (
   scope = 'global',
 ): string => `data/${credentialKey}/${operation}/${scope}`
 export const dataRateLimitCircuitKey = (credentialKey: string): string => `data-limit/${credentialKey}`
+
+export function redactedCircuitKey(key: string): string {
+  const [kind, _credential, ...rest] = key.split('/')
+  if (kind === 'token') return 'token/*'
+  if (kind === 'data-limit') return 'data-limit/*'
+  if (kind === 'data' && rest.length >= 2) return ['data', '*', ...rest].join('/')
+  return 'unknown'
+}
 
 function circuitOpenError(message: string, warning: TDXWarning): TDXServiceError {
   const error = new TDXServiceError(
