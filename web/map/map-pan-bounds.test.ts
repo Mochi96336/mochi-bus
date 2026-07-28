@@ -36,10 +36,11 @@ function createMapStub(options: L.MapOptions = {}) {
 }
 
 describe('Taiwan map pan bounds', () => {
-  it('arms the Leaflet boundary only while a pointer gesture may become a drag', async () => {
+  it('releases a non-drag gesture even when the pointer ends outside the map', async () => {
     const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
     const { map } = createMapStub()
-    const dispose = constrainMapPanToTaiwan(map, surface)
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
 
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
@@ -48,7 +49,7 @@ describe('Taiwan map pan bounds', () => {
     expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
     expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
 
-    surface.dispatchEvent(new Event('pointerup'))
+    releaseSurface.dispatchEvent(new Event('pointerup'))
     await Promise.resolve()
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
@@ -58,16 +59,35 @@ describe('Taiwan map pan bounds', () => {
 
   it('keeps the boundary through drag inertia, then rebounds and releases the camera', async () => {
     const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
     const { map, emit, panInsideBounds } = createMapStub()
-    const dispose = constrainMapPanToTaiwan(map, surface)
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
 
     surface.dispatchEvent(new Event('pointerdown'))
     emit('dragstart')
-    surface.dispatchEvent(new Event('pointerup'))
+    releaseSurface.dispatchEvent(new Event('pointerup'))
     await Promise.resolve()
 
     expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
     emit('moveend')
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(TAIWAN_PAN_BOUNDS, { animate: true })
+
+    dispose()
+  })
+
+  it('releases and rebounds an active drag when the window loses focus', () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    surface.dispatchEvent(new Event('pointerdown'))
+    emit('dragstart')
+    releaseSurface.dispatchEvent(new Event('blur'))
 
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
