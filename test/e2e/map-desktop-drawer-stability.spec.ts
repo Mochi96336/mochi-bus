@@ -1,7 +1,7 @@
 import type { Route } from '@playwright/test'
 import { expect, test, type Page } from './fixtures'
 
-const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
+const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.997, 120.212] }
 const place = {
   placeId: 'P1',
   name: '臺南火車站',
@@ -88,6 +88,18 @@ async function mockMap(page: Page, gates: {
       })),
     },
   }))
+  await page.route('**/api/v1/map/network*', (route) => route.fulfill({
+    json: {
+      version: 'desktop-drawer-stability',
+      routes: [],
+      places: [{
+        placeId: place.placeId,
+        name: place.name,
+        latitude: place.latitude,
+        longitude: place.longitude,
+      }],
+    },
+  }))
   await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, async (route) => {
     gates.nearbyStarted()
     await fulfillAfter(route, gates.nearby, { places: [place] })
@@ -145,13 +157,19 @@ test('keeps the desktop drawer shell stable while a map click auto-previews the 
     window.requestAnimationFrame(sample)
   })
 
-  const zoomIn = page.locator('.leaflet-control-zoom-in')
-  for (let index = 0; index < 6; index += 1) {
-    await zoomIn.click()
-    await page.waitForTimeout(35)
-  }
-  await page.waitForTimeout(120)
-  await page.locator('#map').click({ position: { x: 620, y: 430 } })
+  const network = page.getByRole('button', { name: '切換全路網與全部站點' })
+  await network.click()
+  await expect(network).toHaveAttribute('aria-pressed', 'true')
+  await expect(network).not.toHaveAttribute('aria-busy')
+
+  const mapBox = await page.locator('#map').boundingBox()
+  const drawerBox = await drawer.boundingBox()
+  if (!mapBox || !drawerBox) throw new Error('map stage has no layout box')
+  // focusPoint places the city center in the drawer-aware visible stage. These offsets mirror
+  // the desktop camera padding constants: left 45, top 90, bottom 45, safety gap 48.
+  const targetX = mapBox.x + (drawerBox.x - mapBox.x + 45 - 48) / 2
+  const targetY = mapBox.y + mapBox.height / 2 + (90 - 45) / 2
+  await page.mouse.click(targetX, targetY)
 
   await nearbyRequested.promise
   await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
