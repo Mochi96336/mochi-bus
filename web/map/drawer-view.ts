@@ -6,11 +6,15 @@ export type DrawerView =
   | {
       key: string
       mode: 'compact'
+      preserveMobileHeight?: boolean
+      preserveDesktopHeight?: boolean
       content: readonly Node[]
     }
   | {
       key: string
       mode: DrawerScrollableMode
+      preserveMobileHeight?: boolean
+      preserveDesktopHeight?: boolean
       header: readonly Node[]
       content: readonly Node[]
       footer?: readonly Node[]
@@ -19,6 +23,7 @@ export type DrawerView =
 export type DrawerViewSession = {
   readonly signal: AbortSignal
   readonly scrollRegion?: HTMLDivElement
+  releasePreservedHeight(): void
   onDispose(cleanup: () => void): void
 }
 
@@ -38,6 +43,15 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   }
 
   const render = (view: DrawerView): DrawerViewSession => {
+    const mobileLayout = window.matchMedia('(max-width: 640px)')
+    const desktopLayout = window.matchMedia('(min-width: 641px) and (min-height: 560px)')
+    const preserveHeight = shouldPreserveDrawerHeight(
+      view.preserveMobileHeight,
+      view.preserveDesktopHeight,
+      mobileLayout.matches,
+      desktopLayout.matches,
+    )
+    const previousHeight = preserveHeight ? drawer.getBoundingClientRect().height : 0
     const restoredScrollTop = drawerScrollTopForTransition(
       currentViewKey,
       view.key,
@@ -48,12 +62,53 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     const abortController = new AbortController()
     const cleanups: Array<() => void> = []
     let active = true
+    let preservedHeightReleased = false
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(currentViewKey, view.key)
     currentViewKey = view.key
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
+
+    const hasPreservedHeight = Boolean(
+      preserveHeight
+      && Number.isFinite(previousHeight)
+      && previousHeight > 0,
+    )
+    const applyPreservedMinHeight = () => {
+      const activeLayout = shouldPreserveDrawerHeight(
+        view.preserveMobileHeight,
+        view.preserveDesktopHeight,
+        mobileLayout.matches,
+        desktopLayout.matches,
+      )
+      const maximumHeight = Number.parseFloat(window.getComputedStyle(drawer).maxHeight)
+      const preservedMinHeight = drawerMinHeightForTransition(
+        !preservedHeightReleased && activeLayout,
+        previousHeight,
+        maximumHeight,
+      )
+      if (preservedMinHeight) drawer.style.minHeight = preservedMinHeight
+      else drawer.style.removeProperty('min-height')
+    }
+    const releasePreservedHeight = () => {
+      if (!active || preservedHeightReleased) return
+      preservedHeightReleased = true
+      drawer.style.removeProperty('min-height')
+    }
+    applyPreservedMinHeight()
+    if (hasPreservedHeight) {
+      if (view.preserveMobileHeight) mobileLayout.addEventListener('change', applyPreservedMinHeight)
+      if (view.preserveDesktopHeight) desktopLayout.addEventListener('change', applyPreservedMinHeight)
+      window.addEventListener('resize', applyPreservedMinHeight)
+      cleanups.push(() => {
+        if (view.preserveMobileHeight) mobileLayout.removeEventListener('change', applyPreservedMinHeight)
+        if (view.preserveDesktopHeight) desktopLayout.removeEventListener('change', applyPreservedMinHeight)
+        window.removeEventListener('resize', applyPreservedMinHeight)
+        drawer.style.removeProperty('min-height')
+      })
+    }
+
     drawer.scrollTop = 0
     drawer.replaceChildren()
 
@@ -96,6 +151,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     return {
       signal: abortController.signal,
       scrollRegion,
+      releasePreservedHeight,
       onDispose(cleanup) {
         if (active) cleanups.push(cleanup)
         else cleanup()
@@ -116,6 +172,30 @@ export function drawerScrollTopForTransition(
   previousScrollTop: number,
 ): number {
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
+}
+
+export function shouldPreserveDrawerHeight(
+  preserveMobileHeight: boolean | undefined,
+  preserveDesktopHeight: boolean | undefined,
+  mobileLayout: boolean,
+  desktopLayout: boolean,
+): boolean {
+  return Boolean(
+    (preserveMobileHeight && mobileLayout)
+    || (preserveDesktopHeight && desktopLayout),
+  )
+}
+
+export function drawerMinHeightForTransition(
+  preserveHeight: boolean | undefined,
+  previousHeight: number,
+  maximumHeight = Number.POSITIVE_INFINITY,
+): string {
+  if (!preserveHeight || !Number.isFinite(previousHeight) || previousHeight <= 0) return ''
+  const boundedHeight = Number.isFinite(maximumHeight)
+    ? Math.min(previousHeight, Math.max(0, maximumHeight))
+    : previousHeight
+  return boundedHeight > 0 ? `${Math.ceil(boundedHeight)}px` : ''
 }
 
 function animateNodes(nodes: readonly Node[]) {

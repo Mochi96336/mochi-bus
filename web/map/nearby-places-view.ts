@@ -1,4 +1,4 @@
-import type { DrawerView } from './drawer-view'
+import type { DrawerView, DrawerViewSession } from './drawer-view'
 import type { NearbyPlace } from './map-api-client'
 
 export type NearbyOrigin = readonly [latitude: number, longitude: number]
@@ -22,7 +22,7 @@ export type NearbyPlacesFailureView = NearbyViewBase & {
 }
 
 type NearbyPlacesViewOptions = {
-  renderDrawer: (view: DrawerView) => void
+  renderDrawer: (view: DrawerView) => DrawerViewSession
   createBackButton: (label: string, onClick: () => void) => HTMLButtonElement
   createHeading: (title: string, description: string) => HTMLElement
   createRetryButton: (onClick: () => void) => HTMLButtonElement
@@ -60,6 +60,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
+        preserveDesktopHeight: true,
         header: drawerHeader('附近站牌', '正在搜尋附近站牌', backLabel, onBack),
         content: [loadingList],
       })
@@ -81,9 +82,10 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         button.addEventListener('click', () => options.onOpenPlace(place))
         list.appendChild(button)
       }
-      options.renderDrawer({
+      const session = options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
+        preserveDesktopHeight: places.length > 0,
         header: drawerHeader(
           '附近站牌',
           places.length
@@ -95,6 +97,10 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         content: [list],
         footer: [options.createTripModeButton()],
       })
+      if (places.length) {
+        const frame = requestAnimationFrame(() => session.releasePreservedHeight())
+        session.onDispose(() => cancelAnimationFrame(frame))
+      }
     },
 
     renderError({ cityCode, origin, error, backLabel, onBack, onRetry }) {

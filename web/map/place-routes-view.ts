@@ -51,6 +51,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
       options.renderDrawer({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
+        preserveDesktopHeight: true,
         header: drawerHeader(place, '正在取得路線與到站時間'),
         content: [loadingList],
       })
