@@ -163,6 +163,7 @@ export function constrainMapPanToTaiwan(
   const onZoomStart = () => {
     if (!armed) return
     zooming = true
+    reboundPending = true
   }
 
   const onZoomEnd = () => {
