@@ -7,7 +7,7 @@ import {
   TAIWAN_PAN_BOUNDS_VISCOSITY,
 } from './map-pan-bounds'
 
-type MapEventName = 'dragstart' | 'moveend'
+type MapEventName = 'dragstart' | 'moveend' | 'zoomstart' | 'zoomend'
 
 function createMapStub(options: L.MapOptions = {}) {
   const listeners = new Map<MapEventName, Set<() => void>>()
@@ -33,6 +33,12 @@ function createMapStub(options: L.MapOptions = {}) {
       listeners.get(type)?.forEach((listener) => listener())
     },
   }
+}
+
+function dispatchPointer(target: EventTarget, type: 'pointerdown' | 'pointerup' | 'pointercancel', id: number) {
+  const event = new Event(type)
+  Object.defineProperty(event, 'pointerId', { value: id })
+  target.dispatchEvent(event)
 }
 
 describe('Taiwan map pan bounds', () => {
@@ -126,6 +132,57 @@ describe('Taiwan map pan bounds', () => {
     emit('moveend')
     releaseSurface.dispatchEvent(new Event('pointerup'))
     await Promise.resolve()
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(TAIWAN_PAN_BOUNDS, { animate: true })
+
+    dispose()
+  })
+
+  it('releases after a drag becomes a stationary two-pointer gesture', async () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    dispatchPointer(surface, 'pointerdown', 1)
+    emit('dragstart')
+    dispatchPointer(surface, 'pointerdown', 2)
+    emit('moveend')
+    dispatchPointer(releaseSurface, 'pointerup', 2)
+    dispatchPointer(releaseSurface, 'pointerup', 1)
+    await Promise.resolve()
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(TAIWAN_PAN_BOUNDS, { animate: true })
+
+    dispose()
+  })
+
+  it('waits for pinch zoom to finish before rebounding a handed-off drag', async () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    dispatchPointer(surface, 'pointerdown', 1)
+    emit('dragstart')
+    dispatchPointer(surface, 'pointerdown', 2)
+    emit('moveend')
+    emit('zoomstart')
+    dispatchPointer(releaseSurface, 'pointerup', 2)
+    dispatchPointer(releaseSurface, 'pointerup', 1)
+    await Promise.resolve()
+
+    expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
+    expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
+    expect(panInsideBounds).not.toHaveBeenCalled()
+
+    emit('zoomend')
 
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
