@@ -6,6 +6,13 @@ type MapCamera = {
   zoom: number
 }
 
+const city = {
+  code: 'Taipei',
+  name: '臺北',
+  region: 'north',
+  center: [25, 121] as [number, number],
+}
+
 async function mockTiles(page: Page) {
   await page.route('https://tile.openstreetmap.org/**', async (route) => {
     await route.fulfill({ status: 204 })
@@ -76,8 +83,9 @@ async function waitForStableCamera(page: Page): Promise<MapCamera> {
 async function openMap(page: Page) {
   await page.setViewportSize({ width: 1200, height: 800 })
   await mockTiles(page)
-  await mockMapBootstrapCities(page, [])
+  await mockMapBootstrapCities(page, [city])
   await page.goto('/map')
+  await expect(page.getByRole('heading', { name: '地圖初始化失敗' })).toHaveCount(0)
   await expect.poll(() => readMapCamera(page)).not.toBeNull()
 }
 
