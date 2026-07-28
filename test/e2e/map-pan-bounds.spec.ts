@@ -95,7 +95,7 @@ test.describe('Taiwan map pan bounds', () => {
     await page.evaluate(() => {
       const input = document.createElement('input')
       input.id = 'pan-blur-probe'
-      document.body.append(input)
+      document.body.appendChild(input)
       input.focus()
     })
     await expect(page.locator('#pan-blur-probe')).toBeFocused()
