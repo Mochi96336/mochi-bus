@@ -130,12 +130,13 @@ export function createMapCameraController(
 }
 
 function mapPanReleaseSurface(target: Window): Pick<EventTarget, 'addEventListener' | 'removeEventListener'> {
+  const eventTarget = target as EventTarget
   return {
     addEventListener(type, listener, options) {
-      target.addEventListener(type, listener, type === 'blur' ? false : options)
+      eventTarget.addEventListener(type, listener, type === 'blur' ? false : options)
     },
     removeEventListener(type, listener, options) {
-      target.removeEventListener(type, listener, type === 'blur' ? false : options)
+      eventTarget.removeEventListener(type, listener, type === 'blur' ? false : options)
     },
   }
 }
