@@ -6,7 +6,8 @@ import { selectBestEta } from '../domain/map/eta'
 import { nextScheduledMinutes, scheduleClockLabel, type ScheduleItem, type ScheduleQuery } from '../domain/schedule'
 import {
   buildStopArrivalBatches,
-  isStopArrivalBatchPayload,
+  isStopArrivalBatchEnvelope,
+  parseStopArrivalBatchPayload,
   STOP_ARRIVAL_MAX_RESPONSE_BYTES,
 } from '../infrastructure/tdx/stop-arrivals'
 import { getPinnedStopPlaceBundle } from '../infrastructure/transit/snapshot-probe-repository'
@@ -176,11 +177,11 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
     let realtimeQueries = 0
     for (const batch of batches) {
       try {
-        const resolved = await resolveTDXJson<BusETAItem[]>(env, batch.url, 15, {
+        const resolved = await resolveTDXJson<unknown[]>(env, batch.url, 15, {
           operation: 'place_arrivals',
           city: telemetryCity(city),
           maxResponseBytes: STOP_ARRIVAL_MAX_RESPONSE_BYTES,
-          validate: (value): value is BusETAItem[] => isStopArrivalBatchPayload(value, batch.stopUids),
+          validate: isStopArrivalBatchEnvelope,
           blockedFailureClass: rateLimited ? 'rate_limited' : undefined,
           staleFallback: async () => {
             const stale = await readLastRealtime(env, city, batch.cacheKey)
@@ -190,13 +191,36 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
             } : undefined
           },
         })
-        etaItems.push(...resolved.data)
+        const parsed = parseStopArrivalBatchPayload(resolved.data, batch.stopUids)
+        if (!parsed.ok) {
+          throw new TDXServiceError('TDX stop arrival response has an invalid envelope', 502, {
+            failureKind: 'invalid_schema',
+          })
+        }
+        if (resolved.resolution === 'upstream' && (
+          parsed.droppedRows > 0
+          || Object.keys(parsed.issueCounts).length > 0
+          || parsed.unknownDirectionValues.length > 0
+        )) {
+          console.info(JSON.stringify({
+            message: 'tdx_payload_rows_normalized',
+            operation: 'place_arrivals',
+            city,
+            tdxScope: batch.scope,
+            totalRows: parsed.totalRows,
+            acceptedRows: parsed.data.length,
+            droppedRows: parsed.droppedRows,
+            issueCounts: parsed.issueCounts,
+            unknownDirectionValues: parsed.unknownDirectionValues.slice(0, 5),
+          }))
+        }
+        etaItems.push(...parsed.data)
         if (resolved.resolution === 'stale_replay') {
           batch.candidates.forEach((candidate) => {
             staleRouteIdentities.add(routeIdentity(candidate.routeName, candidate.routeUid))
           })
         } else {
-          await writeLastRealtime(env, city, batch.cacheKey, resolved.data)
+          await writeLastRealtime(env, city, batch.cacheKey, parsed.data)
           realtimeQueries += 1
         }
       } catch (error) {
