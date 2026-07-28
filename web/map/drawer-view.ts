@@ -6,11 +6,13 @@ export type DrawerView =
   | {
       key: string
       mode: 'compact'
+      preserveMobileHeight?: boolean
       content: readonly Node[]
     }
   | {
       key: string
       mode: DrawerScrollableMode
+      preserveMobileHeight?: boolean
       header: readonly Node[]
       content: readonly Node[]
       footer?: readonly Node[]
@@ -38,6 +40,9 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   }
 
   const render = (view: DrawerView): DrawerViewSession => {
+    const previousHeight = view.preserveMobileHeight && window.matchMedia('(max-width: 640px)').matches
+      ? drawer.getBoundingClientRect().height
+      : 0
     const restoredScrollTop = drawerScrollTopForTransition(
       currentViewKey,
       view.key,
@@ -52,6 +57,9 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     const animateContent = shouldAnimateDrawerTransition(currentViewKey, view.key)
     currentViewKey = view.key
 
+    const preservedMinHeight = drawerMinHeightForTransition(view.preserveMobileHeight, previousHeight)
+    if (preservedMinHeight) drawer.style.minHeight = preservedMinHeight
+    else drawer.style.removeProperty('min-height')
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
     drawer.scrollTop = 0
@@ -116,6 +124,14 @@ export function drawerScrollTopForTransition(
   previousScrollTop: number,
 ): number {
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
+}
+
+export function drawerMinHeightForTransition(
+  preserveHeight: boolean | undefined,
+  previousHeight: number,
+): string {
+  if (!preserveHeight || !Number.isFinite(previousHeight) || previousHeight <= 0) return ''
+  return `${Math.ceil(previousHeight)}px`
 }
 
 function animateNodes(nodes: readonly Node[]) {
