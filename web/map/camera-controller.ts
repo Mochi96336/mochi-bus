@@ -1,5 +1,6 @@
 import type L from 'leaflet'
 import { calculateCameraPadding, cameraPanOffset, type CameraRect } from '../../src/domain/map/camera-padding'
+import { constrainMapPanToTaiwan } from './map-pan-bounds'
 
 type PointTarget = {
   kind: 'point'
@@ -33,6 +34,8 @@ export function createMapCameraController(
   mapElement: HTMLElement,
   drawerElement: HTMLElement,
 ): MapCameraController {
+  constrainMapPanToTaiwan(map)
+
   let target: CameraTarget | undefined
   let frame: number | undefined
   let disposed = false
