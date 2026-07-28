@@ -30,6 +30,10 @@ type PanBoundedMap = {
 type InertiaSafeBounds = L.LatLngBoundsExpression & Pick<L.LatLngBounds, 'getSouthWest' | 'getNorthEast'>
 type PointerSurface = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 
+export type MapPanConstraintDisposer = (() => void) & {
+  releaseForProgrammaticCamera(): void
+}
+
 function defaultReleaseSurface(surface: PointerSurface): PointerSurface {
   return typeof window === 'undefined' ? surface : window
 }
@@ -106,7 +110,7 @@ export function constrainMapPanToTaiwan(
   map: PanBoundedMap,
   surface: PointerSurface,
   releaseSurface: PointerSurface = defaultReleaseSurface(surface),
-): () => void {
+): MapPanConstraintDisposer {
   const previousBounds = map.options.maxBounds
   const previousViscosity = map.options.maxBoundsViscosity
   const wheelZoomFallbackDelay = Math.max(0, map.options.wheelDebounceTime ?? 40) + 16
@@ -170,13 +174,24 @@ export function constrainMapPanToTaiwan(
   const settleKeyboardPan = () => {
     if (!keyboardReboundPending) return
     clearKeyboardReboundPending()
-    map.panInsideBounds(taiwanPanBoundsForViewport(map), { animate: true })
+    settleInsideBounds()
   }
 
   const handoffKeyboardRebound = () => {
     if (!keyboardReboundPending) return
     clearKeyboardReboundPending()
     reboundPending = true
+  }
+
+  const releaseForProgrammaticCamera = () => {
+    if (disposed) return
+    clearWheelZoomPending()
+    clearKeyboardReboundPending()
+    clearSettling()
+    dragging = false
+    zooming = false
+    reboundPending = false
+    restoreOptions()
   }
 
   const finishDrag = () => {
@@ -350,7 +365,7 @@ export function constrainMapPanToTaiwan(
   map.on('zoomstart', onZoomStart)
   map.on('zoomend', onZoomEnd)
 
-  return () => {
+  const dispose = (() => {
     if (disposed) return
     disposed = true
     surface.removeEventListener('pointerdown', onPointerDown, { capture: true })
@@ -371,5 +386,7 @@ export function constrainMapPanToTaiwan(
     zooming = false
     reboundPending = false
     restoreOptions()
-  }
+  }) as MapPanConstraintDisposer
+  dispose.releaseForProgrammaticCamera = releaseForProgrammaticCamera
+  return dispose
 }

@@ -34,7 +34,7 @@ export function createMapCameraController(
   mapElement: HTMLElement,
   drawerElement: HTMLElement,
 ): MapCameraController {
-  const releaseTaiwanPanConstraint = constrainMapPanToTaiwan(
+  const taiwanPanConstraint = constrainMapPanToTaiwan(
     map,
     mapElement,
     mapPanReleaseSurface(window),
@@ -47,6 +47,7 @@ export function createMapCameraController(
   const apply = (animate = false) => {
     frame = undefined
     if (disposed || !target) return
+    taiwanPanConstraint.releaseForProgrammaticCamera()
 
     const padding = calculateCameraPadding(readRect(mapElement), readRect(drawerElement))
     if (target.kind === 'bounds') {
@@ -80,12 +81,17 @@ export function createMapCameraController(
     frame = window.requestAnimationFrame(() => apply())
   }
 
-  const clear = () => {
+  const clearTarget = () => {
     target = undefined
     cancelScheduledApply()
   }
 
-  const releaseOnMapInteraction = () => clear()
+  const clear = () => {
+    clearTarget()
+    taiwanPanConstraint.releaseForProgrammaticCamera()
+  }
+
+  const releaseOnMapInteraction = () => clearTarget()
   mapElement.addEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
   mapElement.addEventListener('wheel', releaseOnMapInteraction, { capture: true, passive: true })
   mapElement.addEventListener('keydown', releaseOnMapInteraction, { capture: true })
@@ -117,8 +123,8 @@ export function createMapCameraController(
     dispose() {
       if (disposed) return
       disposed = true
-      clear()
-      releaseTaiwanPanConstraint()
+      clearTarget()
+      taiwanPanConstraint()
       resizeObserver.disconnect()
       mapElement.removeEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
       mapElement.removeEventListener('wheel', releaseOnMapInteraction, { capture: true })

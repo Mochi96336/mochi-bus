@@ -36,24 +36,25 @@ function point(x: number, y: number): StubPoint {
 function createMapStub(options: L.MapOptions = {}) {
   const listeners = new Map<MapEventName, Set<() => void>>()
   const panInsideBounds = vi.fn()
+  let zoom = 7
   const map = {
     options,
     getSize() {
       return point(400, 300)
     },
     getZoom() {
-      return 7
+      return zoom
     },
-    project(latlng: L.LatLngExpression, zoom = 7) {
+    project(latlng: L.LatLngExpression, projectZoom = zoom) {
       const [latitude, longitude] = latlng as [number, number]
-      const scale = 2 ** zoom
+      const scale = 2 ** projectZoom
       return point(longitude * scale, -latitude * scale)
     },
-    unproject(projected: L.PointExpression, zoom = 7) {
+    unproject(projected: L.PointExpression, projectZoom = zoom) {
       const [x, y] = Array.isArray(projected)
         ? projected
         : [projected.x, projected.y]
-      const scale = 2 ** zoom
+      const scale = 2 ** projectZoom
       return { lat: -y / scale, lng: x / scale } as L.LatLng
     },
     on(type: MapEventName, listener: () => void) {
@@ -68,7 +69,16 @@ function createMapStub(options: L.MapOptions = {}) {
     },
     panInsideBounds,
   }
-  return { map, panInsideBounds }
+  return {
+    map,
+    panInsideBounds,
+    emit(type: MapEventName) {
+      listeners.get(type)?.forEach((listener) => listener())
+    },
+    setZoom(nextZoom: number) {
+      zoom = nextZoom
+    },
+  }
 }
 
 function keyboardEvent(
@@ -147,6 +157,36 @@ describe('Taiwan pan bounds keyboard navigation', () => {
     await Promise.resolve()
     expect(map.options.maxBounds).toBe(previousBounds)
     expect(map.options.maxBoundsViscosity).toBe(.4)
+
+    dispose()
+  })
+
+  it('re-settles after wheel zoom interrupts the keyboard rebound', async () => {
+    const surface = new EventTarget()
+    const { map, emit, panInsideBounds, setZoom } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, surface)
+
+    surface.dispatchEvent(keyboardEvent('ArrowLeft', 37))
+    await Promise.resolve()
+    emit('moveend')
+
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+
+    surface.dispatchEvent(new Event('wheel'))
+    emit('moveend')
+
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+
+    emit('zoomstart')
+    setZoom(9)
+    emit('zoomend')
+
+    expect(panInsideBounds).toHaveBeenCalledTimes(2)
+    expect(panInsideBounds).toHaveBeenNthCalledWith(
+      2,
+      taiwanPanBoundsForViewport(map),
+      { animate: true },
+    )
 
     dispose()
   })
