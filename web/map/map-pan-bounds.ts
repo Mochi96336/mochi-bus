@@ -18,6 +18,10 @@ type PanBoundedMap = {
 
 type PointerSurface = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 
+function defaultReleaseSurface(surface: PointerSurface): PointerSurface {
+  return typeof window === 'undefined' ? surface : window
+}
+
 /**
  * Arms Leaflet maxBounds only for pointer-driven drags.
  *
@@ -25,7 +29,11 @@ type PointerSurface = Pick<EventTarget, 'addEventListener' | 'removeEventListene
  * and fitBounds calls. Gesture-scoping preserves those camera offsets while
  * retaining Leaflet's viscous edge and inertia limiting during manual panning.
  */
-export function constrainMapPanToTaiwan(map: PanBoundedMap, surface: PointerSurface): () => void {
+export function constrainMapPanToTaiwan(
+  map: PanBoundedMap,
+  surface: PointerSurface,
+  releaseSurface: PointerSurface = defaultReleaseSurface(surface),
+): () => void {
   const previousBounds = map.options.maxBounds
   const previousViscosity = map.options.maxBoundsViscosity
   let armed = false
@@ -37,6 +45,13 @@ export function constrainMapPanToTaiwan(map: PanBoundedMap, surface: PointerSurf
     armed = false
     map.options.maxBounds = previousBounds
     map.options.maxBoundsViscosity = previousViscosity
+  }
+
+  const finishDrag = () => {
+    if (!armed || !dragging) return
+    dragging = false
+    restoreOptions()
+    map.panInsideBounds(TAIWAN_PAN_BOUNDS, { animate: true })
   }
 
   const onPointerDown: EventListener = () => {
@@ -53,20 +68,25 @@ export function constrainMapPanToTaiwan(map: PanBoundedMap, surface: PointerSurf
     })
   }
 
+  const onReleaseSurfaceBlur: EventListener = () => {
+    if (disposed) return
+    if (dragging) {
+      finishDrag()
+      return
+    }
+    restoreOptions()
+  }
+
   const onDragStart = () => {
     if (armed) dragging = true
   }
 
-  const onMoveEnd = () => {
-    if (!armed || !dragging) return
-    dragging = false
-    restoreOptions()
-    map.panInsideBounds(TAIWAN_PAN_BOUNDS, { animate: true })
-  }
+  const onMoveEnd = () => finishDrag()
 
   surface.addEventListener('pointerdown', onPointerDown, { capture: true })
-  surface.addEventListener('pointerup', onPointerRelease, { capture: true })
-  surface.addEventListener('pointercancel', onPointerRelease, { capture: true })
+  releaseSurface.addEventListener('pointerup', onPointerRelease, { capture: true })
+  releaseSurface.addEventListener('pointercancel', onPointerRelease, { capture: true })
+  releaseSurface.addEventListener('blur', onReleaseSurfaceBlur, { capture: true })
   map.on('dragstart', onDragStart)
   map.on('moveend', onMoveEnd)
 
@@ -74,10 +94,12 @@ export function constrainMapPanToTaiwan(map: PanBoundedMap, surface: PointerSurf
     if (disposed) return
     disposed = true
     surface.removeEventListener('pointerdown', onPointerDown, { capture: true })
-    surface.removeEventListener('pointerup', onPointerRelease, { capture: true })
-    surface.removeEventListener('pointercancel', onPointerRelease, { capture: true })
+    releaseSurface.removeEventListener('pointerup', onPointerRelease, { capture: true })
+    releaseSurface.removeEventListener('pointercancel', onPointerRelease, { capture: true })
+    releaseSurface.removeEventListener('blur', onReleaseSurfaceBlur, { capture: true })
     map.off('dragstart', onDragStart)
     map.off('moveend', onMoveEnd)
+    dragging = false
     restoreOptions()
   }
 }
