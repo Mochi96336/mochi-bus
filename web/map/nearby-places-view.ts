@@ -1,4 +1,5 @@
 import type { DrawerView, DrawerViewSession } from './drawer-view'
+import { createNearbyPlaceLoadingList } from './loading-skeleton'
 import type { NearbyPlace } from './map-api-client'
 
 export type NearbyOrigin = readonly [latitude: number, longitude: number]
@@ -50,19 +51,12 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
 
   return {
     renderLoading({ cityCode, origin, backLabel, onBack }) {
-      const loadingList = document.createElement('div')
-      loadingList.className = 'place-route-loading'
-      for (let index = 0; index < 3; index += 1) {
-        const skeleton = document.createElement('div')
-        skeleton.className = 'place-route-skeleton'
-        loadingList.appendChild(skeleton)
-      }
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
         preserveDesktopHeight: true,
         header: drawerHeader('附近站牌', '正在搜尋附近站牌', backLabel, onBack),
-        content: [loadingList],
+        content: [createNearbyPlaceLoadingList()],
       })
     },
 
