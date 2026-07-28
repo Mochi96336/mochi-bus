@@ -114,14 +114,15 @@ test.describe('Taiwan map pan bounds', () => {
     await openMap(page)
     await page.locator('#map').focus()
 
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       await page.keyboard.press('Shift+ArrowLeft')
+      await waitForStableCamera(page)
     }
 
-    const finalCamera = await waitForStableCamera(page)
+    const finalCamera = (await readMapCamera(page))!
     expect(finalCamera.latitude).toBeGreaterThanOrEqual(21.17)
     expect(finalCamera.latitude).toBeLessThanOrEqual(26.83)
     expect(finalCamera.longitude).toBeGreaterThanOrEqual(117.67)
-    expect(finalCamera.longitude).toBeLessThanOrEqual(122.43)
+    expect(finalCamera.longitude).toBeLessThanOrEqual(117.75)
   })
 })
