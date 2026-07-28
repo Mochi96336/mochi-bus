@@ -1,11 +1,11 @@
 import type L from 'leaflet'
 
-// 地圖平移範圍包含澎湖、金門、馬祖，並替抽屜鏡頭偏移保留餘裕。
-// 它是操作邊界，不是全台總覽的取景框。
-export const TAIWAN_PAN_BOUNDS: L.LatLngBoundsExpression = [
+// 使用者手動平移時，允許地圖中心停留的範圍。
+// 包含澎湖、金門、馬祖，並替抽屜鏡頭偏移保留餘裕。
+export const TAIWAN_PAN_CENTER_BOUNDS = [
   [21.2, 117.7],
   [26.8, 122.4],
-]
+] as const
 
 export const TAIWAN_PAN_BOUNDS_VISCOSITY = .9
 
@@ -13,6 +13,10 @@ type MapEventName = 'dragstart' | 'moveend' | 'zoomstart' | 'zoomend'
 
 type PanBoundedMap = {
   options: L.MapOptions
+  getSize(): L.Point
+  getZoom(): number
+  project(latlng: L.LatLngExpression, zoom?: number): L.Point
+  unproject(point: L.PointExpression, zoom?: number): L.LatLng
   on(type: MapEventName, listener: () => void): unknown
   off(type: MapEventName, listener: () => void): unknown
   panInsideBounds(bounds: L.LatLngBoundsExpression, options?: L.PanOptions): unknown
@@ -26,6 +30,32 @@ function defaultReleaseSurface(surface: PointerSurface): PointerSurface {
 
 function pointerId(event: Event): number {
   return 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : 0
+}
+
+/**
+ * Leaflet maxBounds constrains the whole viewport, while the product boundary
+ * describes where the map center may stop. Expanding the center range by half
+ * of the current viewport makes those two meanings equivalent at every zoom.
+ */
+export function taiwanPanBoundsForViewport(
+  map: Pick<PanBoundedMap, 'getSize' | 'getZoom' | 'project' | 'unproject'>,
+): L.LatLngBoundsExpression {
+  const [[south, west], [north, east]] = TAIWAN_PAN_CENTER_BOUNDS
+  const zoom = map.getZoom()
+  const halfViewport = map.getSize().divideBy(2)
+  const northWest = map.unproject(
+    map.project([north, west], zoom).subtract(halfViewport),
+    zoom,
+  )
+  const southEast = map.unproject(
+    map.project([south, east], zoom).add(halfViewport),
+    zoom,
+  )
+
+  return [
+    [southEast.lat, northWest.lng],
+    [northWest.lat, southEast.lng],
+  ]
 }
 
 /**
@@ -57,12 +87,12 @@ export function constrainMapPanToTaiwan(
   }
 
   const finishDrag = () => {
-    if (!armed || !reboundPending) return
+    if (!reboundPending) return
     dragging = false
     zooming = false
     reboundPending = false
     restoreOptions()
-    map.panInsideBounds(TAIWAN_PAN_BOUNDS, { animate: true })
+    map.panInsideBounds(taiwanPanBoundsForViewport(map), { animate: true })
   }
 
   const finishPointerGesture = (interrupted = false) => {
@@ -102,7 +132,7 @@ export function constrainMapPanToTaiwan(
 
     armed = true
     reboundPending = false
-    map.options.maxBounds = TAIWAN_PAN_BOUNDS
+    map.options.maxBounds = taiwanPanBoundsForViewport(map)
     map.options.maxBoundsViscosity = TAIWAN_PAN_BOUNDS_VISCOSITY
   }
 
@@ -138,7 +168,9 @@ export function constrainMapPanToTaiwan(
   const onZoomEnd = () => {
     if (!armed) return
     zooming = false
-    if (activePointers.size === 0) finishDrag()
+    if (activePointers.size > 0) return
+    if (reboundPending) finishDrag()
+    else restoreOptions()
   }
 
   surface.addEventListener('pointerdown', onPointerDown, { capture: true })
