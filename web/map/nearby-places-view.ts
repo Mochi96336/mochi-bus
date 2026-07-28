@@ -85,7 +85,6 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
-        preserveDesktopHeight: places.length > 0,
         header: drawerHeader(
           '附近站牌',
           places.length
