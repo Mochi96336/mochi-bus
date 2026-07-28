@@ -79,10 +79,14 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     applyPreservedMinHeight()
     if (preservedMinHeight) {
       if (view.preserveMobileHeight) mobileLayout.addEventListener('change', applyPreservedMinHeight)
-      if (view.preserveDesktopHeight) desktopLayout.addEventListener('change', applyPreservedMinHeight)
+      if (view.preserveDesktopHeight ?? view.preserveMobileHeight) {
+        desktopLayout.addEventListener('change', applyPreservedMinHeight)
+      }
       cleanups.push(() => {
         if (view.preserveMobileHeight) mobileLayout.removeEventListener('change', applyPreservedMinHeight)
-        if (view.preserveDesktopHeight) desktopLayout.removeEventListener('change', applyPreservedMinHeight)
+        if (view.preserveDesktopHeight ?? view.preserveMobileHeight) {
+          desktopLayout.removeEventListener('change', applyPreservedMinHeight)
+        }
         drawer.style.removeProperty('min-height')
       })
     }
@@ -159,9 +163,10 @@ export function shouldPreserveDrawerHeight(
   mobileLayout: boolean,
   desktopLayout: boolean,
 ): boolean {
+  const desktopPreservation = preserveDesktopHeight ?? preserveMobileHeight
   return Boolean(
     (preserveMobileHeight && mobileLayout)
-    || (preserveDesktopHeight && desktopLayout),
+    || (desktopPreservation && desktopLayout),
   )
 }
 
