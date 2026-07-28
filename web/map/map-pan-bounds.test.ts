@@ -7,17 +7,74 @@ import {
   TAIWAN_PAN_BOUNDS_VISCOSITY,
 } from './map-pan-bounds'
 
+type MapEventName = 'dragstart' | 'moveend'
+
+function createMapStub(options: L.MapOptions = {}) {
+  const listeners = new Map<MapEventName, Set<() => void>>()
+  const panInsideBounds = vi.fn()
+  const map = {
+    options,
+    on(type: MapEventName, listener: () => void) {
+      const group = listeners.get(type) ?? new Set<() => void>()
+      group.add(listener)
+      listeners.set(type, group)
+      return map
+    },
+    off(type: MapEventName, listener: () => void) {
+      listeners.get(type)?.delete(listener)
+      return map
+    },
+    panInsideBounds,
+  }
+  return {
+    map,
+    panInsideBounds,
+    emit(type: MapEventName) {
+      listeners.get(type)?.forEach((listener) => listener())
+    },
+  }
+}
+
 describe('Taiwan map pan bounds', () => {
-  it('applies a soft Leaflet boundary to the map', () => {
-    const options = {} as L.MapOptions
-    const setMaxBounds = vi.fn()
+  it('arms the Leaflet boundary only while a pointer gesture may become a drag', async () => {
+    const surface = new EventTarget()
+    const { map } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface)
 
-    constrainMapPanToTaiwan({ options, setMaxBounds })
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
 
-    expect(options.maxBoundsViscosity).toBe(.9)
-    expect(options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
-    expect(setMaxBounds).toHaveBeenCalledOnce()
-    expect(setMaxBounds).toHaveBeenCalledWith(TAIWAN_PAN_BOUNDS)
+    surface.dispatchEvent(new Event('pointerdown'))
+    expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
+    expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
+
+    surface.dispatchEvent(new Event('pointerup'))
+    await Promise.resolve()
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+
+    dispose()
+  })
+
+  it('keeps the boundary through drag inertia, then rebounds and releases the camera', async () => {
+    const surface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface)
+
+    surface.dispatchEvent(new Event('pointerdown'))
+    emit('dragstart')
+    surface.dispatchEvent(new Event('pointerup'))
+    await Promise.resolve()
+
+    expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
+    emit('moveend')
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(TAIWAN_PAN_BOUNDS, { animate: true })
+
+    dispose()
   })
 
   it('keeps every configured city, including offshore islands, inside the boundary', () => {
