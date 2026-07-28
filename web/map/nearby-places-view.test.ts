@@ -118,12 +118,13 @@ afterEach(() => {
 })
 
 describe('Nearby places view', () => {
-  it('renders the loading skeleton and delegates the back action', () => {
+  it('renders the loading skeleton, preserves the transition height, and delegates the back action', () => {
     const harness = createHarness()
     const onBack = vi.fn()
     harness.view.renderLoading({ cityCode: 'Taipei', origin, backLabel: '附近站牌', onBack })
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('nearby:Taipei:25.01234:121.56789')
+    expect(drawer.preserveDesktopHeight).toBe(true)
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|正在搜尋附近站牌')
     const loading = drawer.content[0] as unknown as FakeElement
     expect(loading.classList.contains('place-route-loading')).toBe(true)
@@ -133,11 +134,12 @@ describe('Nearby places view', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders rounded distances, opens the selected place, and includes the Trip footer', () => {
+  it('renders rounded distances, releases the transition height, opens the selected place, and includes the Trip footer', () => {
     const harness = createHarness()
     const places = [place('A', '市政府', 120.4), place('B', '捷運站', 48.7)]
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent)
       .toBe('附近站牌|2 個附近站牌，點任一站牌預覽所有經過路線。')
     const list = drawer.content[0] as unknown as FakeElement
@@ -150,10 +152,11 @@ describe('Nearby places view', () => {
     expect(harness.createTripModeButton).toHaveBeenCalledOnce()
   })
 
-  it('renders the existing empty-state copy without place buttons', () => {
+  it('renders the existing empty-state copy without place buttons or a preserved height', () => {
     const harness = createHarness()
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
     expect(list.children).toHaveLength(1)
