@@ -4,6 +4,7 @@ import {
   createTDXCircuitBreaker,
   dataCircuitKey,
   dataRateLimitCircuitKey,
+  redactedCircuitKey,
   tokenCircuitKey,
 } from './circuit-breaker'
 
@@ -21,6 +22,14 @@ describe('TDX circuit breaker boundary', () => {
       .toBe('data/credential/place_arrivals/City/Tainan')
     expect(dataRateLimitCircuitKey('credential')).toBe('data-limit/credential')
     expect(tokenCircuitKey('credential')).not.toBe(dataCircuitKey('credential'))
+  })
+
+  it('redacts credential-derived identity while retaining circuit diagnostics', () => {
+    expect(redactedCircuitKey('token/secret-fingerprint')).toBe('token/*')
+    expect(redactedCircuitKey('data-limit/secret-fingerprint')).toBe('data-limit/*')
+    expect(redactedCircuitKey('data/secret-fingerprint/place_arrivals/City/Tainan'))
+      .toBe('data/*/place_arrivals/City/Tainan')
+    expect(redactedCircuitKey('unexpected')).toBe('unknown')
   })
 
   it('opens after three transient failures inside the one-minute window', () => {
@@ -45,13 +54,18 @@ describe('TDX circuit breaker boundary', () => {
     expect(opened).toHaveBeenCalledWith({ key: 'data/a', warning: 'tdx-unavailable', openMs: 30_000 })
   })
 
-  it('does not count invalid schema failures as upstream unavailability', () => {
+  it('counts invalid schema when a caller records it as a transient failure', () => {
     const circuit = createTDXCircuitBreaker()
     const schemaError = new TDXServiceError('invalid schema', 502, { failureKind: 'invalid_schema' })
 
-    for (let index = 0; index < 10; index += 1) circuit.recordFailure('data/a', schemaError)
+    circuit.recordFailure('token/a', schemaError)
+    circuit.recordFailure('token/a', schemaError)
+    circuit.recordFailure('token/a', schemaError)
 
-    expect(circuit.assertClosed('data/a')).toBe(false)
+    expect(() => circuit.assertClosed('token/a')).toThrowError(expect.objectContaining({
+      warning: 'tdx-unavailable',
+      status: 503,
+    }))
   })
 
   it('forgets stale failure counts after the failure window', () => {
