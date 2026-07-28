@@ -40,7 +40,8 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   }
 
   const render = (view: DrawerView): DrawerViewSession => {
-    const previousHeight = view.preserveMobileHeight && window.matchMedia('(max-width: 640px)').matches
+    const mobileLayout = window.matchMedia('(max-width: 640px)')
+    const previousHeight = view.preserveMobileHeight && mobileLayout.matches
       ? drawer.getBoundingClientRect().height
       : 0
     const restoredScrollTop = drawerScrollTopForTransition(
@@ -58,8 +59,19 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     currentViewKey = view.key
 
     const preservedMinHeight = drawerMinHeightForTransition(view.preserveMobileHeight, previousHeight)
-    if (preservedMinHeight) drawer.style.minHeight = preservedMinHeight
-    else drawer.style.removeProperty('min-height')
+    const applyPreservedMinHeight = () => {
+      if (preservedMinHeight && mobileLayout.matches) drawer.style.minHeight = preservedMinHeight
+      else drawer.style.removeProperty('min-height')
+    }
+    applyPreservedMinHeight()
+    if (preservedMinHeight) {
+      mobileLayout.addEventListener('change', applyPreservedMinHeight)
+      cleanups.push(() => {
+        mobileLayout.removeEventListener('change', applyPreservedMinHeight)
+        drawer.style.removeProperty('min-height')
+      })
+    }
+
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
     drawer.scrollTop = 0
