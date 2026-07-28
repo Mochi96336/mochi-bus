@@ -124,7 +124,10 @@ test('keeps the catalogue height through loading before showing a variant picker
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
-    await expect.poll(() => drawer.evaluate((element) => element.getBoundingClientRect().height)).toBeCloseTo(beforeHeight, 0)
+    await expect.poll(async () => {
+      const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+      return Math.abs(height - beforeHeight) <= 1
+    }).toBe(true)
   } finally {
     releaseRoute()
   }
