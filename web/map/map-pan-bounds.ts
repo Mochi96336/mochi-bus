@@ -236,25 +236,13 @@ export function constrainMapPanToTaiwan(
   }
 
   const onInterruptedGesture: EventListener = (event) => {
-    if (event.type === 'blur') {
-      // Window capture listeners also observe focus leaving descendant controls.
-      // Only a blur targeted at the release surface represents a lost browser
-      // gesture; an input or button blur must not cancel the new map drag.
-      if (event.target !== releaseSurface) return
-      activePointers.clear()
-    } else {
-      activePointers.delete(pointerId(event))
-    }
+    if (event.type === 'blur') activePointers.clear()
+    else activePointers.delete(pointerId(event))
     if (activePointers.size === 0) finishPointerGesture(true)
   }
 
   const onKeyboardPan: EventListener = (event) => {
     if (disposed || !keyboardPanKey(event)) return
-
-    // A repeated key stops the previous pan synchronously inside Leaflet's
-    // document listener. Clear that pan's pending rebound before propagation so
-    // its moveend cannot settle in the middle of the new keyboard pan.
-    clearKeyboardReboundPending()
 
     // Leaflet listens for keyboard navigation on document. Capture the event on
     // the map first, expose maxBounds while Leaflet limits this key's pan offset,
@@ -358,7 +346,7 @@ export function constrainMapPanToTaiwan(
   releaseSurface.addEventListener('pointercancel', onInterruptedGesture, { capture: true })
   releaseSurface.addEventListener('blur', onInterruptedGesture, { capture: true })
   map.on('dragstart', onDragStart)
-  map.on('movend', onMoveEnd)
+  map.on('moveend', onMoveEnd)
   map.on('zoomstart', onZoomStart)
   map.on('zoomend', onZoomEnd)
 

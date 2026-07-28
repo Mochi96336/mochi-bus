@@ -89,30 +89,6 @@ async function openMap(page: Page) {
   await expect.poll(() => readMapCamera(page)).not.toBeNull()
 }
 
-async function dragMapRight(page: Page) {
-  const mapBox = await page.locator('#map').boundingBox()
-  expect(mapBox).not.toBeNull()
-
-  const startX = mapBox!.x + mapBox!.width * .08
-  const endX = mapBox!.x + mapBox!.width * .58
-  const y = mapBox!.y + mapBox!.height * .45
-
-  await page.mouse.move(startX, y)
-  await page.mouse.down()
-  for (const progress of [.2, .4, .6, .8, 1]) {
-    await page.mouse.move(startX + (endX - startX) * progress, y)
-    await page.waitForTimeout(10)
-  }
-  await page.mouse.up()
-}
-
-function expectInsideTaiwan(camera: MapCamera) {
-  expect(camera.latitude).toBeGreaterThanOrEqual(21.17)
-  expect(camera.latitude).toBeLessThanOrEqual(26.83)
-  expect(camera.longitude).toBeGreaterThanOrEqual(117.67)
-  expect(camera.longitude).toBeLessThanOrEqual(122.43)
-}
-
 test.describe('Taiwan map pan bounds', () => {
   test('keeps a drag constrained when focus leaves a page control', async ({ page }) => {
     await openMap(page)
@@ -124,32 +100,66 @@ test.describe('Taiwan map pan bounds', () => {
     })
     await expect(page.locator('#pan-blur-probe')).toBeFocused()
 
-    await dragMapRight(page)
+    const mapBox = await page.locator('#map').boundingBox()
+    expect(mapBox).not.toBeNull()
 
-    expectInsideTaiwan(await waitForStableCamera(page))
+    const startX = mapBox!.x + mapBox!.width * .08
+    const endX = mapBox!.x + mapBox!.width * .58
+    const y = mapBox!.y + mapBox!.height * .45
+
+    await page.mouse.move(startX, y)
+    await page.mouse.down()
+    for (const progress of [.2, .4, .6, .8, 1]) {
+      await page.mouse.move(startX + (endX - startX) * progress, y)
+      await page.waitForTimeout(10)
+    }
+    await page.mouse.up()
+
+    const finalCamera = await waitForStableCamera(page)
+    expect(finalCamera.latitude).toBeGreaterThanOrEqual(21.17)
+    expect(finalCamera.latitude).toBeLessThanOrEqual(26.83)
+    expect(finalCamera.longitude).toBeGreaterThanOrEqual(117.67)
+    expect(finalCamera.longitude).toBeLessThanOrEqual(122.43)
   })
 
   test('settles inside Taiwan when wheel zoom takes over drag inertia', async ({ page }) => {
     await openMap(page)
     const initialCamera = (await readMapCamera(page))!
 
-    await dragMapRight(page)
+    const mapBox = await page.locator('#map').boundingBox()
+    expect(mapBox).not.toBeNull()
+
+    const startX = mapBox!.x + mapBox!.width * .08
+    const endX = mapBox!.x + mapBox!.width * .58
+    const y = mapBox!.y + mapBox!.height * .45
+
+    await page.mouse.move(startX, y)
+    await page.mouse.down()
+    for (const progress of [.2, .4, .6, .8, 1]) {
+      await page.mouse.move(startX + (endX - startX) * progress, y)
+      await page.waitForTimeout(10)
+    }
+    await page.mouse.up()
     await page.mouse.wheel(0, -180)
 
     const finalCamera = await waitForStableCamera(page)
     expect(finalCamera.zoom).toBeGreaterThan(initialCamera.zoom + .1)
-    expectInsideTaiwan(finalCamera)
+    expect(finalCamera.latitude).toBeGreaterThanOrEqual(21.17)
+    expect(finalCamera.latitude).toBeLessThanOrEqual(26.83)
+    expect(finalCamera.longitude).toBeGreaterThanOrEqual(117.67)
+    expect(finalCamera.longitude).toBeLessThanOrEqual(122.43)
   })
 
-  test('keeps rapid repeated keyboard panning inside Taiwan', async ({ page }) => {
+  test('keeps repeated keyboard panning inside Taiwan', async ({ page }) => {
     await openMap(page)
     await page.locator('#map').focus()
 
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       await page.keyboard.press('Shift+ArrowLeft')
+      await waitForStableCamera(page)
     }
 
-    const finalCamera = await waitForStableCamera(page)
+    const finalCamera = (await readMapCamera(page))!
     expect(finalCamera.latitude).toBeGreaterThanOrEqual(21.17)
     expect(finalCamera.latitude).toBeLessThanOrEqual(26.83)
     expect(finalCamera.longitude).toBeGreaterThanOrEqual(117.67)

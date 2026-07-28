@@ -34,7 +34,11 @@ export function createMapCameraController(
   mapElement: HTMLElement,
   drawerElement: HTMLElement,
 ): MapCameraController {
-  const releaseTaiwanPanConstraint = constrainMapPanToTaiwan(map, mapElement)
+  const releaseTaiwanPanConstraint = constrainMapPanToTaiwan(
+    map,
+    mapElement,
+    mapPanReleaseSurface(window),
+  )
 
   let target: CameraTarget | undefined
   let frame: number | undefined
@@ -121,6 +125,17 @@ export function createMapCameraController(
       mapElement.removeEventListener('keydown', releaseOnMapInteraction, { capture: true })
       window.removeEventListener('resize', refreshAfterViewportResize)
       window.visualViewport?.removeEventListener('resize', refreshAfterViewportResize)
+    },
+  }
+}
+
+function mapPanReleaseSurface(target: Window): Pick<EventTarget, 'addEventListener' | 'removeEventListener'> {
+  return {
+    addEventListener(type, listener, options) {
+      target.addEventListener(type, listener, type === 'blur' ? false : options)
+    },
+    removeEventListener(type, listener, options) {
+      target.removeEventListener(type, listener, type === 'blur' ? false : options)
     },
   }
 }
