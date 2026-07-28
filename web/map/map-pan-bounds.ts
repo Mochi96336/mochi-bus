@@ -91,12 +91,21 @@ export function constrainMapPanToTaiwan(
 ): () => void {
   const previousBounds = map.options.maxBounds
   const previousViscosity = map.options.maxBoundsViscosity
+  const wheelZoomFallbackDelay = Math.max(0, map.options.wheelDebounceTime ?? 40) + 16
   const activePointers = new Set<number>()
   let armed = false
   let dragging = false
   let zooming = false
+  let wheelZoomPending = false
+  let wheelZoomFallback: ReturnType<typeof setTimeout> | undefined
   let reboundPending = false
   let disposed = false
+
+  const armOptions = () => {
+    armed = true
+    map.options.maxBounds = leafletPanBoundsForViewport(map)
+    map.options.maxBoundsViscosity = TAIWAN_PAN_BOUNDS_VISCOSITY
+  }
 
   const restoreOptions = () => {
     if (!armed) return
@@ -105,8 +114,16 @@ export function constrainMapPanToTaiwan(
     map.options.maxBoundsViscosity = previousViscosity
   }
 
+  const clearWheelZoomPending = () => {
+    wheelZoomPending = false
+    if (wheelZoomFallback === undefined) return
+    clearTimeout(wheelZoomFallback)
+    wheelZoomFallback = undefined
+  }
+
   const finishDrag = () => {
     if (!reboundPending) return
+    clearWheelZoomPending()
     dragging = false
     zooming = false
     reboundPending = false
@@ -122,7 +139,7 @@ export function constrainMapPanToTaiwan(
         else restoreOptions()
         return
       }
-      if (dragging || zooming) return
+      if (dragging || zooming || wheelZoomPending) return
       if (reboundPending) {
         finishDrag()
         return
@@ -146,13 +163,11 @@ export function constrainMapPanToTaiwan(
     // A new drag can synchronously stop the previous inertia before Leaflet
     // emits its new dragstart. Keep the old rebound pending, but let the new
     // gesture decide whether it becomes another drag or only a click.
+    clearWheelZoomPending()
     dragging = false
     if (armed) return
 
-    armed = true
-    reboundPending = false
-    map.options.maxBounds = leafletPanBoundsForViewport(map)
-    map.options.maxBoundsViscosity = TAIWAN_PAN_BOUNDS_VISCOSITY
+    armOptions()
   }
 
   const onPointerRelease: EventListener = (event) => {
@@ -166,32 +181,57 @@ export function constrainMapPanToTaiwan(
     if (activePointers.size === 0) finishPointerGesture(true)
   }
 
+  const onWheel: EventListener = () => {
+    if (disposed || activePointers.size > 0 || zooming || !reboundPending) return
+
+    // Scroll-wheel zoom stops Leaflet inertia synchronously before it emits
+    // zoomstart. Hold the old moveend aside, and release maxBounds so the wheel
+    // camera can keep its cursor-centered target. zoomend will perform the one
+    // final rebound using bounds recomputed at the resulting zoom.
+    wheelZoomPending = true
+    dragging = false
+    restoreOptions()
+
+    if (wheelZoomFallback !== undefined) clearTimeout(wheelZoomFallback)
+    wheelZoomFallback = setTimeout(() => {
+      wheelZoomFallback = undefined
+      if (disposed || !wheelZoomPending || zooming || activePointers.size > 0) return
+      wheelZoomPending = false
+      if (reboundPending) finishDrag()
+      else restoreOptions()
+    }, wheelZoomFallbackDelay)
+  }
+
   const onDragStart = () => {
     if (!armed) return
+    clearWheelZoomPending()
     dragging = true
     reboundPending = true
   }
 
   const onMoveEnd = () => {
-    // Starting a new drag calls Leaflet _stop(), which synchronously emits the
-    // previous inertia's moveend before the new dragstart. That moveend belongs
-    // to the old gesture and must not disarm the constraint under the pointer.
+    // Starting a new drag and scroll-wheel zoom both call Leaflet _stop(),
+    // which synchronously emits the previous inertia's moveend before the new
+    // interaction announces itself. Neither moveend should settle the camera.
+    if (wheelZoomPending) return
     if (activePointers.size === 0 && !zooming) finishDrag()
   }
 
   const onZoomStart = () => {
-    if (!armed) return
+    if (!armed && !reboundPending && !wheelZoomPending) return
+    clearWheelZoomPending()
     zooming = true
     reboundPending = true
   }
 
   const onZoomEnd = () => {
-    if (!armed) return
+    if (!armed && !reboundPending && !zooming && !wheelZoomPending) return
+    clearWheelZoomPending()
     zooming = false
     if (activePointers.size > 0) {
       // A pinch can hand control back to one remaining finger. Refresh the
       // viewport-expanded bounds at the snapped zoom before that drag starts.
-      map.options.maxBounds = leafletPanBoundsForViewport(map)
+      armOptions()
       return
     }
     if (reboundPending) finishDrag()
@@ -199,6 +239,7 @@ export function constrainMapPanToTaiwan(
   }
 
   surface.addEventListener('pointerdown', onPointerDown, { capture: true })
+  surface.addEventListener('wheel', onWheel, { capture: true, passive: true })
   releaseSurface.addEventListener('pointerup', onPointerRelease, { capture: true })
   releaseSurface.addEventListener('pointercancel', onInterruptedGesture, { capture: true })
   releaseSurface.addEventListener('blur', onInterruptedGesture, { capture: true })
@@ -211,6 +252,7 @@ export function constrainMapPanToTaiwan(
     if (disposed) return
     disposed = true
     surface.removeEventListener('pointerdown', onPointerDown, { capture: true })
+    surface.removeEventListener('wheel', onWheel, { capture: true })
     releaseSurface.removeEventListener('pointerup', onPointerRelease, { capture: true })
     releaseSurface.removeEventListener('pointercancel', onInterruptedGesture, { capture: true })
     releaseSurface.removeEventListener('blur', onInterruptedGesture, { capture: true })
@@ -219,6 +261,7 @@ export function constrainMapPanToTaiwan(
     map.off('zoomstart', onZoomStart)
     map.off('zoomend', onZoomEnd)
     activePointers.clear()
+    clearWheelZoomPending()
     dragging = false
     zooming = false
     reboundPending = false
