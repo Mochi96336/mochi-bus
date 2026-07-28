@@ -29,6 +29,7 @@ export type TDXCircuitBreakerOptions = {
 
 export type TDXCircuitBreaker = {
   assertClosed: (key: string) => boolean
+  assertAllClosed: (keys: readonly string[]) => boolean
   recordFailure: (key: string, error: TDXServiceError, retryAfter?: string | null) => void
   recordSuccess: (key: string) => void
   reset: () => void
@@ -61,36 +62,49 @@ export function createTDXCircuitBreaker(options: TDXCircuitBreakerOptions = {}):
     circuits.delete(key)
   }
 
-  const assertClosed = (key: string): boolean => {
-    const state = circuits.get(key)
-    if (!state) return false
-
+  // Inspect every key first, then reserve any half-open probes together. This avoids leaving one
+  // circuit stuck in half-open when another key blocks the same request.
+  const assertAllClosed = (keys: readonly string[]): boolean => {
+    const uniqueKeys = [...new Set(keys)]
     const currentTime = now()
-    if (state.openedUntil > currentTime) {
-      throw circuitOpenError('TDX circuit breaker is open', state.warning)
+
+    for (const key of uniqueKeys) {
+      const state = circuits.get(key)
+      if (!state) continue
+      if (state.openedUntil > currentTime) {
+        throw circuitOpenError('TDX circuit breaker is open', state.warning)
+      }
+      if (state.halfOpen) {
+        throw circuitOpenError('TDX circuit breaker probe is in progress', state.warning)
+      }
     }
 
-    if (state.halfOpen) {
-      throw circuitOpenError('TDX circuit breaker probe is in progress', state.warning)
+    let probing = false
+    for (const key of uniqueKeys) {
+      const state = circuits.get(key)
+      if (!state) continue
+      if (state.openedUntil > 0) {
+        cacheCircuit(key, {
+          ...state,
+          failures: failureThreshold - 1,
+          openedUntil: 0,
+          halfOpen: true,
+        })
+        probing = true
+      } else if (currentTime - state.lastFailureAt >= failureWindowMs) {
+        circuits.delete(key)
+      }
     }
-
-    if (state.openedUntil > 0) {
-      cacheCircuit(key, {
-        ...state,
-        failures: failureThreshold - 1,
-        openedUntil: 0,
-        halfOpen: true,
-      })
-      return true
-    }
-
-    if (currentTime - state.lastFailureAt >= failureWindowMs) circuits.delete(key)
-    return false
+    return probing
   }
+
+  const assertClosed = (key: string): boolean => assertAllClosed([key])
 
   const recordFailure = (key: string, error: TDXServiceError, retryAfter: string | null = null): void => {
     const status = error.status
-    const transient = status === undefined || status === 408 || (status >= 500 && status <= 599)
+    // Schema compatibility is a data-contract concern, not evidence that TDX is unavailable.
+    const transient = error.failureKind !== 'invalid_schema'
+      && (status === undefined || status === 408 || (status >= 500 && status <= 599))
     if (!error.rateLimited && !transient) {
       recordSuccess(key)
       return
@@ -128,6 +142,7 @@ export function createTDXCircuitBreaker(options: TDXCircuitBreakerOptions = {}):
 
   return {
     assertClosed,
+    assertAllClosed,
     recordFailure,
     recordSuccess,
     reset: () => circuits.clear(),
@@ -135,7 +150,12 @@ export function createTDXCircuitBreaker(options: TDXCircuitBreakerOptions = {}):
 }
 
 export const tokenCircuitKey = (credentialKey: string): string => `token/${credentialKey}`
-export const dataCircuitKey = (credentialKey: string): string => `data/${credentialKey}`
+export const dataCircuitKey = (
+  credentialKey: string,
+  operation = 'default',
+  scope = 'global',
+): string => `data/${credentialKey}/${operation}/${scope}`
+export const dataRateLimitCircuitKey = (credentialKey: string): string => `data-limit/${credentialKey}`
 
 function circuitOpenError(message: string, warning: TDXWarning): TDXServiceError {
   const error = new TDXServiceError(
