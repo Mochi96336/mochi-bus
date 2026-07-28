@@ -183,7 +183,7 @@ describe('TDX upstream data client', () => {
     })
   })
 
-  it('does not retry transport failures without an operation', async () => {
+  it('does not retry static transport failures or mutate realtime credential cooldown', async () => {
     const fetcher = vi.fn(async () => { throw new TypeError('offline') })
     const deps = dependencies({ fetcher })
     const client = createTDXUpstreamDataClient(deps.value)
@@ -195,7 +195,7 @@ describe('TDX upstream data client', () => {
       error: { failureKind: 'network_error' },
     })
     expect(fetcher).toHaveBeenCalledOnce()
-    expect(deps.recordCircuitSuccess).toHaveBeenCalledWith(rateLimitKey)
+    expect(deps.recordCircuitSuccess).not.toHaveBeenCalledWith(rateLimitKey)
     expect(deps.recordCircuitFailure).toHaveBeenCalledWith(
       'data/credential-key/Route/City/Taipei',
       expect.any(TDXServiceError),
@@ -248,6 +248,22 @@ describe('TDX upstream data client', () => {
       expect.objectContaining({ status: 429 }),
       '9',
     )
+  })
+
+  it('allows static metadata reads while realtime credential cooldown is active', async () => {
+    const fetcher = vi.fn(async () => new Response('[]'))
+    const deps = dependencies({ fetcher })
+    const client = createTDXUpstreamDataClient(deps.value)
+
+    await client.fetchUpstream(request({
+      operation: undefined,
+      url: new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Taipei/307'),
+    }))
+
+    expect(deps.assertCircuitsClosed).toHaveBeenCalledWith([
+      'data/credential-key/StopOfRoute/City/Taipei',
+    ])
+    expect(deps.recordCircuitSuccess).not.toHaveBeenCalledWith(rateLimitKey)
   })
 
   it('returns parsed byte metadata and a sanitized Bus resource', async () => {
