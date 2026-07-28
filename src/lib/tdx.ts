@@ -17,6 +17,7 @@ import {
 } from './tdx/token-client'
 import {
   createTDXCircuitBreaker,
+  redactedCircuitKey,
 } from './tdx/circuit-breaker'
 import {
   TDX_ERROR_MAX_RESPONSE_BYTES,
@@ -131,7 +132,7 @@ const circuitBreaker = createTDXCircuitBreaker({
   onOpened: ({ key, warning, openMs }) => {
     console.error(JSON.stringify({
       message: 'tdx_circuit_opened',
-      key,
+      key: redactedCircuitKey(key),
       warning,
       openMs,
     }))
