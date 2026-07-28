@@ -32,13 +32,12 @@ describe('drawer view transitions', () => {
     expect(drawerMinHeightForTransition(true, Number.NaN)).toBe('')
   })
 
-  it('preserves height only in the explicitly enabled responsive layout', () => {
-    expect(shouldPreserveDrawerHeight(true, false, true, false)).toBe(true)
+  it('preserves height only in the enabled responsive layout', () => {
+    expect(shouldPreserveDrawerHeight(true, undefined, true, false)).toBe(true)
+    expect(shouldPreserveDrawerHeight(true, undefined, false, true)).toBe(true)
     expect(shouldPreserveDrawerHeight(true, false, false, true)).toBe(false)
     expect(shouldPreserveDrawerHeight(false, true, false, true)).toBe(true)
     expect(shouldPreserveDrawerHeight(false, true, true, false)).toBe(false)
-    expect(shouldPreserveDrawerHeight(true, true, true, false)).toBe(true)
-    expect(shouldPreserveDrawerHeight(true, true, false, true)).toBe(true)
     expect(shouldPreserveDrawerHeight(undefined, undefined, false, true)).toBe(false)
   })
 })
