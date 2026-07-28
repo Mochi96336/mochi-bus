@@ -23,6 +23,7 @@ export type DrawerView =
 export type DrawerViewSession = {
   readonly signal: AbortSignal
   readonly scrollRegion?: HTMLDivElement
+  releasePreservedHeight(): void
   onDispose(cleanup: () => void): void
 }
 
@@ -61,6 +62,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     const abortController = new AbortController()
     const cleanups: Array<() => void> = []
     let active = true
+    let preservedHeightReleased = false
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(currentViewKey, view.key)
     currentViewKey = view.key
@@ -73,8 +75,13 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
         mobileLayout.matches,
         desktopLayout.matches,
       )
-      if (preservedMinHeight && activeLayout) drawer.style.minHeight = preservedMinHeight
+      if (!preservedHeightReleased && preservedMinHeight && activeLayout) drawer.style.minHeight = preservedMinHeight
       else drawer.style.removeProperty('min-height')
+    }
+    const releasePreservedHeight = () => {
+      if (!active || preservedHeightReleased) return
+      preservedHeightReleased = true
+      drawer.style.removeProperty('min-height')
     }
     applyPreservedMinHeight()
     if (preservedMinHeight) {
@@ -135,6 +142,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     return {
       signal: abortController.signal,
       scrollRegion,
+      releasePreservedHeight,
       onDispose(cleanup) {
         if (active) cleanups.push(cleanup)
         else cleanup()
