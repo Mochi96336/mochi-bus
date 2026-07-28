@@ -242,6 +242,32 @@ test('keeps stop lookup loading steps stable, then releases the desktop height f
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
+test('releases the desktop height for non-auto-preview nearby results opened from the URL', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const nearby = deferred()
+  const nearbyRequested = deferred()
+
+  await mockBootstrap(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, async (route) => {
+    nearbyRequested.release()
+    await fulfillAfter(route, nearby.promise, { places: [place] })
+  })
+
+  await page.goto('/map?city=Tainan&lat=22.99700&lon=120.21200')
+  const drawer = page.locator('#map-drawer')
+  await nearbyRequested.promise
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight.length > 0)).toBe(true)
+  const loadingHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+
+  nearby.release()
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  await expect(drawer).toHaveJSProperty('style.height', '')
+  await expect(drawer).toHaveJSProperty('style.minHeight', '')
+  const resolvedHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+  expect(resolvedHeight).toBeLessThan(loadingHeight)
+})
+
 test('keeps a desktop full-network route click stable through loading without fixing the final route card height', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
