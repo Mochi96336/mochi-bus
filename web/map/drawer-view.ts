@@ -75,14 +75,13 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
       })
     }
 
-    const desktopHeight = drawerHeightForLayout(view.mode, stableDesktopLayout.matches)
     const applyDesktopHeight = () => {
       const height = drawerHeightForLayout(view.mode, stableDesktopLayout.matches)
       if (height) drawer.style.height = height
       else drawer.style.removeProperty('height')
     }
     applyDesktopHeight()
-    if (desktopHeight) {
+    if (view.mode === 'map-list') {
       stableDesktopLayout.addEventListener('change', applyDesktopHeight)
       cleanups.push(() => {
         stableDesktopLayout.removeEventListener('change', applyDesktopHeight)
