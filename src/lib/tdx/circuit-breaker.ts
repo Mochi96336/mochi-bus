@@ -156,10 +156,11 @@ export const dataCircuitKey = (
 export const dataRateLimitCircuitKey = (credentialKey: string): string => `data-limit/${credentialKey}`
 
 export function redactedCircuitKey(key: string): string {
-  const [kind, _credential, ...rest] = key.split('/')
+  const parts = key.split('/')
+  const kind = parts[0]
   if (kind === 'token') return 'token/*'
   if (kind === 'data-limit') return 'data-limit/*'
-  if (kind === 'data' && rest.length >= 2) return ['data', '*', ...rest].join('/')
+  if (kind === 'data' && parts.length >= 4) return ['data', '*', ...parts.slice(2)].join('/')
   return 'unknown'
 }
 
