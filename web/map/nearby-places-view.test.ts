@@ -216,7 +216,7 @@ describe('Nearby places view', () => {
     const harness = createHarness()
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
+    expect(drawer.preserveDesktopHeight).toBe(false)
     expect(frameCallbacks.size).toBe(0)
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
