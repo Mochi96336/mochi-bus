@@ -56,14 +56,34 @@ async function readMapCamera(page: Page): Promise<MapCamera | null> {
   })
 }
 
+async function waitForStableCamera(page: Page): Promise<MapCamera> {
+  let previousCamera: MapCamera | null = null
+  await expect.poll(async () => {
+    const camera = await readMapCamera(page)
+    if (!camera) return false
+    const stable = previousCamera !== null
+      && Math.abs(camera.latitude - previousCamera.latitude) < .0001
+      && Math.abs(camera.longitude - previousCamera.longitude) < .0001
+      && Math.abs(camera.zoom - previousCamera.zoom) < .0001
+    previousCamera = camera
+    const animating = await page.locator('.leaflet-pan-anim, .leaflet-zoom-anim').count()
+    return stable && animating === 0
+  }, { timeout: 5_000 }).toBe(true)
+
+  return (await readMapCamera(page))!
+}
+
+async function openMap(page: Page) {
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await mockTiles(page)
+  await mockMapBootstrapCities(page, [])
+  await page.goto('/map')
+  await expect.poll(() => readMapCamera(page)).not.toBeNull()
+}
+
 test.describe('Taiwan map pan bounds', () => {
   test('settles inside Taiwan when wheel zoom takes over drag inertia', async ({ page }) => {
-    await page.setViewportSize({ width: 1200, height: 800 })
-    await mockTiles(page)
-    await mockMapBootstrapCities(page, [])
-    await page.goto('/map')
-
-    await expect.poll(() => readMapCamera(page)).not.toBeNull()
+    await openMap(page)
     const initialCamera = (await readMapCamera(page))!
 
     const mapBox = await page.locator('#map').boundingBox()
@@ -82,21 +102,23 @@ test.describe('Taiwan map pan bounds', () => {
     await page.mouse.up()
     await page.mouse.wheel(0, -180)
 
-    let previousCamera: MapCamera | null = null
-    await expect.poll(async () => {
-      const camera = await readMapCamera(page)
-      if (!camera) return false
-      const stable = previousCamera !== null
-        && Math.abs(camera.latitude - previousCamera.latitude) < .0001
-        && Math.abs(camera.longitude - previousCamera.longitude) < .0001
-        && Math.abs(camera.zoom - previousCamera.zoom) < .0001
-      previousCamera = camera
-      const animating = await page.locator('.leaflet-pan-anim, .leaflet-zoom-anim').count()
-      return stable && animating === 0
-    }, { timeout: 5_000 }).toBe(true)
-
-    const finalCamera = (await readMapCamera(page))!
+    const finalCamera = await waitForStableCamera(page)
     expect(finalCamera.zoom).toBeGreaterThan(initialCamera.zoom + .1)
+    expect(finalCamera.latitude).toBeGreaterThanOrEqual(21.17)
+    expect(finalCamera.latitude).toBeLessThanOrEqual(26.83)
+    expect(finalCamera.longitude).toBeGreaterThanOrEqual(117.67)
+    expect(finalCamera.longitude).toBeLessThanOrEqual(122.43)
+  })
+
+  test('keeps repeated keyboard panning inside Taiwan', async ({ page }) => {
+    await openMap(page)
+    await page.locator('#map').focus()
+
+    for (let index = 0; index < 20; index += 1) {
+      await page.keyboard.press('Shift+ArrowLeft')
+    }
+
+    const finalCamera = await waitForStableCamera(page)
     expect(finalCamera.latitude).toBeGreaterThanOrEqual(21.17)
     expect(finalCamera.latitude).toBeLessThanOrEqual(26.83)
     expect(finalCamera.longitude).toBeGreaterThanOrEqual(117.67)
