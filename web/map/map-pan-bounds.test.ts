@@ -79,7 +79,7 @@ describe('Taiwan map pan bounds', () => {
     dispose()
   })
 
-  it('releases and rebounds an active drag when the window loses focus', () => {
+  it.each(['pointercancel', 'blur'])('releases and rebounds an active drag after %s', async (eventType) => {
     const surface = new EventTarget()
     const releaseSurface = new EventTarget()
     const { map, emit, panInsideBounds } = createMapStub()
@@ -87,7 +87,8 @@ describe('Taiwan map pan bounds', () => {
 
     surface.dispatchEvent(new Event('pointerdown'))
     emit('dragstart')
-    releaseSurface.dispatchEvent(new Event('blur'))
+    releaseSurface.dispatchEvent(new Event(eventType))
+    await Promise.resolve()
 
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
