@@ -10,6 +10,10 @@ type StubPoint = L.Point & {
   subtract(point: L.PointExpression): StubPoint
 }
 
+type CapturedSurface = Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & {
+  dispatchFrom(target: EventTarget, event: Event): void
+}
+
 function point(x: number, y: number): StubPoint {
   const read = (value: L.PointExpression): [number, number] => {
     if (Array.isArray(value)) return [value[0], value[1]]
@@ -98,6 +102,33 @@ function keyboardEvent(
   return event
 }
 
+function capturedSurface(): CapturedSurface {
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
+  const surface = {
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject | null) {
+      if (!listener) return
+      const group = listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>()
+      group.add(listener)
+      listeners.set(type, group)
+    },
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null) {
+      if (!listener) return
+      listeners.get(type)?.delete(listener)
+    },
+    dispatchFrom(target: EventTarget, event: Event) {
+      Object.defineProperties(event, {
+        target: { value: target },
+        currentTarget: { value: surface },
+      })
+      for (const listener of listeners.get(event.type) ?? []) {
+        if (typeof listener === 'function') listener.call(surface, event)
+        else listener.handleEvent(event)
+      }
+    },
+  }
+  return surface as unknown as CapturedSurface
+}
+
 describe('Taiwan pan bounds keyboard navigation', () => {
   it.each([
     ['ArrowLeft', 37],
@@ -120,6 +151,22 @@ describe('Taiwan pan bounds keyboard navigation', () => {
     await Promise.resolve()
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
+
+    dispose()
+  })
+
+  it('ignores arrow keys bubbling from controls inside the map', async () => {
+    const surface = capturedSurface()
+    const control = new EventTarget()
+    const { map, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, surface)
+
+    surface.dispatchFrom(control, keyboardEvent('ArrowLeft', 37))
+
+    expect(map.options.maxBounds).toBeUndefined()
+    await Promise.resolve()
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(panInsideBounds).not.toHaveBeenCalled()
 
     dispose()
   })
