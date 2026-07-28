@@ -3,14 +3,14 @@ import { expect, test, type Page } from './fixtures'
 const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
 const routeNames = ['0右', ...Array.from({ length: 119 }, (_, index) => String(index + 1))]
 
-function variant(routeName: string) {
+function variant(routeName: string, index = 0) {
   return {
-    variantKey: `${routeName}:0`,
+    variantKey: `${routeName}:${index}`,
     routeName,
     routeUid: `TNN-${routeName}`,
-    direction: 0 as const,
-    label: '臺南火車站 → 永康火車站',
-    subRouteName: routeName,
+    direction: index % 2 === 0 ? 0 as const : 1 as const,
+    label: index % 2 === 0 ? '臺南火車站 → 永康火車站' : '永康火車站 → 臺南火車站',
+    subRouteName: `${routeName}-${index}`,
     updatedAt: null,
     shape: {
       type: 'Feature' as const,
@@ -38,7 +38,7 @@ function variant(routeName: string) {
   }
 }
 
-async function mockMap(page: Page, routeGate: Promise<void>) {
+async function mockMap(page: Page, routeGate: Promise<void>, variantCount = 1) {
   await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
   await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [city] } }))
   await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({
@@ -52,7 +52,9 @@ async function mockMap(page: Page, routeGate: Promise<void>) {
   await page.route(/\/api\/v1\/map\/route(?:\?|$)/, async (route) => {
     await routeGate
     const routeName = new URL(route.request().url()).searchParams.get('route') ?? '0右'
-    await route.fulfill({ json: { variants: [variant(routeName)] } })
+    await route.fulfill({
+      json: { variants: Array.from({ length: variantCount }, (_, index) => variant(routeName, index)) },
+    })
   })
   await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
   await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({
@@ -69,6 +71,13 @@ async function mockMap(page: Page, routeGate: Promise<void>) {
   }))
 }
 
+async function catalogueHeight(page: Page): Promise<number> {
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer).toHaveAttribute('data-mode', 'map-list')
+  await expect(drawer.locator('.map-route-button')).toHaveCount(routeNames.length)
+  return drawer.evaluate((element) => element.getBoundingClientRect().height)
+}
+
 test('keeps the mobile route drawer height stable while route data is loading', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
@@ -77,9 +86,7 @@ test('keeps the mobile route drawer height stable while route data is loading', 
   await page.goto('/map?city=Tainan')
 
   const drawer = page.locator('#map-drawer')
-  await expect(drawer).toHaveAttribute('data-mode', 'map-list')
-  await expect(drawer.locator('.map-route-button')).toHaveCount(routeNames.length)
-  const beforeHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+  const beforeHeight = await catalogueHeight(page)
 
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
@@ -91,10 +98,38 @@ test('keeps the mobile route drawer height stable while route data is loading', 
     }))
     expect(Math.abs(loading.height - beforeHeight)).toBeLessThanOrEqual(1)
     expect(loading.minHeight).not.toBe('')
+
+    await page.setViewportSize({ width: 844, height: 390 })
+    await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).toBe('')
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).not.toBe('')
   } finally {
     releaseRoute()
   }
 
   await expect(drawer.locator('.route-service-summary')).toBeVisible()
+  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).toBe('')
+})
+
+test('keeps the catalogue height through loading before showing a variant picker', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  let releaseRoute!: () => void
+  const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
+  await mockMap(page, routeGate, 2)
+  await page.goto('/map?city=Tainan')
+
+  const drawer = page.locator('#map-drawer')
+  const beforeHeight = await catalogueHeight(page)
+
+  try {
+    await drawer.getByRole('button', { name: '0右', exact: true }).click()
+    await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
+    await expect.poll(() => drawer.evaluate((element) => element.getBoundingClientRect().height)).toBeCloseTo(beforeHeight, 0)
+  } finally {
+    releaseRoute()
+  }
+
+  await expect(drawer).toHaveAttribute('data-mode', 'map-list')
+  await expect(drawer.locator('.variant-button')).toHaveCount(2)
   await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).toBe('')
 })
