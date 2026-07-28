@@ -68,7 +68,13 @@ function createMapStub(options: L.MapOptions = {}) {
     },
     panInsideBounds,
   }
-  return { map, panInsideBounds }
+  return {
+    map,
+    panInsideBounds,
+    emit(type: MapEventName) {
+      listeners.get(type)?.forEach((listener) => listener())
+    },
+  }
 }
 
 function keyboardEvent(
@@ -128,6 +134,30 @@ describe('Taiwan pan bounds keyboard navigation', () => {
     expect(map.options.maxBounds).toBeUndefined()
     await Promise.resolve()
     expect(map.options.maxBounds).toBeUndefined()
+
+    dispose()
+  })
+
+  it('does not settle the previous pan while Leaflet handles a repeated key', async () => {
+    const surface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, surface)
+
+    surface.dispatchEvent(keyboardEvent('ArrowLeft', 37, { shiftKey: true }))
+    await Promise.resolve()
+
+    // Leaflet stops the previous animated pan synchronously while handling the
+    // next key, which emits moveend before the new pan has finished starting.
+    surface.addEventListener('keydown', () => emit('moveend'))
+    surface.dispatchEvent(keyboardEvent('ArrowLeft', 37, { shiftKey: true }))
+
+    expect(panInsideBounds).not.toHaveBeenCalled()
+
+    await Promise.resolve()
+    emit('moveend')
+
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(taiwanPanBoundsForViewport(map), { animate: true })
 
     dispose()
   })
