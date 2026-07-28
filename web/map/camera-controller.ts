@@ -34,7 +34,7 @@ export function createMapCameraController(
   mapElement: HTMLElement,
   drawerElement: HTMLElement,
 ): MapCameraController {
-  constrainMapPanToTaiwan(map)
+  const releaseTaiwanPanConstraint = constrainMapPanToTaiwan(map, mapElement)
 
   let target: CameraTarget | undefined
   let frame: number | undefined
@@ -114,6 +114,7 @@ export function createMapCameraController(
       if (disposed) return
       disposed = true
       clear()
+      releaseTaiwanPanConstraint()
       resizeObserver.disconnect()
       mapElement.removeEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
       mapElement.removeEventListener('wheel', releaseOnMapInteraction, { capture: true })
