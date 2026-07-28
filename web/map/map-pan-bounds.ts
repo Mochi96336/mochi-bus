@@ -12,6 +12,7 @@ export const TAIWAN_PAN_BOUNDS_VISCOSITY = .9
 const KEYBOARD_PAN_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'])
 const KEYBOARD_PAN_KEY_CODES = new Set([37, 38, 39, 40])
 const KEYBOARD_PAN_SETTLE_DELAY_MS = 350
+const FINAL_REBOUND_SETTLE_DELAY_MS = 350
 
 type MapEventName = 'dragstart' | 'moveend' | 'zoomstart' | 'zoomend'
 
@@ -117,6 +118,8 @@ export function constrainMapPanToTaiwan(
   let wheelZoomFallback: ReturnType<typeof setTimeout> | undefined
   let keyboardReboundPending = false
   let keyboardReboundFallback: ReturnType<typeof setTimeout> | undefined
+  let settling = false
+  let settleFallback: ReturnType<typeof setTimeout> | undefined
   let reboundPending = false
   let disposed = false
 
@@ -147,6 +150,23 @@ export function constrainMapPanToTaiwan(
     keyboardReboundFallback = undefined
   }
 
+  const clearSettling = () => {
+    settling = false
+    if (settleFallback === undefined) return
+    clearTimeout(settleFallback)
+    settleFallback = undefined
+  }
+
+  const settleInsideBounds = () => {
+    clearSettling()
+    settling = true
+    settleFallback = setTimeout(() => {
+      settleFallback = undefined
+      settling = false
+    }, FINAL_REBOUND_SETTLE_DELAY_MS)
+    map.panInsideBounds(taiwanPanBoundsForViewport(map), { animate: true })
+  }
+
   const settleKeyboardPan = () => {
     if (!keyboardReboundPending) return
     clearKeyboardReboundPending()
@@ -167,7 +187,7 @@ export function constrainMapPanToTaiwan(
     zooming = false
     reboundPending = false
     restoreOptions()
-    map.panInsideBounds(taiwanPanBoundsForViewport(map), { animate: true })
+    settleInsideBounds()
   }
 
   const finishPointerGesture = (interrupted = false) => {
@@ -249,12 +269,16 @@ export function constrainMapPanToTaiwan(
 
   const onWheel: EventListener = () => {
     handoffKeyboardRebound()
-    if (disposed || activePointers.size > 0 || zooming || !reboundPending) return
+    const interruptsSettle = settling
+    if (disposed || activePointers.size > 0 || zooming || (!reboundPending && !interruptsSettle)) return
 
-    // Scroll-wheel zoom stops Leaflet inertia synchronously before it emits
-    // zoomstart. Hold the old moveend aside, and release maxBounds so the wheel
-    // camera can keep its cursor-centered target. zoomend will perform the one
-    // final rebound using bounds recomputed at the resulting zoom.
+    // Scroll-wheel zoom can stop either drag inertia or the final animated
+    // rebound before it emits zoomstart. Preserve a pending rebound so zoomend
+    // performs one last settle using bounds recomputed at the resulting zoom.
+    if (interruptsSettle) {
+      clearSettling()
+      reboundPending = true
+    }
     wheelZoomPending = true
     dragging = false
     restoreOptions()
@@ -285,12 +309,17 @@ export function constrainMapPanToTaiwan(
       settleKeyboardPan()
       return
     }
+    if (settling) {
+      clearSettling()
+      return
+    }
     if (activePointers.size === 0 && !zooming) finishDrag()
   }
 
   const onZoomStart = () => {
     handoffKeyboardRebound()
-    if (!armed && !reboundPending && !wheelZoomPending) return
+    if (!armed && !reboundPending && !wheelZoomPending && !settling) return
+    clearSettling()
     clearWheelZoomPending()
     zooming = true
     reboundPending = true
@@ -337,6 +366,7 @@ export function constrainMapPanToTaiwan(
     activePointers.clear()
     clearWheelZoomPending()
     clearKeyboardReboundPending()
+    clearSettling()
     dragging = false
     zooming = false
     reboundPending = false
