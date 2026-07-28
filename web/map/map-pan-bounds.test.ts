@@ -87,6 +87,20 @@ function createMapStub(options: L.MapOptions = {}, size: [number, number] = [400
   }
 }
 
+function expectArmedBounds(map: ReturnType<typeof createMapStub>['map']) {
+  const expected = taiwanPanBoundsForViewport(map) as [[number, number], [number, number]]
+  const bounds = map.options.maxBounds as L.LatLngBounds | undefined
+
+  expect(bounds).toBeDefined()
+  expect(typeof bounds?.getSouthWest).toBe('function')
+  expect(typeof bounds?.getNorthEast).toBe('function')
+
+  const southWest = bounds!.getSouthWest()
+  const northEast = bounds!.getNorthEast()
+  expect([southWest.lat, southWest.lng]).toEqual(expected[0])
+  expect([northEast.lat, northEast.lng]).toEqual(expected[1])
+}
+
 function dispatchPointer(target: EventTarget, type: 'pointerdown' | 'pointerup' | 'pointercancel', id: number) {
   const event = new Event(type)
   Object.defineProperty(event, 'pointerId', { value: id })
@@ -104,6 +118,17 @@ describe('Taiwan map pan bounds', () => {
     ])
   })
 
+  it('stores Leaflet bounds while the gesture constraint is armed', () => {
+    const surface = new EventTarget()
+    const { map } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, surface)
+
+    surface.dispatchEvent(new Event('pointerdown'))
+
+    expectArmedBounds(map)
+    dispose()
+  })
+
   it('releases a non-drag gesture even when the pointer ends outside the map', async () => {
     const surface = new EventTarget()
     const releaseSurface = new EventTarget()
@@ -114,7 +139,7 @@ describe('Taiwan map pan bounds', () => {
     expect(map.options.maxBoundsViscosity).toBeUndefined()
 
     surface.dispatchEvent(new Event('pointerdown'))
-    expect(map.options.maxBounds).toEqual(taiwanPanBoundsForViewport(map))
+    expectArmedBounds(map)
     expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
 
     releaseSurface.dispatchEvent(new Event('pointerup'))
@@ -136,7 +161,7 @@ describe('Taiwan map pan bounds', () => {
     releaseSurface.dispatchEvent(new Event('pointerup'))
     await Promise.resolve()
 
-    expect(map.options.maxBounds).toEqual(taiwanPanBoundsForViewport(map))
+    expectArmedBounds(map)
     emit('moveend')
 
     expect(map.options.maxBounds).toBeUndefined()
@@ -154,7 +179,7 @@ describe('Taiwan map pan bounds', () => {
     const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
 
     surface.dispatchEvent(new Event('pointerdown'))
-    const initialBounds = map.options.maxBounds
+    const initialBounds = taiwanPanBoundsForViewport(map)
     emit('dragstart')
     emit('zoomstart')
     setZoom(9)
@@ -182,7 +207,7 @@ describe('Taiwan map pan bounds', () => {
     surface.dispatchEvent(new Event('pointerdown'))
     emit('moveend')
 
-    expect(map.options.maxBounds).toEqual(taiwanPanBoundsForViewport(map))
+    expectArmedBounds(map)
     expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
     expect(panInsideBounds).not.toHaveBeenCalled()
 
@@ -190,7 +215,7 @@ describe('Taiwan map pan bounds', () => {
     releaseSurface.dispatchEvent(new Event('pointerup'))
     await Promise.resolve()
 
-    expect(map.options.maxBounds).toEqual(taiwanPanBoundsForViewport(map))
+    expectArmedBounds(map)
     emit('moveend')
 
     expect(map.options.maxBounds).toBeUndefined()
@@ -261,11 +286,40 @@ describe('Taiwan map pan bounds', () => {
     dispatchPointer(releaseSurface, 'pointerup', 1)
     await Promise.resolve()
 
-    expect(map.options.maxBounds).toEqual(taiwanPanBoundsForViewport(map))
+    expectArmedBounds(map)
     expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
     expect(panInsideBounds).not.toHaveBeenCalled()
 
     emit('zoomend')
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(taiwanPanBoundsForViewport(map), { animate: true })
+
+    dispose()
+  })
+
+  it('refreshes the constraint when pinch zoom hands off to one remaining pointer', async () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds, setZoom } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    dispatchPointer(surface, 'pointerdown', 1)
+    dispatchPointer(surface, 'pointerdown', 2)
+    emit('zoomstart')
+    setZoom(9)
+    dispatchPointer(releaseSurface, 'pointerup', 2)
+    emit('zoomend')
+
+    expectArmedBounds(map)
+    expect(panInsideBounds).not.toHaveBeenCalled()
+
+    emit('dragstart')
+    dispatchPointer(releaseSurface, 'pointerup', 1)
+    await Promise.resolve()
+    emit('moveend')
 
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
@@ -283,13 +337,15 @@ describe('Taiwan map pan bounds', () => {
 
     dispatchPointer(surface, 'pointerdown', 1)
     dispatchPointer(surface, 'pointerdown', 2)
+    expectArmedBounds(map)
     emit('zoomstart')
     setZoom(9)
     dispatchPointer(releaseSurface, 'pointerup', 2)
     dispatchPointer(releaseSurface, 'pointerup', 1)
     await Promise.resolve()
 
-    expect(map.options.maxBounds).toEqual(taiwanPanBoundsForViewport(map))
+    expect(map.options.maxBounds).toBeDefined()
+    expect(panInsideBounds).not.toHaveBeenCalled()
     emit('zoomend')
 
     expect(map.options.maxBounds).toBeUndefined()
