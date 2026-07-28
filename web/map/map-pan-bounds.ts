@@ -1,4 +1,4 @@
-import type L from 'leaflet'
+import L from 'leaflet'
 
 // 使用者手動平移時，允許地圖中心停留的範圍。
 // 包含澎湖、金門、馬祖，並替抽屜鏡頭偏移保留餘裕。
@@ -56,6 +56,12 @@ export function taiwanPanBoundsForViewport(
     [southEast.lat, northWest.lng],
     [northWest.lat, southEast.lng],
   ]
+}
+
+function leafletPanBoundsForViewport(
+  map: Pick<PanBoundedMap, 'getSize' | 'getZoom' | 'project' | 'unproject'>,
+): L.LatLngBounds {
+  return L.latLngBounds(taiwanPanBoundsForViewport(map))
 }
 
 /**
@@ -132,7 +138,7 @@ export function constrainMapPanToTaiwan(
 
     armed = true
     reboundPending = false
-    map.options.maxBounds = taiwanPanBoundsForViewport(map)
+    map.options.maxBounds = leafletPanBoundsForViewport(map)
     map.options.maxBoundsViscosity = TAIWAN_PAN_BOUNDS_VISCOSITY
   }
 
@@ -169,7 +175,12 @@ export function constrainMapPanToTaiwan(
   const onZoomEnd = () => {
     if (!armed) return
     zooming = false
-    if (activePointers.size > 0) return
+    if (activePointers.size > 0) {
+      // A pinch can hand control back to one remaining finger. Refresh the
+      // viewport-expanded bounds at the snapped zoom before that drag starts.
+      map.options.maxBounds = leafletPanBoundsForViewport(map)
+      return
+    }
     if (reboundPending) finishDrag()
     else restoreOptions()
   }
