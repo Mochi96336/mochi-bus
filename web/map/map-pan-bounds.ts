@@ -1,4 +1,4 @@
-import L from 'leaflet'
+import type L from 'leaflet'
 
 // 使用者手動平移時，允許地圖中心停留的範圍。
 // 包含澎湖、金門、馬祖，並替抽屜鏡頭偏移保留餘裕。
@@ -22,6 +22,7 @@ type PanBoundedMap = {
   panInsideBounds(bounds: L.LatLngBoundsExpression, options?: L.PanOptions): unknown
 }
 
+type InertiaSafeBounds = L.LatLngBoundsExpression & Pick<L.LatLngBounds, 'getSouthWest' | 'getNorthEast'>
 type PointerSurface = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 
 function defaultReleaseSurface(surface: PointerSurface): PointerSurface {
@@ -58,10 +59,22 @@ export function taiwanPanBoundsForViewport(
   ]
 }
 
+/**
+ * Leaflet accepts a bounds expression when a drag starts, but its inertia path
+ * later reads getSouthWest/getNorthEast directly from map.options.maxBounds.
+ * Decorate the expression with those two methods so the module stays usable in
+ * Node tests without importing Leaflet's browser-only runtime.
+ */
 function leafletPanBoundsForViewport(
   map: Pick<PanBoundedMap, 'getSize' | 'getZoom' | 'project' | 'unproject'>,
-): L.LatLngBounds {
-  return L.latLngBounds(taiwanPanBoundsForViewport(map))
+): InertiaSafeBounds {
+  const bounds = taiwanPanBoundsForViewport(map) as [[number, number], [number, number]]
+  const [[south, west], [north, east]] = bounds
+
+  return Object.assign(bounds, {
+    getSouthWest: () => ({ lat: south, lng: west }) as L.LatLng,
+    getNorthEast: () => ({ lat: north, lng: east }) as L.LatLng,
+  })
 }
 
 /**
