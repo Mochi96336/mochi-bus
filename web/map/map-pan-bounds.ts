@@ -11,6 +11,7 @@ export const TAIWAN_PAN_BOUNDS_VISCOSITY = .9
 
 const KEYBOARD_PAN_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'])
 const KEYBOARD_PAN_KEY_CODES = new Set([37, 38, 39, 40])
+const KEYBOARD_PAN_SETTLE_DELAY_MS = 350
 
 type MapEventName = 'dragstart' | 'moveend' | 'zoomstart' | 'zoomend'
 
@@ -114,6 +115,8 @@ export function constrainMapPanToTaiwan(
   let zooming = false
   let wheelZoomPending = false
   let wheelZoomFallback: ReturnType<typeof setTimeout> | undefined
+  let keyboardReboundPending = false
+  let keyboardReboundFallback: ReturnType<typeof setTimeout> | undefined
   let reboundPending = false
   let disposed = false
 
@@ -137,9 +140,29 @@ export function constrainMapPanToTaiwan(
     wheelZoomFallback = undefined
   }
 
+  const clearKeyboardReboundPending = () => {
+    keyboardReboundPending = false
+    if (keyboardReboundFallback === undefined) return
+    clearTimeout(keyboardReboundFallback)
+    keyboardReboundFallback = undefined
+  }
+
+  const settleKeyboardPan = () => {
+    if (!keyboardReboundPending) return
+    clearKeyboardReboundPending()
+    map.panInsideBounds(taiwanPanBoundsForViewport(map), { animate: true })
+  }
+
+  const handoffKeyboardRebound = () => {
+    if (!keyboardReboundPending) return
+    clearKeyboardReboundPending()
+    reboundPending = true
+  }
+
   const finishDrag = () => {
     if (!reboundPending) return
     clearWheelZoomPending()
+    clearKeyboardReboundPending()
     dragging = false
     zooming = false
     reboundPending = false
@@ -179,6 +202,7 @@ export function constrainMapPanToTaiwan(
     // A new drag can synchronously stop the previous inertia before Leaflet
     // emits its new dragstart. Keep the old rebound pending, but let the new
     // gesture decide whether it becomes another drag or only a click.
+    handoffKeyboardRebound()
     clearWheelZoomPending()
     dragging = false
     if (armed) return
@@ -203,17 +227,28 @@ export function constrainMapPanToTaiwan(
     // Leaflet listens for keyboard navigation on document. Capture the event on
     // the map first, expose maxBounds while Leaflet limits this key's pan offset,
     // then restore programmatic camera freedom after the event has propagated.
+    // The real Leaflet animation is settled on moveend because its offset limit
+    // alone is not sufficient across repeated animated keyboard pans.
     const armedForKeyboard = !armed
     if (armedForKeyboard) armOptions()
 
     queueMicrotask(() => {
       if (disposed || !armedForKeyboard) return
       if (activePointers.size > 0 || dragging || zooming || wheelZoomPending || reboundPending) return
+      keyboardReboundPending = true
       restoreOptions()
+
+      if (keyboardReboundFallback !== undefined) clearTimeout(keyboardReboundFallback)
+      keyboardReboundFallback = setTimeout(() => {
+        keyboardReboundFallback = undefined
+        if (disposed || !keyboardReboundPending) return
+        settleKeyboardPan()
+      }, KEYBOARD_PAN_SETTLE_DELAY_MS)
     })
   }
 
   const onWheel: EventListener = () => {
+    handoffKeyboardRebound()
     if (disposed || activePointers.size > 0 || zooming || !reboundPending) return
 
     // Scroll-wheel zoom stops Leaflet inertia synchronously before it emits
@@ -246,10 +281,15 @@ export function constrainMapPanToTaiwan(
     // which synchronously emits the previous inertia's moveend before the new
     // interaction announces itself. Neither moveend should settle the camera.
     if (wheelZoomPending) return
+    if (keyboardReboundPending) {
+      settleKeyboardPan()
+      return
+    }
     if (activePointers.size === 0 && !zooming) finishDrag()
   }
 
   const onZoomStart = () => {
+    handoffKeyboardRebound()
     if (!armed && !reboundPending && !wheelZoomPending) return
     clearWheelZoomPending()
     zooming = true
@@ -296,6 +336,7 @@ export function constrainMapPanToTaiwan(
     map.off('zoomend', onZoomEnd)
     activePointers.clear()
     clearWheelZoomPending()
+    clearKeyboardReboundPending()
     dragging = false
     zooming = false
     reboundPending = false
