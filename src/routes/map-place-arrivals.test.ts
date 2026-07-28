@@ -51,11 +51,26 @@ function requestUrl(input: RequestInfo | URL): URL {
   return new URL(String(input))
 }
 
+function parsedConsoleCalls(calls: readonly (readonly unknown[])[]): Array<Record<string, unknown>> {
+  return calls.flatMap(([value]) => {
+    if (typeof value !== 'string') return []
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? [parsed as Record<string, unknown>]
+        : []
+    } catch {
+      return []
+    }
+  })
+}
+
 describe('map place arrivals batching', () => {
   beforeEach(() => {
     resetMemoryCacheForTests()
     resetTDXTestState()
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.stubGlobal('caches', {
       default: {
         match: vi.fn(async () => undefined),
@@ -116,6 +131,56 @@ describe('map place arrivals batching', () => {
       expect.objectContaining({ routeUid: 'TPE1', source: 'realtime' }),
       expect.objectContaining({ routeUid: 'TPE2', source: 'realtime' }),
     ]))
+  })
+
+  it('uses valid rows without warning when neighboring rows are malformed or have unknown directions', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+      { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: 120, StopStatus: 0 },
+      { RouteUID: 'TPE2', StopUID: 'STOP2', Direction: 255, EstimateTime: 300, StopStatus: 0 },
+      { StopUID: 'STOP1', Direction: 0 },
+    ]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await map.request(
+      'https://bus.example/api/v1/map/place/PLACE1/arrivals?city=Taipei',
+      { headers: { Authorization: 'Bearer personal-token' } },
+      environment([
+        {
+          routeUid: 'TPE1', routeName: '307', variantKey: 'TPE1:0', direction: 0,
+          label: 'A → B', subRouteName: '307', stopUid: 'STOP1', stopSequence: 1,
+          stopName: '測試站', schedules: [],
+        },
+        {
+          routeUid: 'TPE2', routeName: '299', variantKey: 'TPE2:1', direction: 1,
+          label: 'B → A', subRouteName: '299', stopUid: 'STOP2', stopSequence: 1,
+          stopName: '測試站', schedules: [],
+        },
+      ]),
+    )
+    const body = await response.json<{
+      warning?: string
+      routes: Array<{ routeUid: string; source: string }>
+      realtime: { candidates: number; queries: number; rateLimited: boolean }
+    }>()
+
+    expect(response.status).toBe(200)
+    expect(body.warning).toBeUndefined()
+    expect(body.realtime).toEqual({ candidates: 2, queries: 1, rateLimited: false })
+    expect(body.routes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ routeUid: 'TPE1', source: 'realtime' }),
+      expect.objectContaining({ routeUid: 'TPE2', source: 'none' }),
+    ]))
+
+    const normalized = parsedConsoleCalls(vi.mocked(console.info).mock.calls)
+      .find((entry) => entry.message === 'tdx_payload_rows_normalized')
+    expect(normalized).toMatchObject({
+      operation: 'place_arrivals',
+      totalRows: 3,
+      acceptedRows: 2,
+      droppedRows: 1,
+      issueCounts: { invalid_route_uid: 1 },
+      unknownDirectionValues: [255],
+    })
   })
 
   it('uses at most one request per City and InterCity scope', async () => {
