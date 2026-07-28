@@ -22,6 +22,10 @@ function defaultReleaseSurface(surface: PointerSurface): PointerSurface {
   return typeof window === 'undefined' ? surface : window
 }
 
+function pointerId(event: Event): number {
+  return 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : 0
+}
+
 /**
  * Arms Leaflet maxBounds only for pointer-driven drags.
  *
@@ -36,8 +40,10 @@ export function constrainMapPanToTaiwan(
 ): () => void {
   const previousBounds = map.options.maxBounds
   const previousViscosity = map.options.maxBoundsViscosity
+  const activePointers = new Set<number>()
   let armed = false
   let dragging = false
+  let reboundPending = false
   let disposed = false
 
   const restoreOptions = () => {
@@ -48,30 +54,17 @@ export function constrainMapPanToTaiwan(
   }
 
   const finishDrag = () => {
-    if (!armed || !dragging) return
+    if (!armed || !reboundPending) return
     dragging = false
+    reboundPending = false
     restoreOptions()
     map.panInsideBounds(TAIWAN_PAN_BOUNDS, { animate: true })
   }
 
-  const onPointerDown: EventListener = () => {
-    if (disposed || armed) return
-    armed = true
-    dragging = false
-    map.options.maxBounds = TAIWAN_PAN_BOUNDS
-    map.options.maxBoundsViscosity = TAIWAN_PAN_BOUNDS_VISCOSITY
-  }
-
-  const onPointerRelease: EventListener = () => {
+  const finishPointerGesture = () => {
     queueMicrotask(() => {
-      if (!disposed && !dragging) restoreOptions()
-    })
-  }
-
-  const onInterruptedGesture: EventListener = () => {
-    queueMicrotask(() => {
-      if (disposed) return
-      if (dragging) {
+      if (disposed || activePointers.size > 0 || dragging) return
+      if (reboundPending) {
         finishDrag()
         return
       }
@@ -79,11 +72,47 @@ export function constrainMapPanToTaiwan(
     })
   }
 
-  const onDragStart = () => {
-    if (armed) dragging = true
+  const onPointerDown: EventListener = (event) => {
+    if (disposed) return
+    const startingGesture = activePointers.size === 0
+    activePointers.add(pointerId(event))
+    if (!startingGesture) return
+
+    // A new drag can synchronously stop the previous inertia before Leaflet
+    // emits its new dragstart. Keep the old rebound pending, but let the new
+    // gesture decide whether it becomes another drag or only a click.
+    dragging = false
+    if (armed) return
+
+    armed = true
+    reboundPending = false
+    map.options.maxBounds = TAIWAN_PAN_BOUNDS
+    map.options.maxBoundsViscosity = TAIWAN_PAN_BOUNDS_VISCOSITY
   }
 
-  const onMoveEnd = () => finishDrag()
+  const onPointerRelease: EventListener = (event) => {
+    activePointers.delete(pointerId(event))
+    if (activePointers.size === 0) finishPointerGesture()
+  }
+
+  const onInterruptedGesture: EventListener = (event) => {
+    if (event.type === 'blur') activePointers.clear()
+    else activePointers.delete(pointerId(event))
+    if (activePointers.size === 0) finishPointerGesture()
+  }
+
+  const onDragStart = () => {
+    if (!armed) return
+    dragging = true
+    reboundPending = true
+  }
+
+  const onMoveEnd = () => {
+    // Starting a new drag calls Leaflet _stop(), which synchronously emits the
+    // previous inertia's moveend before the new dragstart. That moveend belongs
+    // to the old gesture and must not disarm the constraint under the pointer.
+    if (activePointers.size === 0) finishDrag()
+  }
 
   surface.addEventListener('pointerdown', onPointerDown, { capture: true })
   releaseSurface.addEventListener('pointerup', onPointerRelease, { capture: true })
@@ -101,7 +130,9 @@ export function constrainMapPanToTaiwan(
     releaseSurface.removeEventListener('blur', onInterruptedGesture, { capture: true })
     map.off('dragstart', onDragStart)
     map.off('moveend', onMoveEnd)
+    activePointers.clear()
     dragging = false
+    reboundPending = false
     restoreOptions()
   }
 }
