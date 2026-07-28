@@ -61,9 +61,15 @@ export function constrainMapPanToTaiwan(
     map.panInsideBounds(TAIWAN_PAN_BOUNDS, { animate: true })
   }
 
-  const finishPointerGesture = () => {
+  const finishPointerGesture = (interrupted = false) => {
     queueMicrotask(() => {
-      if (disposed || activePointers.size > 0 || dragging) return
+      if (disposed || activePointers.size > 0) return
+      if (interrupted) {
+        if (reboundPending) finishDrag()
+        else restoreOptions()
+        return
+      }
+      if (dragging) return
       if (reboundPending) {
         finishDrag()
         return
@@ -98,7 +104,7 @@ export function constrainMapPanToTaiwan(
   const onInterruptedGesture: EventListener = (event) => {
     if (event.type === 'blur') activePointers.clear()
     else activePointers.delete(pointerId(event))
-    if (activePointers.size === 0) finishPointerGesture()
+    if (activePointers.size === 0) finishPointerGesture(true)
   }
 
   const onDragStart = () => {
