@@ -183,6 +183,45 @@ describe('map place arrivals batching', () => {
     })
   })
 
+  it('warns and avoids cache writes when a non-empty payload has no usable rows', async () => {
+    const cachePut = vi.fn(async () => undefined)
+    vi.stubGlobal('caches', {
+      default: {
+        match: vi.fn(async () => undefined),
+        put: cachePut,
+      },
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+      { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: '0' },
+      { RouteUID: 'OTHER', StopUID: 'STOP1', Direction: 0 },
+    ]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await map.request(
+      'https://bus.example/api/v1/map/place/PLACE1/arrivals?city=Taipei',
+      { headers: { Authorization: 'Bearer personal-token' } },
+      environment([{
+        routeUid: 'TPE1', routeName: '307', variantKey: 'TPE1:0', direction: 0,
+        label: 'A → B', subRouteName: '307', stopUid: 'STOP1', stopSequence: 1,
+        stopName: '測試站', schedules: [],
+      }]),
+    )
+    const body = await response.json<{
+      warning?: string
+      routes: Array<{ routeUid: string; source: string }>
+      realtime: { candidates: number; queries: number; rateLimited: boolean }
+    }>()
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(cachePut).not.toHaveBeenCalled()
+    expect(body.warning).toBe('tdx-unavailable')
+    expect(body.realtime).toEqual({ candidates: 1, queries: 0, rateLimited: false })
+    expect(body.routes).toEqual([
+      expect.objectContaining({ routeUid: 'TPE1', source: 'none' }),
+    ])
+  })
+
   it('uses at most one request per City and InterCity scope', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = requestUrl(input)
