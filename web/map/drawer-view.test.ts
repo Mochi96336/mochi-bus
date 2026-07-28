@@ -26,18 +26,21 @@ describe('drawer view transitions', () => {
 
   it('uses the previous measured height only for an explicitly preserved transition', () => {
     expect(drawerMinHeightForTransition(true, 319.2)).toBe('320px')
+    expect(drawerMinHeightForTransition(true, 319.2, 280)).toBe('280px')
+    expect(drawerMinHeightForTransition(true, 319.2, 0)).toBe('')
     expect(drawerMinHeightForTransition(false, 319.2)).toBe('')
     expect(drawerMinHeightForTransition(undefined, 319.2)).toBe('')
     expect(drawerMinHeightForTransition(true, 0)).toBe('')
     expect(drawerMinHeightForTransition(true, Number.NaN)).toBe('')
   })
 
-  it('preserves height only in the enabled responsive layout', () => {
+  it('preserves height only in the independently enabled responsive layout', () => {
     expect(shouldPreserveDrawerHeight(true, undefined, true, false)).toBe(true)
-    expect(shouldPreserveDrawerHeight(true, undefined, false, true)).toBe(true)
+    expect(shouldPreserveDrawerHeight(true, undefined, false, true)).toBe(false)
     expect(shouldPreserveDrawerHeight(true, false, false, true)).toBe(false)
     expect(shouldPreserveDrawerHeight(false, true, false, true)).toBe(true)
     expect(shouldPreserveDrawerHeight(false, true, true, false)).toBe(false)
+    expect(shouldPreserveDrawerHeight(true, true, false, true)).toBe(true)
     expect(shouldPreserveDrawerHeight(undefined, undefined, false, true)).toBe(false)
   })
 })
