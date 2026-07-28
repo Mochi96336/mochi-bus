@@ -108,7 +108,7 @@ export function renderSetupPage(cities: ReadonlyArray<readonly [string, string]>
         </div>
         <div class="advanced-section">
           <strong>自備 TDX 憑證</strong>
-          <p>向 <a href="https://tdx.transportdata.tw/" target="_blank" rel="noopener">TDX</a> 申請一組自己的憑證，即時查詢就走你自己的額度。瀏覽器直接向 TDX 換取短效 token；查詢時 Worker 只收到 token，Client Secret 不會送進 Mochi Bus Worker。</p>
+          <p>可向 <a href="https://tdx.transportdata.tw/" target="_blank" rel="noopener">TDX</a> 免費申請憑證，使用個人查詢額度。瀏覽器會直接向 TDX 取得短效 token，Mochi Bus Worker 不會收到 Client Secret。</p>
           <div class="credential-field"><label for="tdx-client-id">Client ID</label><input id="tdx-client-id" autocomplete="off" spellcheck="false" aria-describedby="tdx-message" aria-invalid="false"></div>
           <div class="credential-field"><label for="tdx-client-secret">Client Secret</label><input id="tdx-client-secret" placeholder="Client Secret" type="password" autocomplete="off" aria-describedby="tdx-message" aria-invalid="false"></div>
           <label class="tdx-remember"><input id="tdx-remember" type="checkbox"><span><strong>記住於此裝置</strong><small>長期保存在這個瀏覽器；不勾選則關閉分頁後移除。</small></span></label>
