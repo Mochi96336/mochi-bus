@@ -121,6 +121,36 @@ describe('Taiwan pan bounds wheel handoff', () => {
     dispose()
   })
 
+  it('re-settles after wheel zoom interrupts the final rebound', async () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds, setZoom } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    await beginInertialDrag(surface, releaseSurface, emit)
+    emit('moveend')
+
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+
+    surface.dispatchEvent(new Event('wheel'))
+    emit('moveend')
+
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+
+    emit('zoomstart')
+    setZoom(9)
+    emit('zoomend')
+
+    expect(panInsideBounds).toHaveBeenCalledTimes(2)
+    expect(panInsideBounds).toHaveBeenNthCalledWith(
+      2,
+      taiwanPanBoundsForViewport(map),
+      { animate: true },
+    )
+
+    dispose()
+  })
+
   it('rebounds when a wheel handoff produces no zoom', async () => {
     vi.useFakeTimers()
     const surface = new EventTarget()
