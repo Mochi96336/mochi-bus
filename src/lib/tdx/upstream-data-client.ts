@@ -69,7 +69,8 @@ export type TDXUpstreamDataClientDependencies = {
 
 // Upstream data ownership lives here. This boundary owns request timeout, one-retry policy,
 // response parsing and data singleflight. Availability circuits are scoped by operation and TDX
-// service area, while rate-limit/quota cooldown remains shared by credential.
+// service area. Credential-wide rate-limit/quota cooldown gates realtime requests, while static
+// route/stop metadata remains available for degraded presentation and fallback station order.
 export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientDependencies): {
   fetchUpstream: (request: TDXUpstreamRequest) => Promise<TDXUpstreamResult>
   resetTDXUpstreamState: () => void
@@ -85,15 +86,26 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
       tdxResponseScope(request.url),
     )
     const rateLimitCircuitKey = dataRateLimitCircuitKey(request.credentialKey)
+    const observesCredentialCooldown = usesCredentialCooldown(request.operation, resource)
     const flightKey = dataFlightKey(request)
     const existingFlight = dataFlights.get(flightKey)
-    if (!existingFlight) dependencies.assertCircuitsClosed([rateLimitCircuitKey, circuitKey])
+    if (!existingFlight) {
+      dependencies.assertCircuitsClosed(observesCredentialCooldown
+        ? [rateLimitCircuitKey, circuitKey]
+        : [circuitKey])
+    }
 
     const { promise, leader } = joinSingleflight(
       dataFlights,
       flightKey,
       maxSingleflightEntries,
-      () => fetchTDXUpstream(request, circuitKey, rateLimitCircuitKey, resource),
+      () => fetchTDXUpstream(
+        request,
+        circuitKey,
+        rateLimitCircuitKey,
+        resource,
+        observesCredentialCooldown,
+      ),
     )
     return {
       outcome: await promise,
@@ -108,6 +120,7 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
     circuitKey: string,
     rateLimitCircuitKey: string,
     resource: string,
+    observesCredentialCooldown: boolean,
   ): Promise<TDXUpstreamOutcome> => {
     let retryCount = 0
     let initialFailureClass: TelemetryFailureClass | undefined
@@ -129,9 +142,9 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
           initialFailureClass = serviceError.failureKind
           continue
         }
-        // A transport failure cannot confirm a credential cooldown. Release any half-open
+        // A transport failure cannot confirm a credential cooldown. Release a half-open realtime
         // credential probe and let the scoped availability circuit own the failure.
-        dependencies.recordCircuitSuccess(rateLimitCircuitKey)
+        if (observesCredentialCooldown) dependencies.recordCircuitSuccess(rateLimitCircuitKey)
         dependencies.recordCircuitFailure(circuitKey, serviceError)
         return { ok: false, error: serviceError, retryCount, initialFailureClass }
       }
@@ -142,7 +155,7 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
           resource,
         })
         if (error.rateLimited) dependencies.recordCircuitSuccess(circuitKey)
-        else dependencies.recordCircuitSuccess(rateLimitCircuitKey)
+        else if (observesCredentialCooldown) dependencies.recordCircuitSuccess(rateLimitCircuitKey)
         if (shouldRetryResolution(error, request.operation, retryCount)) {
           retryCount += 1
           initialFailureClass = error.failureKind
@@ -153,7 +166,7 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
         return { ok: false, error, retryCount, initialFailureClass }
       }
       observeTDXResponseSuccess(request.isShared)
-      dependencies.recordCircuitSuccess(rateLimitCircuitKey)
+      if (observesCredentialCooldown) dependencies.recordCircuitSuccess(rateLimitCircuitKey)
 
       try {
         const parsed = await readJsonResponse(response, request.maxResponseBytes)
@@ -234,6 +247,17 @@ function shouldRetryResolution(
     && (error.failureKind === 'timeout'
       || error.failureKind === 'network_error'
       || error.failureKind === 'upstream_5xx')
+}
+
+function usesCredentialCooldown(
+  operation: TelemetryTdxOperation | undefined,
+  resource: string,
+): boolean {
+  return operation === 'place_arrivals'
+    || operation === 'vehicle_positions'
+    || operation === 'journey_eta'
+    || resource === 'EstimatedTimeOfArrival'
+    || resource === 'Vehicle'
 }
 
 function tdxResponseResource(url: URL): string {
