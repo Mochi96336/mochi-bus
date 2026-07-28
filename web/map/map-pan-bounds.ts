@@ -257,7 +257,9 @@ export function constrainMapPanToTaiwan(
   }
 
   const onKeyboardPan: EventListener = (event) => {
-    if (disposed || !keyboardPanKey(event)) return
+    // Leaflet only enables keyboard navigation while the map container itself
+    // owns focus. Ignore bubbled arrow keys from controls inside the map.
+    if (disposed || event.target !== event.currentTarget || !keyboardPanKey(event)) return
 
     // Leaflet listens for keyboard navigation on document. Capture the event on
     // the map first, expose maxBounds while Leaflet limits this key's pan offset,
