@@ -9,6 +9,9 @@ export const TAIWAN_PAN_CENTER_BOUNDS = [
 
 export const TAIWAN_PAN_BOUNDS_VISCOSITY = .9
 
+const KEYBOARD_PAN_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'])
+const KEYBOARD_PAN_KEY_CODES = new Set([37, 38, 39, 40])
+
 type MapEventName = 'dragstart' | 'moveend' | 'zoomstart' | 'zoomend'
 
 type PanBoundedMap = {
@@ -31,6 +34,19 @@ function defaultReleaseSurface(surface: PointerSurface): PointerSurface {
 
 function pointerId(event: Event): number {
   return 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : 0
+}
+
+function keyboardPanKey(event: Event): boolean {
+  const altKey = 'altKey' in event && event.altKey === true
+  const ctrlKey = 'ctrlKey' in event && event.ctrlKey === true
+  const metaKey = 'metaKey' in event && event.metaKey === true
+  if (altKey || ctrlKey || metaKey) return false
+
+  const key = 'key' in event && typeof event.key === 'string' ? event.key : undefined
+  if (key !== undefined && KEYBOARD_PAN_KEYS.has(key)) return true
+
+  const keyCode = 'keyCode' in event && typeof event.keyCode === 'number' ? event.keyCode : undefined
+  return keyCode !== undefined && KEYBOARD_PAN_KEY_CODES.has(keyCode)
 }
 
 /**
@@ -78,10 +94,10 @@ function leafletPanBoundsForViewport(
 }
 
 /**
- * Arms Leaflet maxBounds only for pointer-driven drags.
+ * Arms Leaflet maxBounds only for user-driven pointer and keyboard panning.
  *
  * Keeping maxBounds permanently enabled would also clamp drawer-aware setView
- * and fitBounds calls. Gesture-scoping preserves those camera offsets while
+ * and fitBounds calls. Interaction-scoping preserves those camera offsets while
  * retaining Leaflet's viscous edge and inertia limiting during manual panning.
  */
 export function constrainMapPanToTaiwan(
@@ -181,6 +197,22 @@ export function constrainMapPanToTaiwan(
     if (activePointers.size === 0) finishPointerGesture(true)
   }
 
+  const onKeyboardPan: EventListener = (event) => {
+    if (disposed || !keyboardPanKey(event)) return
+
+    // Leaflet listens for keyboard navigation on document. Capture the event on
+    // the map first, expose maxBounds while Leaflet limits this key's pan offset,
+    // then restore programmatic camera freedom after the event has propagated.
+    const armedForKeyboard = !armed
+    if (armedForKeyboard) armOptions()
+
+    queueMicrotask(() => {
+      if (disposed || !armedForKeyboard) return
+      if (activePointers.size > 0 || dragging || zooming || wheelZoomPending || reboundPending) return
+      restoreOptions()
+    })
+  }
+
   const onWheel: EventListener = () => {
     if (disposed || activePointers.size > 0 || zooming || !reboundPending) return
 
@@ -239,6 +271,7 @@ export function constrainMapPanToTaiwan(
   }
 
   surface.addEventListener('pointerdown', onPointerDown, { capture: true })
+  surface.addEventListener('keydown', onKeyboardPan, { capture: true })
   surface.addEventListener('wheel', onWheel, { capture: true, passive: true })
   releaseSurface.addEventListener('pointerup', onPointerRelease, { capture: true })
   releaseSurface.addEventListener('pointercancel', onInterruptedGesture, { capture: true })
@@ -252,6 +285,7 @@ export function constrainMapPanToTaiwan(
     if (disposed) return
     disposed = true
     surface.removeEventListener('pointerdown', onPointerDown, { capture: true })
+    surface.removeEventListener('keydown', onKeyboardPan, { capture: true })
     surface.removeEventListener('wheel', onWheel, { capture: true })
     releaseSurface.removeEventListener('pointerup', onPointerRelease, { capture: true })
     releaseSurface.removeEventListener('pointercancel', onInterruptedGesture, { capture: true })
