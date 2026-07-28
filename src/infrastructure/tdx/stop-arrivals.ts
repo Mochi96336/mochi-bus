@@ -18,6 +18,7 @@ export type StopArrivalBatch = {
 export type StopArrivalPayloadIssue =
   | 'invalid_record'
   | 'invalid_route_uid'
+  | 'out_of_scope_route_uid'
   | 'invalid_stop_uid'
   | 'out_of_scope_stop_uid'
   | 'invalid_sub_route_uid'
@@ -36,8 +37,9 @@ export type StopArrivalBatchParseResult =
     }
   | {
       ok: false
-      reason: 'not_array' | 'too_many_records'
+      reason: 'not_array' | 'too_many_records' | 'no_usable_records'
       totalRows: number | null
+      issueCounts?: Partial<Record<StopArrivalPayloadIssue, number>>
     }
 
 const MAX_STOP_UIDS_PER_BATCH = 12
@@ -101,13 +103,15 @@ export function isStopArrivalBatchEnvelope(value: unknown): value is unknown[] {
 export function parseStopArrivalBatchPayload(
   value: unknown,
   allowedStopUids: readonly string[],
+  allowedRouteUids: readonly string[],
 ): StopArrivalBatchParseResult {
   if (!Array.isArray(value)) return { ok: false, reason: 'not_array', totalRows: null }
   if (value.length > MAX_STOP_ARRIVAL_RECORDS) {
     return { ok: false, reason: 'too_many_records', totalRows: value.length }
   }
 
-  const allowed = new Set(allowedStopUids)
+  const allowedStops = new Set(allowedStopUids)
+  const allowedRoutes = new Set(allowedRouteUids)
   const data: BusETAItem[] = []
   const issueCounts: Partial<Record<StopArrivalPayloadIssue, number>> = {}
   const unknownDirections = new Set<number>()
@@ -126,29 +130,32 @@ export function parseStopArrivalBatchPayload(
       issue('invalid_route_uid')
       continue
     }
+    if (!allowedRoutes.has(record.RouteUID)) {
+      issue('out_of_scope_route_uid')
+      continue
+    }
     if (typeof record.StopUID !== 'string') {
       issue('invalid_stop_uid')
       continue
     }
-    if (!allowed.has(record.StopUID)) {
+    if (!allowedStops.has(record.StopUID)) {
       issue('out_of_scope_stop_uid')
+      continue
+    }
+    if (!isFiniteInteger(record.Direction)) {
+      issue('invalid_direction')
       continue
     }
 
     const normalized: BusETAItem = {
       RouteUID: record.RouteUID,
       StopUID: record.StopUID,
+      Direction: record.Direction,
     }
+    if (!KNOWN_DIRECTIONS.has(record.Direction)) unknownDirections.add(record.Direction)
 
     if (typeof record.SubRouteUID === 'string') normalized.SubRouteUID = record.SubRouteUID
     else if (record.SubRouteUID !== undefined && record.SubRouteUID !== null) issue('invalid_sub_route_uid')
-
-    if (isFiniteInteger(record.Direction)) {
-      normalized.Direction = record.Direction
-      if (!KNOWN_DIRECTIONS.has(record.Direction)) unknownDirections.add(record.Direction)
-    } else if (record.Direction !== undefined && record.Direction !== null) {
-      issue('invalid_direction')
-    }
 
     if (record.EstimateTime === null) normalized.EstimateTime = null
     else if (isFiniteNumber(record.EstimateTime)) normalized.EstimateTime = record.EstimateTime
@@ -161,6 +168,15 @@ export function parseStopArrivalBatchPayload(
     else if (record.StopStatus !== undefined && record.StopStatus !== null) issue('invalid_stop_status')
 
     data.push(normalized)
+  }
+
+  if (value.length > 0 && data.length === 0) {
+    return {
+      ok: false,
+      reason: 'no_usable_records',
+      totalRows: value.length,
+      issueCounts,
+    }
   }
 
   return {
