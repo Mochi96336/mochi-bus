@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  drawerHeightForLayout,
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   shouldAnimateDrawerTransition,
@@ -29,5 +30,13 @@ describe('drawer view transitions', () => {
     expect(drawerMinHeightForTransition(undefined, 319.2)).toBe('')
     expect(drawerMinHeightForTransition(true, 0)).toBe('')
     expect(drawerMinHeightForTransition(true, Number.NaN)).toBe('')
+  })
+
+  it('uses one stable desktop work area only for map lists', () => {
+    expect(drawerHeightForLayout('map-list', true)).toBe('min(56vh, 600px)')
+    expect(drawerHeightForLayout('map-list', false)).toBe('')
+    expect(drawerHeightForLayout('compact', true)).toBe('')
+    expect(drawerHeightForLayout('results', true)).toBe('')
+    expect(drawerHeightForLayout('timetable', true)).toBe('')
   })
 })
