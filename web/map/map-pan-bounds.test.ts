@@ -275,15 +275,16 @@ describe('Taiwan map pan bounds', () => {
     dispose()
   })
 
-  it('releases the boundary after a pure pinch zoom', async () => {
+  it('rebounds after a pure pinch zoom', async () => {
     const surface = new EventTarget()
     const releaseSurface = new EventTarget()
-    const { map, emit, panInsideBounds } = createMapStub()
+    const { map, emit, panInsideBounds, setZoom } = createMapStub()
     const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
 
     dispatchPointer(surface, 'pointerdown', 1)
     dispatchPointer(surface, 'pointerdown', 2)
     emit('zoomstart')
+    setZoom(9)
     dispatchPointer(releaseSurface, 'pointerup', 2)
     dispatchPointer(releaseSurface, 'pointerup', 1)
     await Promise.resolve()
@@ -293,7 +294,8 @@ describe('Taiwan map pan bounds', () => {
 
     expect(map.options.maxBounds).toBeUndefined()
     expect(map.options.maxBoundsViscosity).toBeUndefined()
-    expect(panInsideBounds).not.toHaveBeenCalled()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(taiwanPanBoundsForViewport(map), { animate: true })
 
     dispose()
   })
