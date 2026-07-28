@@ -68,13 +68,15 @@ export function constrainMapPanToTaiwan(
     })
   }
 
-  const onReleaseSurfaceBlur: EventListener = () => {
-    if (disposed) return
-    if (dragging) {
-      finishDrag()
-      return
-    }
-    restoreOptions()
+  const onInterruptedGesture: EventListener = () => {
+    queueMicrotask(() => {
+      if (disposed) return
+      if (dragging) {
+        finishDrag()
+        return
+      }
+      restoreOptions()
+    })
   }
 
   const onDragStart = () => {
@@ -85,8 +87,8 @@ export function constrainMapPanToTaiwan(
 
   surface.addEventListener('pointerdown', onPointerDown, { capture: true })
   releaseSurface.addEventListener('pointerup', onPointerRelease, { capture: true })
-  releaseSurface.addEventListener('pointercancel', onPointerRelease, { capture: true })
-  releaseSurface.addEventListener('blur', onReleaseSurfaceBlur, { capture: true })
+  releaseSurface.addEventListener('pointercancel', onInterruptedGesture, { capture: true })
+  releaseSurface.addEventListener('blur', onInterruptedGesture, { capture: true })
   map.on('dragstart', onDragStart)
   map.on('moveend', onMoveEnd)
 
@@ -95,8 +97,8 @@ export function constrainMapPanToTaiwan(
     disposed = true
     surface.removeEventListener('pointerdown', onPointerDown, { capture: true })
     releaseSurface.removeEventListener('pointerup', onPointerRelease, { capture: true })
-    releaseSurface.removeEventListener('pointercancel', onPointerRelease, { capture: true })
-    releaseSurface.removeEventListener('blur', onReleaseSurfaceBlur, { capture: true })
+    releaseSurface.removeEventListener('pointercancel', onInterruptedGesture, { capture: true })
+    releaseSurface.removeEventListener('blur', onInterruptedGesture, { capture: true })
     map.off('dragstart', onDragStart)
     map.off('moveend', onMoveEnd)
     dragging = false
