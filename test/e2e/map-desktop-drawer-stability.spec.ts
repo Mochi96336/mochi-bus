@@ -115,14 +115,15 @@ async function startDrawerFrameCapture(page: Page) {
       if (!store.active) return
       const rect = drawer.getBoundingClientRect()
       const heading = drawer.querySelector<HTMLElement>('.drawer-heading h1')?.textContent ?? ''
+      const description = drawer.querySelector<HTMLElement>('.drawer-heading p')?.textContent ?? ''
       let phase = 'other'
       if (heading === '臺南') phase = 'catalogue'
       else if (drawer.querySelector('.place-route-row')) phase = 'place-results'
       else if (drawer.querySelector('.place-route-skeleton')) {
         phase = heading === '附近站牌' ? 'nearby-loading' : 'place-loading'
       } else if (drawer.querySelector('.variant-list')) phase = 'variant-picker'
-      else if (heading === '中山幹線' && drawer.querySelector('.route-service-summary')) phase = 'route-results'
-      else if (heading === '中山幹線') phase = 'route-loading'
+      else if (heading === '中山幹線' && description.includes('正在拼起路線與站牌')) phase = 'route-loading'
+      else if (heading === '中山幹線') phase = 'route-results'
       store.frames.push({
         top: rect.top,
         height: rect.height,
