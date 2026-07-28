@@ -161,6 +161,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
+      preserveMobileHeight: true,
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, '正在拼起路線與站牌…'),
