@@ -84,7 +84,7 @@ describe('stop arrival TDX batches', () => {
       Direction: 255,
       EstimateTime: null,
       StopStatus: null,
-    }], ['STOP1'])
+    }], ['STOP1'], ['TPE1'])
 
     expect(parsed).toMatchObject({
       ok: true,
@@ -104,54 +104,76 @@ describe('stop arrival TDX batches', () => {
     const parsed = parseStopArrivalBatchPayload([
       { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: 120, StopStatus: 0 },
       { StopUID: 'STOP1', Direction: 0 },
-      { RouteUID: 'TPE2', StopUID: 'OTHER_STOP', Direction: 1 },
+      { RouteUID: 'TPE2', StopUID: 'STOP1', Direction: 1 },
+      { RouteUID: 'TPE1', StopUID: 'OTHER_STOP', Direction: 1 },
       null,
-    ], ['STOP1'])
+    ], ['STOP1'], ['TPE1'])
 
     expect(parsed).toMatchObject({
       ok: true,
-      totalRows: 4,
-      droppedRows: 3,
+      totalRows: 5,
+      droppedRows: 4,
       data: [{ RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: 120, StopStatus: 0 }],
       issueCounts: {
         invalid_route_uid: 1,
+        out_of_scope_route_uid: 1,
         out_of_scope_stop_uid: 1,
         invalid_record: 1,
       },
     })
   })
 
-  it('normalizes invalid optional fields instead of rejecting the row', () => {
+  it('normalizes invalid optional fields while retaining an attributable row', () => {
     const parsed = parseStopArrivalBatchPayload([{
       RouteUID: 'TPE1',
       SubRouteUID: 123,
       StopUID: 'STOP1',
-      Direction: '0',
+      Direction: 0,
       EstimateTime: 'soon',
       StopStatus: 'normal',
       UnexpectedField: true,
-    }], ['STOP1'])
+    }], ['STOP1'], ['TPE1'])
 
     expect(parsed).toMatchObject({
       ok: true,
       droppedRows: 0,
-      data: [{ RouteUID: 'TPE1', StopUID: 'STOP1', EstimateTime: null }],
+      data: [{ RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: null }],
       issueCounts: {
         invalid_sub_route_uid: 1,
-        invalid_direction: 1,
         invalid_estimate_time: 1,
         invalid_stop_status: 1,
       },
     })
   })
 
-  it('rejects only an invalid outer envelope', () => {
-    expect(parseStopArrivalBatchPayload({ value: [] }, ['STOP1']))
+  it('rejects a non-empty payload when every row is unusable', () => {
+    expect(parseStopArrivalBatchPayload([
+      { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: '0' },
+      { RouteUID: 'OTHER', StopUID: 'STOP1', Direction: 0 },
+    ], ['STOP1'], ['TPE1'])).toEqual({
+      ok: false,
+      reason: 'no_usable_records',
+      totalRows: 2,
+      issueCounts: {
+        invalid_direction: 1,
+        out_of_scope_route_uid: 1,
+      },
+    })
+  })
+
+  it('accepts an empty payload but rejects an invalid outer envelope', () => {
+    expect(parseStopArrivalBatchPayload([], ['STOP1'], ['TPE1'])).toMatchObject({
+      ok: true,
+      data: [],
+      totalRows: 0,
+      droppedRows: 0,
+    })
+    expect(parseStopArrivalBatchPayload({ value: [] }, ['STOP1'], ['TPE1']))
       .toEqual({ ok: false, reason: 'not_array', totalRows: null })
     expect(parseStopArrivalBatchPayload(Array.from({ length: 501 }, () => ({
       RouteUID: 'TPE1',
       StopUID: 'STOP1',
       Direction: 0,
-    })), ['STOP1'])).toEqual({ ok: false, reason: 'too_many_records', totalRows: 501 })
+    })), ['STOP1'], ['TPE1'])).toEqual({ ok: false, reason: 'too_many_records', totalRows: 501 })
   })
 })
