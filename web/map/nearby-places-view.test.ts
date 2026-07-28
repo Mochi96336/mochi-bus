@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DrawerView } from './drawer-view'
+import type { DrawerView, DrawerViewSession } from './drawer-view'
 import type { NearbyPlace } from './map-api-client'
 import source from './nearby-places-view.ts?raw'
 import {
@@ -55,6 +55,23 @@ class FakeElement {
   }
 }
 
+type FakeSession = {
+  controller: AbortController
+  cleanups: Array<() => void>
+  releasePreservedHeight: ReturnType<typeof vi.fn>
+  session: DrawerViewSession
+}
+
+let nextFrameId = 1
+let frameCallbacks = new Map<number, FrameRequestCallback>()
+
+function runAnimationFrames() {
+  for (const [frameId, callback] of [...frameCallbacks]) {
+    frameCallbacks.delete(frameId)
+    callback(0)
+  }
+}
+
 function element(tagName = 'div'): FakeElement {
   return new FakeElement(tagName)
 }
@@ -74,10 +91,29 @@ function place(id: string, name: string, distanceMeters: number): NearbyPlace {
 
 function createHarness() {
   let rendered: DrawerView | undefined
+  let currentSession: FakeSession | undefined
+  const sessions: FakeSession[] = []
   const onOpenPlace = vi.fn()
   const createTripModeButton = vi.fn(() => element('button') as unknown as HTMLButtonElement)
   const view = createNearbyPlacesView({
-    renderDrawer: (drawerView) => { rendered = drawerView },
+    renderDrawer: (drawerView) => {
+      if (currentSession) {
+        currentSession.controller.abort()
+        for (const cleanup of currentSession.cleanups.splice(0).reverse()) cleanup()
+      }
+      rendered = drawerView
+      const controller = new AbortController()
+      const cleanups: Array<() => void> = []
+      const releasePreservedHeight = vi.fn()
+      const session: DrawerViewSession = {
+        signal: controller.signal,
+        releasePreservedHeight,
+        onDispose(cleanup) { cleanups.push(cleanup) },
+      }
+      currentSession = { controller, cleanups, releasePreservedHeight, session }
+      sessions.push(currentSession)
+      return session
+    },
     createBackButton: (label, onClick) => {
       const button = element('button')
       button.className = 'drawer-back'
@@ -99,7 +135,7 @@ function createHarness() {
     createTripModeButton,
     onOpenPlace,
   })
-  return { view, rendered: () => rendered, onOpenPlace, createTripModeButton }
+  return { view, rendered: () => rendered, sessions, onOpenPlace, createTripModeButton }
 }
 
 function scrollable(view: DrawerView | undefined): Exclude<DrawerView, { mode: 'compact' }> {
@@ -110,7 +146,16 @@ function scrollable(view: DrawerView | undefined): Exclude<DrawerView, { mode: '
 const origin: NearbyOrigin = [25.01234, 121.56789]
 
 beforeEach(() => {
+  nextFrameId = 1
+  frameCallbacks = new Map()
   vi.stubGlobal('document', { createElement: (tagName: string) => element(tagName) })
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    const frameId = nextFrameId
+    nextFrameId += 1
+    frameCallbacks.set(frameId, callback)
+    return frameId
+  })
+  vi.stubGlobal('cancelAnimationFrame', (frameId: number) => { frameCallbacks.delete(frameId) })
 })
 
 afterEach(() => {
@@ -134,12 +179,15 @@ describe('Nearby places view', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders rounded distances, releases the transition height, opens the selected place, and includes the Trip footer', () => {
+  it('renders rounded distances, releases the transition height on the next frame, opens the selected place, and includes the Trip footer', () => {
     const harness = createHarness()
     const places = [place('A', '市政府', 120.4), place('B', '捷運站', 48.7)]
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
+    expect(drawer.preserveDesktopHeight).toBe(true)
+    expect(harness.sessions[0].releasePreservedHeight).not.toHaveBeenCalled()
+    runAnimationFrames()
+    expect(harness.sessions[0].releasePreservedHeight).toHaveBeenCalledOnce()
     expect((drawer.header[1] as unknown as FakeElement).textContent)
       .toBe('附近站牌|2 個附近站牌，點任一站牌預覽所有經過路線。')
     const list = drawer.content[0] as unknown as FakeElement
@@ -152,11 +200,24 @@ describe('Nearby places view', () => {
     expect(harness.createTripModeButton).toHaveBeenCalledOnce()
   })
 
+  it('cancels the deferred release when navigation replaces the nearby result in the same frame', () => {
+    const harness = createHarness()
+    harness.view.renderPlaces({
+      cityCode: 'Taipei', origin, places: [place('A', '市政府', 120)], backLabel: '路線列表', onBack: vi.fn(),
+    })
+    const resultSession = harness.sessions[0]
+    harness.view.renderLoading({ cityCode: 'Taipei', origin, backLabel: '附近站牌', onBack: vi.fn() })
+    runAnimationFrames()
+    expect(resultSession.controller.signal.aborted).toBe(true)
+    expect(resultSession.releasePreservedHeight).not.toHaveBeenCalled()
+  })
+
   it('renders the existing empty-state copy without place buttons or a preserved height', () => {
     const harness = createHarness()
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
     expect(drawer.preserveDesktopHeight).toBeUndefined()
+    expect(frameCallbacks).toHaveLength(0)
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
     expect(list.children).toHaveLength(1)
