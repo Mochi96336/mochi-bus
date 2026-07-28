@@ -6,7 +6,6 @@ import { selectBestEta } from '../domain/map/eta'
 import { nextScheduledMinutes, scheduleClockLabel, type ScheduleItem, type ScheduleQuery } from '../domain/schedule'
 import {
   buildStopArrivalBatches,
-  isStopArrivalBatchEnvelope,
   parseStopArrivalBatchPayload,
   STOP_ARRIVAL_MAX_RESPONSE_BYTES,
 } from '../infrastructure/tdx/stop-arrivals'
@@ -176,12 +175,15 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
     let warning: TDXWarning | undefined = rateLimited ? 'tdx-rate-limit' : undefined
     let realtimeQueries = 0
     for (const batch of batches) {
+      const routeUids = [...new Set(batch.candidates.map((candidate) => candidate.routeUid))]
       try {
         const resolved = await resolveTDXJson<unknown[]>(env, batch.url, 15, {
           operation: 'place_arrivals',
           city: telemetryCity(city),
           maxResponseBytes: STOP_ARRIVAL_MAX_RESPONSE_BYTES,
-          validate: isStopArrivalBatchEnvelope,
+          validate: (value): value is unknown[] => (
+            parseStopArrivalBatchPayload(value, batch.stopUids, routeUids).ok
+          ),
           blockedFailureClass: rateLimited ? 'rate_limited' : undefined,
           staleFallback: async () => {
             const stale = await readLastRealtime(env, city, batch.cacheKey)
@@ -191,9 +193,9 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
             } : undefined
           },
         })
-        const parsed = parseStopArrivalBatchPayload(resolved.data, batch.stopUids)
+        const parsed = parseStopArrivalBatchPayload(resolved.data, batch.stopUids, routeUids)
         if (!parsed.ok) {
-          throw new TDXServiceError('TDX stop arrival response has an invalid envelope', 502, {
+          throw new TDXServiceError(`TDX stop arrival response is unusable (${parsed.reason})`, 502, {
             failureKind: 'invalid_schema',
           })
         }
