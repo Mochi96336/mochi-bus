@@ -79,6 +79,62 @@ describe('Taiwan map pan bounds', () => {
     dispose()
   })
 
+  it('keeps the constraint when a second drag interrupts the previous inertia', async () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    surface.dispatchEvent(new Event('pointerdown'))
+    emit('dragstart')
+    releaseSurface.dispatchEvent(new Event('pointerup'))
+    await Promise.resolve()
+
+    surface.dispatchEvent(new Event('pointerdown'))
+    emit('moveend')
+
+    expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
+    expect(map.options.maxBoundsViscosity).toBe(TAIWAN_PAN_BOUNDS_VISCOSITY)
+    expect(panInsideBounds).not.toHaveBeenCalled()
+
+    emit('dragstart')
+    releaseSurface.dispatchEvent(new Event('pointerup'))
+    await Promise.resolve()
+
+    expect(map.options.maxBounds).toBe(TAIWAN_PAN_BOUNDS)
+    emit('moveend')
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+
+    dispose()
+  })
+
+  it('rebounds when a click interrupts the previous inertia without starting another drag', async () => {
+    const surface = new EventTarget()
+    const releaseSurface = new EventTarget()
+    const { map, emit, panInsideBounds } = createMapStub()
+    const dispose = constrainMapPanToTaiwan(map, surface, releaseSurface)
+
+    surface.dispatchEvent(new Event('pointerdown'))
+    emit('dragstart')
+    releaseSurface.dispatchEvent(new Event('pointerup'))
+    await Promise.resolve()
+
+    surface.dispatchEvent(new Event('pointerdown'))
+    emit('moveend')
+    releaseSurface.dispatchEvent(new Event('pointerup'))
+    await Promise.resolve()
+
+    expect(map.options.maxBounds).toBeUndefined()
+    expect(map.options.maxBoundsViscosity).toBeUndefined()
+    expect(panInsideBounds).toHaveBeenCalledOnce()
+    expect(panInsideBounds).toHaveBeenCalledWith(TAIWAN_PAN_BOUNDS, { animate: true })
+
+    dispose()
+  })
+
   it.each(['pointercancel', 'blur'])('releases and rebounds an active drag after %s', async (eventType) => {
     const surface = new EventTarget()
     const releaseSurface = new EventTarget()
