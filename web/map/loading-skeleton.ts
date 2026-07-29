@@ -40,7 +40,7 @@ function createNearbyPlaceSkeleton(): HTMLDivElement {
 
 function createPlaceRouteSkeleton(): HTMLDivElement {
   const row = document.createElement('div')
-  row.className = 'place-route-row place-route-loading-row map-loading-row'
+  row.className = 'place-route-loading-row map-loading-row'
 
   const route = document.createElement('div')
   route.className = 'place-route-button'
