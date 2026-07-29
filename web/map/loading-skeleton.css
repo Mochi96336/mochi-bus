@@ -1,4 +1,4 @@
-/* Loading rows mirror resolved content without borrowing legacy skeleton selectors. */
+/* Loading rows mirror resolved rows without borrowing legacy skeleton selectors. */
 .map-drawer .map-loading-list {
   display: grid;
   gap: 0;
