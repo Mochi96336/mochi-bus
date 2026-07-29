@@ -4,6 +4,8 @@ import './drawer-size.css'
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
 export type DrawerSize = 'content' | 'standard' | 'expanded'
 
+const DRAWER_SIZE_MEMORY_LIMIT = 32
+
 export type DrawerView =
   | {
       key: string
@@ -40,7 +42,6 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   let disposeCurrentView: (() => void) | undefined
   let currentViewKey: string | undefined
   let currentScrollRegion: HTMLDivElement | undefined
-  let currentSize: DrawerSize | undefined
   const sizesByViewKey = new Map<string, DrawerSize>()
 
   const dispose = () => {
@@ -55,7 +56,6 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
       view.mode,
       Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
       sizesByViewKey.get(view.key),
-      currentSize,
     )
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
@@ -70,8 +70,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
     currentViewKey = view.key
-    currentSize = nextSize
-    sizesByViewKey.set(view.key, nextSize)
+    rememberDrawerSize(sizesByViewKey, view.key, nextSize)
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
@@ -151,13 +150,12 @@ export function drawerSizeForTransition(
   mode: DrawerView['mode'],
   preserveHeight: boolean,
   rememberedSize: DrawerSize | undefined,
-  previousSize: DrawerSize | undefined,
 ): DrawerSize {
   if (explicitSize) return explicitSize
   if (mode === 'results' || mode === 'timetable') return 'expanded'
   if (mode === 'map-list') return 'standard'
   if (rememberedSize && rememberedSize !== 'content') return rememberedSize
-  if (preserveHeight) return previousSize && previousSize !== 'content' ? previousSize : 'standard'
+  if (preserveHeight) return 'standard'
   return 'content'
 }
 
@@ -185,6 +183,18 @@ export function drawerMinHeightForTransition(
     ? Math.min(previousHeight, Math.max(0, maximumHeight))
     : previousHeight
   return boundedHeight > 0 ? `${Math.ceil(boundedHeight)}px` : ''
+}
+
+function rememberDrawerSize(memory: Map<string, DrawerSize>, key: string, size: DrawerSize) {
+  if (size === 'content') {
+    memory.delete(key)
+    return
+  }
+  memory.delete(key)
+  memory.set(key, size)
+  if (memory.size <= DRAWER_SIZE_MEMORY_LIMIT) return
+  const oldestKey = memory.keys().next().value
+  if (oldestKey) memory.delete(oldestKey)
 }
 
 function animateNodes(nodes: readonly Node[]) {
