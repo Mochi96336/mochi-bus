@@ -9,7 +9,7 @@ describe('drawer size states', () => {
 
   it('maps scrollable workspaces to stable size states', () => {
     expect(drawerSizeForTransition(undefined, 'map-list', false, undefined)).toBe('standard')
-    expect(drawerSizeForTransition(undefined, 'results', false, undefined)).toBe('expanded')
+    expect(drawerSizeForTransition(undefined, 'results', false, undefined)).toBe('standard')
     expect(drawerSizeForTransition(undefined, 'timetable', false, undefined)).toBe('expanded')
   })
 
