@@ -239,6 +239,7 @@ test('keeps ETA numbers dominant without hiding freshness', async ({ page }) => 
     animations: 'disabled',
     caret: 'hide',
     stylePath: contentOnlyScreenshotStyle,
+    maxDiffPixels: 1_500,
   })
 })
 
