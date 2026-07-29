@@ -172,7 +172,7 @@ describe('Nearby places view', () => {
     expect(drawer.preserveDesktopHeight).toBe(true)
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|正在搜尋附近站牌')
     const loading = drawer.content[0] as unknown as FakeElement
-    expect(loading.classList.contains('place-route-loading')).toBe(true)
+    expect(loading.classList.contains('map-loading-list')).toBe(true)
     expect(loading.children).toHaveLength(3)
     expect(loading.children.every((child) => child.classList.contains('map-loading-row'))).toBe(true)
     ;(drawer.header[0] as unknown as FakeElement).click()
