@@ -3,11 +3,11 @@ import './loading-skeleton.css'
 const loadingRowCount = 3
 
 export function createNearbyPlaceLoadingList(): HTMLDivElement {
-  return createLoadingList('nearby-list place-route-loading', createNearbyPlaceSkeleton)
+  return createLoadingList('nearby-list map-loading-list', createNearbyPlaceSkeleton)
 }
 
 export function createPlaceRouteLoadingList(): HTMLDivElement {
-  return createLoadingList('place-route-list place-route-loading', createPlaceRouteSkeleton)
+  return createLoadingList('place-route-list map-loading-list', createPlaceRouteSkeleton)
 }
 
 function createLoadingList(
