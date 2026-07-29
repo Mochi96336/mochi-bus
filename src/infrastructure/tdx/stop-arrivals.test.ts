@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildStopArrivalBatches, isStopArrivalBatchPayload } from './stop-arrivals'
+import {
+  buildStopArrivalBatches,
+  isStopArrivalBatchEnvelope,
+  parseStopArrivalBatchPayload,
+} from './stop-arrivals'
 
 describe('stop arrival TDX batches', () => {
   it('groups city candidates into one deterministic StopUID and RouteUID query', () => {
@@ -63,46 +67,113 @@ describe('stop arrival TDX batches', () => {
     expect(wide.cacheKey).not.toBe(narrow.cacheKey)
   })
 
-  it('accepts only bounded, attributable records for requested StopUIDs', () => {
-    expect(isStopArrivalBatchPayload([{
-      RouteUID: 'TPE1',
-      SubRouteUID: 'TPE1-0',
-      StopUID: 'STOP1',
-      Direction: 0,
-      EstimateTime: 120,
-      StopStatus: 0,
-    }], ['STOP1'])).toBe(true)
+  it('accepts a bounded array envelope without requiring every row to be perfect', () => {
+    expect(isStopArrivalBatchEnvelope([
+      { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 255 },
+      'malformed-row',
+    ])).toBe(true)
+    expect(isStopArrivalBatchEnvelope({ value: [] })).toBe(false)
+    expect(isStopArrivalBatchEnvelope(Array.from({ length: 501 }, () => null))).toBe(false)
+  })
 
-    expect(isStopArrivalBatchPayload([{
+  it('preserves arbitrary finite integer directions including 255', () => {
+    const parsed = parseStopArrivalBatchPayload([{
       RouteUID: 'TPE1',
       SubRouteUID: null,
       StopUID: 'STOP1',
-      Direction: 2,
+      Direction: 255,
       EstimateTime: null,
       StopStatus: null,
-    }], ['STOP1'])).toBe(true)
+    }], ['STOP1'], ['TPE1'])
 
-    expect(isStopArrivalBatchPayload([{
+    expect(parsed).toMatchObject({
+      ok: true,
+      totalRows: 1,
+      droppedRows: 0,
+      unknownDirectionValues: [255],
+      data: [{
+        RouteUID: 'TPE1',
+        StopUID: 'STOP1',
+        Direction: 255,
+        EstimateTime: null,
+      }],
+    })
+  })
+
+  it('keeps valid rows when neighboring rows are malformed or out of scope', () => {
+    const parsed = parseStopArrivalBatchPayload([
+      { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: 120, StopStatus: 0 },
+      { StopUID: 'STOP1', Direction: 0 },
+      { RouteUID: 'TPE2', StopUID: 'STOP1', Direction: 1 },
+      { RouteUID: 'TPE1', StopUID: 'OTHER_STOP', Direction: 1 },
+      null,
+    ], ['STOP1'], ['TPE1'])
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      totalRows: 5,
+      droppedRows: 4,
+      data: [{ RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: 120, StopStatus: 0 }],
+      issueCounts: {
+        invalid_route_uid: 1,
+        out_of_scope_route_uid: 1,
+        out_of_scope_stop_uid: 1,
+        invalid_record: 1,
+      },
+    })
+  })
+
+  it('normalizes invalid optional fields while retaining an attributable row', () => {
+    const parsed = parseStopArrivalBatchPayload([{
+      RouteUID: 'TPE1',
+      SubRouteUID: 123,
       StopUID: 'STOP1',
       Direction: 0,
-    }], ['STOP1'])).toBe(false)
+      EstimateTime: 'soon',
+      StopStatus: 'normal',
+      UnexpectedField: true,
+    }], ['STOP1'], ['TPE1'])
 
-    expect(isStopArrivalBatchPayload([{
+    expect(parsed).toMatchObject({
+      ok: true,
+      droppedRows: 0,
+      data: [{ RouteUID: 'TPE1', StopUID: 'STOP1', Direction: 0, EstimateTime: null }],
+      issueCounts: {
+        invalid_sub_route_uid: 1,
+        invalid_estimate_time: 1,
+        invalid_stop_status: 1,
+      },
+    })
+  })
+
+  it('rejects a non-empty payload when every row is unusable', () => {
+    expect(parseStopArrivalBatchPayload([
+      { RouteUID: 'TPE1', StopUID: 'STOP1', Direction: '0' },
+      { RouteUID: 'OTHER', StopUID: 'STOP1', Direction: 0 },
+    ], ['STOP1'], ['TPE1'])).toEqual({
+      ok: false,
+      reason: 'no_usable_records',
+      totalRows: 2,
+      issueCounts: {
+        invalid_direction: 1,
+        out_of_scope_route_uid: 1,
+      },
+    })
+  })
+
+  it('accepts an empty payload but rejects an invalid outer envelope', () => {
+    expect(parseStopArrivalBatchPayload([], ['STOP1'], ['TPE1'])).toMatchObject({
+      ok: true,
+      data: [],
+      totalRows: 0,
+      droppedRows: 0,
+    })
+    expect(parseStopArrivalBatchPayload({ value: [] }, ['STOP1'], ['TPE1']))
+      .toEqual({ ok: false, reason: 'not_array', totalRows: null })
+    expect(parseStopArrivalBatchPayload(Array.from({ length: 501 }, () => ({
       RouteUID: 'TPE1',
       StopUID: 'STOP1',
-      Direction: 9,
-    }], ['STOP1'])).toBe(false)
-
-    expect(isStopArrivalBatchPayload([{
-      RouteUID: 'TPE1',
-      StopUID: 'OTHER_STOP',
       Direction: 0,
-    }], ['STOP1'])).toBe(false)
-
-    expect(isStopArrivalBatchPayload(Array.from({ length: 501 }, () => ({
-      RouteUID: 'TPE1',
-      StopUID: 'STOP1',
-      Direction: 0,
-    })), ['STOP1'])).toBe(false)
+    })), ['STOP1'], ['TPE1'])).toEqual({ ok: false, reason: 'too_many_records', totalRows: 501 })
   })
 })

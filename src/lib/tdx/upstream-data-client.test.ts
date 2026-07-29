@@ -9,6 +9,9 @@ import {
   type TDXUpstreamRequest,
 } from './upstream-data-client'
 
+const availabilityKey = 'data/credential-key/vehicle_positions/City/Taipei'
+const rateLimitKey = 'data-limit/credential-key'
+
 function request(overrides: Partial<TDXUpstreamRequest> = {}): TDXUpstreamRequest {
   return {
     url: new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/Route/City/Taipei'),
@@ -33,7 +36,7 @@ function serviceError(
 function dependencies(overrides: Partial<TDXUpstreamDataClientDependencies> = {}) {
   const recordCircuitFailure = vi.fn()
   const recordCircuitSuccess = vi.fn()
-  const assertCircuitClosed = vi.fn()
+  const assertCircuitsClosed = vi.fn()
   const responseError = vi.fn(async (_context: string, response: Response) => {
     if (response.status === 429) return serviceError('rate_limited', 429)
     return serviceError(response.status >= 500 ? 'upstream_5xx' : 'upstream_4xx', response.status)
@@ -41,13 +44,13 @@ function dependencies(overrides: Partial<TDXUpstreamDataClientDependencies> = {}
   return {
     value: {
       requestTimeoutMs: 6000,
-      assertCircuitClosed,
+      assertCircuitsClosed,
       recordCircuitFailure,
       recordCircuitSuccess,
       responseError,
       ...overrides,
     } satisfies TDXUpstreamDataClientDependencies,
-    assertCircuitClosed,
+    assertCircuitsClosed,
     recordCircuitFailure,
     recordCircuitSuccess,
     responseError,
@@ -95,12 +98,13 @@ describe('TDX upstream data client', () => {
     const results = await Promise.all([first, second])
     expect(results.map((result) => result.leader)).toEqual([true, false])
     expect(results.every((result) => result.outcome.ok)).toBe(true)
-    expect(deps.assertCircuitClosed).toHaveBeenCalledOnce()
+    expect(deps.assertCircuitsClosed).toHaveBeenCalledOnce()
+    expect(deps.assertCircuitsClosed).toHaveBeenCalledWith([rateLimitKey, availabilityKey])
 
     await Promise.resolve()
     await client.fetchUpstream(request())
     expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(deps.assertCircuitClosed).toHaveBeenCalledTimes(2)
+    expect(deps.assertCircuitsClosed).toHaveBeenCalledTimes(2)
   })
 
   it('keeps cache, operation, byte-limit, and validation policies out of the same flight', async () => {
@@ -120,20 +124,42 @@ describe('TDX upstream data client', () => {
     releases.splice(0).forEach((release) => release(new Response('[]')))
 
     await expect(Promise.all(pending)).resolves.toHaveLength(5)
-    expect(deps.assertCircuitClosed).toHaveBeenCalledTimes(5)
+    expect(deps.assertCircuitsClosed).toHaveBeenCalledTimes(5)
   })
 
-  it('checks the data circuit before creating a new flight', async () => {
+  it('checks both credential cooldown and scoped availability circuits before creating a new flight', async () => {
     const blocked = serviceError('circuit_open', 503)
     const fetcher = vi.fn()
     const deps = dependencies({
       fetcher,
-      assertCircuitClosed: vi.fn(() => { throw blocked }),
+      assertCircuitsClosed: vi.fn(() => { throw blocked }),
     })
     const client = createTDXUpstreamDataClient(deps.value)
 
     await expect(client.fetchUpstream(request())).rejects.toBe(blocked)
     expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('isolates availability identity by operation and service area', async () => {
+    const deps = dependencies({ fetcher: vi.fn(async () => new Response('[]')) })
+    const client = createTDXUpstreamDataClient(deps.value)
+
+    const taipei = await client.fetchUpstream(request({
+      operation: 'place_arrivals',
+      url: new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei'),
+    }))
+    const tainan = await client.fetchUpstream(request({
+      operation: 'place_arrivals',
+      url: new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Tainan'),
+    }))
+    const vehicles = await client.fetchUpstream(request({
+      operation: 'vehicle_positions',
+      url: new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/Vehicle/City/Tainan/70'),
+    }))
+
+    expect(taipei.circuitKey).toBe('data/credential-key/place_arrivals/City/Taipei')
+    expect(tainan.circuitKey).toBe('data/credential-key/place_arrivals/City/Tainan')
+    expect(vehicles.circuitKey).toBe('data/credential-key/vehicle_positions/City/Tainan')
   })
 
   it('retries one timeout for an observed operation and reports recovery metadata', async () => {
@@ -157,7 +183,7 @@ describe('TDX upstream data client', () => {
     })
   })
 
-  it('does not retry transport failures without an operation', async () => {
+  it('does not retry static transport failures or mutate realtime credential cooldown', async () => {
     const fetcher = vi.fn(async () => { throw new TypeError('offline') })
     const deps = dependencies({ fetcher })
     const client = createTDXUpstreamDataClient(deps.value)
@@ -169,10 +195,14 @@ describe('TDX upstream data client', () => {
       error: { failureKind: 'network_error' },
     })
     expect(fetcher).toHaveBeenCalledOnce()
-    expect(deps.recordCircuitFailure).toHaveBeenCalledWith('data/credential-key', expect.any(TDXServiceError))
+    expect(deps.recordCircuitSuccess).not.toHaveBeenCalledWith(rateLimitKey)
+    expect(deps.recordCircuitFailure).toHaveBeenCalledWith(
+      'data/credential-key/Route/City/Taipei',
+      expect.any(TDXServiceError),
+    )
   })
 
-  it('retries one upstream 5xx and records only the final failure', async () => {
+  it('retries one upstream 5xx and records only the final scoped failure', async () => {
     const fetcher = vi.fn(async () => new Response('unavailable', {
       status: 503,
       headers: { 'Retry-After': '7' },
@@ -191,13 +221,13 @@ describe('TDX upstream data client', () => {
     expect(deps.responseError).toHaveBeenCalledTimes(2)
     expect(deps.recordCircuitFailure).toHaveBeenCalledTimes(1)
     expect(deps.recordCircuitFailure).toHaveBeenCalledWith(
-      'data/credential-key',
+      availabilityKey,
       expect.objectContaining({ status: 503 }),
       '7',
     )
   })
 
-  it('does not retry rate limits and passes Retry-After to the circuit', async () => {
+  it('keeps rate-limit cooldown global to the credential', async () => {
     const fetcher = vi.fn(async () => new Response('rate limited', {
       status: 429,
       headers: { 'Retry-After': '9' },
@@ -212,11 +242,28 @@ describe('TDX upstream data client', () => {
       error: { failureKind: 'rate_limited', status: 429 },
     })
     expect(fetcher).toHaveBeenCalledOnce()
+    expect(deps.recordCircuitSuccess).toHaveBeenCalledWith(availabilityKey)
     expect(deps.recordCircuitFailure).toHaveBeenCalledWith(
-      'data/credential-key',
+      rateLimitKey,
       expect.objectContaining({ status: 429 }),
       '9',
     )
+  })
+
+  it('allows static metadata reads while realtime credential cooldown is active', async () => {
+    const fetcher = vi.fn(async () => new Response('[]'))
+    const deps = dependencies({ fetcher })
+    const client = createTDXUpstreamDataClient(deps.value)
+
+    await client.fetchUpstream(request({
+      operation: undefined,
+      url: new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Taipei/307'),
+    }))
+
+    expect(deps.assertCircuitsClosed).toHaveBeenCalledWith([
+      'data/credential-key/StopOfRoute/City/Taipei',
+    ])
+    expect(deps.recordCircuitSuccess).not.toHaveBeenCalledWith(rateLimitKey)
   })
 
   it('returns parsed byte metadata and a sanitized Bus resource', async () => {
@@ -234,7 +281,7 @@ describe('TDX upstream data client', () => {
     }))
     expect(result).toMatchObject({
       leader: true,
-      circuitKey: 'data/credential-key',
+      circuitKey: availabilityKey,
       resource: 'Shape',
       outcome: {
         ok: true,
@@ -247,7 +294,7 @@ describe('TDX upstream data client', () => {
     expect(JSON.stringify(result)).not.toContain('private=query')
   })
 
-  it('wraps invalid JSON and records a data-circuit failure', async () => {
+  it('wraps invalid JSON and records a scoped availability failure', async () => {
     const fetcher = vi.fn(async () => new Response('{'))
     const deps = dependencies({ fetcher })
     const client = createTDXUpstreamDataClient(deps.value)
@@ -257,11 +304,11 @@ describe('TDX upstream data client', () => {
       ok: false,
       error: { failureKind: 'invalid_json', status: 502 },
     })
+    expect(deps.recordCircuitSuccess).toHaveBeenCalledWith(rateLimitKey)
     expect(deps.recordCircuitFailure).toHaveBeenCalledWith(
-      'data/credential-key',
+      availabilityKey,
       expect.objectContaining({ failureKind: 'invalid_json' }),
     )
-    expect(deps.recordCircuitSuccess).not.toHaveBeenCalled()
   })
 
   it('treats payload-size rejection as an available upstream and logs no identity', async () => {
@@ -288,7 +335,8 @@ describe('TDX upstream data client', () => {
       },
     })
     expect(cancelCount).toBe(1)
-    expect(deps.recordCircuitSuccess).toHaveBeenCalledWith('data/credential-key')
+    expect(deps.recordCircuitSuccess).toHaveBeenCalledWith(rateLimitKey)
+    expect(deps.recordCircuitSuccess).toHaveBeenCalledWith(availabilityKey)
     expect(deps.recordCircuitFailure).not.toHaveBeenCalled()
 
     const logged = parsedConsoleCalls(vi.mocked(console.error).mock.calls)

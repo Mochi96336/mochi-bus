@@ -17,6 +17,7 @@ import {
 } from './tdx/token-client'
 import {
   createTDXCircuitBreaker,
+  redactedCircuitKey,
 } from './tdx/circuit-breaker'
 import {
   TDX_ERROR_MAX_RESPONSE_BYTES,
@@ -128,9 +129,10 @@ export function resetTDXTestState(): void {
 
 const REQUEST_TIMEOUT_MS = 6000
 const circuitBreaker = createTDXCircuitBreaker({
-  onOpened: ({ warning, openMs }) => {
+  onOpened: ({ key, warning, openMs }) => {
     console.error(JSON.stringify({
       message: 'tdx_circuit_opened',
+      key: redactedCircuitKey(key),
       warning,
       openMs,
     }))
@@ -158,7 +160,7 @@ const resetTDXTokenState = tokenClient.resetTDXTokenState
 
 const upstreamDataClient = createTDXUpstreamDataClient({
   requestTimeoutMs: REQUEST_TIMEOUT_MS,
-  assertCircuitClosed: (key) => { circuitBreaker.assertClosed(key) },
+  assertCircuitsClosed: (keys) => { circuitBreaker.assertAllClosed(keys) },
   recordCircuitFailure: (key, error, retryAfter) => circuitBreaker.recordFailure(key, error, retryAfter),
   recordCircuitSuccess: circuitBreaker.recordSuccess,
   responseError: (context, response, isShared, observation) => (

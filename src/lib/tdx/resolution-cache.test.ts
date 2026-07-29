@@ -135,7 +135,7 @@ describe('TDX resolution cache boundary', () => {
     expect(events[0]).toMatchObject({ resolution: 'circuit_open', result: 'error', failureClass: 'circuit_open' })
   })
 
-  it('records leader schema failure and skips cache writes', async () => {
+  it('reports leader schema failure, clears the data circuit, and skips cache writes', async () => {
     const events: TelemetryEnvelope[] = []
     const cache = stubCache()
     const state = setup({ fetchUpstream: vi.fn(async () => success({ id: 'wrong-shape' })) })
@@ -144,8 +144,8 @@ describe('TDX resolution cache boundary', () => {
       operation: 'vehicle_positions', validate,
     })).rejects.toMatchObject({ failureKind: 'invalid_schema' })
 
-    expect(state.recordCircuitFailure).toHaveBeenCalledWith('data/fixture', expect.objectContaining({ failureKind: 'invalid_schema' }))
-    expect(state.recordCircuitSuccess).not.toHaveBeenCalled()
+    expect(state.recordCircuitSuccess).toHaveBeenCalledWith('data/fixture')
+    expect(state.recordCircuitFailure).not.toHaveBeenCalled()
     expect(cache.put).not.toHaveBeenCalled()
     expect(events[0]).toMatchObject({ resolution: 'upstream', result: 'error', failureClass: 'invalid_schema' })
   })
