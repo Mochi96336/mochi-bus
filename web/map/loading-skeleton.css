@@ -1,34 +1,26 @@
-/* Loading rows reuse the resolved list layout; only their content becomes placeholders. */
+/* Loading rows reuse the resolved list and row shells; only their content becomes placeholders. */
 .map-drawer .place-route-loading {
   display: grid;
   gap: 0;
 }
 
-.map-drawer .place-route-skeleton {
+.map-drawer .map-loading-row {
   --skeleton-title-width: 48%;
   --skeleton-meta-width: 38%;
   position: relative;
   height: auto;
   overflow: hidden;
-  border: 0;
-  border-bottom: 1px solid var(--line-faint);
-  border-radius: 0;
   background: transparent;
-  animation: none;
   cursor: default;
   pointer-events: none;
 }
 
-.map-drawer .place-route-skeleton:last-child {
-  border-bottom: 0;
-}
-
-.map-drawer .place-route-skeleton > * {
+.map-drawer .map-loading-row > * {
   position: relative;
   z-index: 1;
 }
 
-.map-drawer .place-route-skeleton::after {
+.map-drawer .map-loading-row::after {
   content: "";
   position: absolute;
   z-index: 2;
@@ -81,18 +73,8 @@
   height: 7px;
 }
 
-/* Route rows preserve the resolved outer grid, route content, ETA, and favorite control. */
-.map-drawer .place-route-loading-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
-  align-items: stretch;
-}
-
-.map-drawer .place-route-loading-row .place-route-button {
-  border-bottom: 0;
-}
-
-.map-drawer .place-route-loading-row .route-color-tick {
+/* Route rows reuse the resolved outer grid, route content, ETA, and favorite control. */
+.map-drawer .map-loading-row .route-color-tick {
   background: var(--skeleton-base);
 }
 
@@ -139,26 +121,26 @@
   background: var(--skeleton-base);
 }
 
-.map-drawer .place-route-skeleton:nth-child(1) {
+.map-drawer .map-loading-row:nth-child(1) {
   --skeleton-title-width: 44%;
   --skeleton-meta-width: 56%;
 }
 
-.map-drawer .place-route-skeleton:nth-child(2) {
+.map-drawer .map-loading-row:nth-child(2) {
   --skeleton-title-width: 58%;
   --skeleton-meta-width: 36%;
 }
 
-.map-drawer .place-route-skeleton:nth-child(2)::after {
+.map-drawer .map-loading-row:nth-child(2)::after {
   animation-delay: -.3s;
 }
 
-.map-drawer .place-route-skeleton:nth-child(3) {
+.map-drawer .map-loading-row:nth-child(3) {
   --skeleton-title-width: 38%;
   --skeleton-meta-width: 49%;
 }
 
-.map-drawer .place-route-skeleton:nth-child(3)::after {
+.map-drawer .map-loading-row:nth-child(3)::after {
   animation-delay: -.6s;
 }
 
@@ -167,11 +149,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .map-drawer .place-route-skeleton {
-    background: transparent;
-  }
-
-  .map-drawer .place-route-skeleton::after {
+  .map-drawer .map-loading-row::after {
     display: none;
   }
 }
