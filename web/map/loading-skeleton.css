@@ -1,4 +1,4 @@
-/* Loading rows reuse the resolved list and row shells; only their content becomes placeholders. */
+/* Loading rows mirror resolved content without borrowing resolved-row semantics. */
 .map-drawer .place-route-loading {
   display: grid;
   gap: 0;
@@ -73,7 +73,22 @@
   height: 7px;
 }
 
-/* Route rows reuse the resolved outer grid, route content, ETA, and favorite control. */
+/* Route rows mirror the resolved outer grid while remaining loading-only nodes. */
+.map-drawer .place-route-loading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.map-drawer .place-route-loading-row:last-child {
+  border-bottom: 0;
+}
+
+.map-drawer .place-route-loading-row .place-route-button {
+  border-bottom: 0;
+}
+
 .map-drawer .map-loading-row .route-color-tick {
   background: var(--skeleton-base);
 }
