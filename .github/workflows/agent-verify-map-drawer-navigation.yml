@@ -1,0 +1,74 @@
+name: Verify map drawer navigation
+
+on:
+  push:
+    branches:
+      - agent/fix-map-drawer-navigation
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: agent/fix-map-drawer-navigation
+          fetch-depth: 0
+      - name: Apply regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/agent-test-map-drawer-navigation.py
+          rm .github/agent-test-map-drawer-navigation.py
+          rm .github/workflows/agent-verify-map-drawer-navigation.yml
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --silent
+      - name: Run source checks
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npm test -- web/map/main-size.test.ts web/map/nearby-places-controller.test.ts
+            npm run typecheck
+            npm run build:map
+          } 2>&1 | tee source-check.log
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium >/dev/null 2>&1
+      - name: Run focused desktop regressions
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/navigation
+        run: >-
+          npx playwright test
+          test/e2e/map-desktop-drawer-stability.spec.ts
+          test/e2e/map-navigation-equivalence.spec.ts
+          --project=desktop-chromium
+          --workers=1
+          --output=test-results/navigation
+          --reporter=line,html
+      - name: Commit verified tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "test(map): cover stable drawer navigation"
+          git push origin HEAD:agent/fix-map-drawer-navigation
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-drawer-navigation-regression
+          path: |
+            source-check.log
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 3
