@@ -54,7 +54,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
-        preserveDesktopHeight: true,
+        size: 'standard',
         header: drawerHeader('附近站牌', '正在搜尋附近站牌', backLabel, onBack),
         content: [createNearbyPlaceLoadingList()],
       })
@@ -76,10 +76,10 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         button.addEventListener('click', () => options.onOpenPlace(place))
         list.appendChild(button)
       }
-      const session = options.renderDrawer({
+      options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
-        preserveDesktopHeight: places.length > 0,
+        size: 'standard',
         header: drawerHeader(
           '附近站牌',
           places.length
@@ -91,10 +91,6 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         content: [list],
         footer: [options.createTripModeButton()],
       })
-      if (places.length) {
-        const frame = requestAnimationFrame(() => session.releasePreservedHeight())
-        session.onDispose(() => cancelAnimationFrame(frame))
-      }
     },
 
     renderError({ cityCode, origin, error, backLabel, onBack, onRetry }) {
@@ -102,6 +98,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
+        size: 'standard',
         header: drawerHeader('附近站牌讀取失敗', message, backLabel, onBack),
         content: [options.createRetryButton(onRetry)],
       })
