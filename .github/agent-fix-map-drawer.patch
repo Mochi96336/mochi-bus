@@ -1,407 +1,537 @@
-diff --git a/web/map/main.ts b/web/map/main.ts
-index 10a59be..0000000 100644
---- a/web/map/main.ts
-+++ b/web/map/main.ts
-@@ -34,6 +34,14 @@ import { splitRouteDisplayName } from '../lib/route-display'
- import { createMapCameraController } from './camera-controller'
- import { createDrawerRenderer, type DrawerView } from './drawer-view'
-+import {
-+  buttonGrid,
-+  degradedNotice,
-+  drawerBack,
-+  heading,
-+  paragraph,
-+  retryButton,
-+} from './drawer-primitives'
- import { createMapFeatureDiscovery, type MapFeature } from './feature-discovery'
- import { createCityNetworkController } from './city-network-controller'
- import { createRouteDetailController } from './route-detail-controller'
-@@ -279,21 +287,35 @@ const nearbyPlaces = createNearbyPlacesController({
-   beginRequest: beginNavRequest,
-   isStaleRequest: isStaleNav,
-   loadNearby: mapApi.nearby,
--  onStart: ({ cityCode, origin }) => {
--    nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
-+  onStart: ({ cityCode, origin, autoPreview }) => {
-+    if (!autoPreview) {
-+      nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
-+    }
-     nearbyResults.setOrigin(origin)
-     nearbyPlacesMap.renderLoadingOrigin(origin)
-     setStatus('正在找這附近的站牌…')
-   },
--  onPlaces: (presentation) => { nearbyResults.store(presentation); renderNearbyPlaces() },
-+  onPlaces: (presentation) => {
-+    if (presentation.autoPreview) enterNearbyView(presentation.origin[0], presentation.origin[1])
-+    nearbyResults.store(presentation)
-+    renderNearbyPlaces()
-+  },
-   onAutoPreview: async (place, presentation) => {
-     nearbyResults.storeAndRenderMap(presentation)
--    await openNearbyPlace(place)
-+    await openAutoPreviewPlace(place)
-+  },
-+  onError: ({ cityCode, origin, autoPreview, error }) => {
-+    if (autoPreview) {
-+      setStatus(error instanceof Error && error.message ? error.message : '附近站牌讀取失敗', true)
-+      return
-+    }
-+    setStatus(nearbyPlacesView.renderError({
-+      cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
-+      onRetry: () => void findNearbyPlaces(origin[0], origin[1], false, 'replace'),
-+    }), true)
-   },
--  onError: ({ cityCode, origin, autoPreview, error }) => setStatus(nearbyPlacesView.renderError({
--    cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
--    onRetry: () => void findNearbyPlaces(origin[0], origin[1], autoPreview, 'replace'),
--  }), true),
- })
- const placeRoutes = createPlaceRoutesController({
-@@ -569,11 +591,11 @@ async function hydrateMapLocation() {
-       if (!history.state?.mapView) {
-         history.replaceState({ mapView: 'catalogue' }, '', location.href)
-       }
--      activeCity = city
-+      activateCityContext(city)
-       if (routeName) {
-         const returnToTrip = history.state?.mapParent === 'trip-results' && restoreTripResultsState()
-         await openRouteDetail(routeName, params.get('variant'), returnToTrip, stopFillAccent, undefined, params.get('stopUid'))
-       } else {
-@@ -587,22 +609,24 @@ async function hydrateMapLocation() {
-           tripController.start()
-           return
-         }
--        await chooseCity(city)
--        if (hydrationIsStale()) return
-         const placeId = params.get('place')
-         const stopUid = params.get('stopUid')
-         if (placeId || stopUid) {
-           await openPlaceById(placeId, hydration.signal, hydrationIsStale, stopUid)
-           return
-         }
-+
-         const latitudeParam = params.get('lat')
-         const longitudeParam = params.get('lon')
-         const latitude = Number(latitudeParam)
-         const longitude = Number(longitudeParam)
-         if (latitudeParam !== null && longitudeParam !== null && Number.isFinite(latitude) && Number.isFinite(longitude)) {
-           camera.focusPoint([latitude, longitude], 15)
-           await findNearbyPlaces(latitude, longitude, false, 'replace')
-+          return
-         }
-+
-+        await chooseCity(city)
-       }
-       return
-     }
-@@ -842,10 +866,17 @@ function returnToRegion() {
-   if (activeCity) showRegion(activeCity.region)
- }
- 
-+function activateCityContext(city: MapCity) {
-+  activeCity = city
-+  setActiveCity(city.code)
-+  networkButton.hidden = false
-+  cityNetwork.hide()
-+  selectionLayer.clearLayers()
-+  nearbyLayer.clearLayers()
-+  setDocumentTitle(`${city.name}公車地圖`)
-+}
-+
- async function chooseCity(city: MapCity) {
-   tripController.clearPending()
-   clearTripResultsCamera()
--  activeCity = city
--  setActiveCity(city.code)
-+  activateCityContext(city)
-   category = '全部'
-   routeSearchQuery = ''
-   routeScrollTop = 0
-   tripController.reset()
-   const { requestId, signal } = beginNavRequest()
--  networkButton.hidden = false
--  cityNetwork.hide()
--  selectionLayer.clearLayers()
-   routeDetail.close()
--  nearbyLayer.clearLayers()
-   clearPreviewLayer()
--  setDocumentTitle(`${city.name}公車地圖`)
-   setStatus(`${city.name} · 正在整理路線…`)
-   renderDrawer({
-@@ -1420,29 +1451,37 @@ function renderVehicleRefreshError(error: unknown) {
-   drawer.appendChild(notice)
- }
- 
-+function enterNearbyView(
-+  latitude: number,
-+  longitude: number,
-+  historyMode: 'push' | 'replace' = 'push',
-+) {
-+  if (!activeCity) return
-+  const currentState = historyRecord()
-+  const currentView = readMapView(currentState) ?? mapViewFromUrl()
-+  const nearbyState = {
-+    ...currentState,
-+    mapView: 'nearby',
-+    mapParent: currentView === 'nearby'
-+      ? readMapView({ mapView: currentState.mapParent }) ?? 'catalogue'
-+      : currentView,
-+  }
-+  const url = `/map?city=${encodeURIComponent(activeCity.code)}&lat=${latitude.toFixed(5)}&lon=${longitude.toFixed(5)}`
-+  if (historyMode === 'push' && currentView !== 'nearby') history.pushState(nearbyState, '', url)
-+  else history.replaceState(nearbyState, '', url)
-+  interactionMode = 'nearby'
-+  routeDetail.close()
-+}
-+
- async function findNearbyPlaces(
-   latitude: number,
-   longitude: number,
-   autoPreview = false,
-   historyMode: 'push' | 'replace' = 'push',
- ) {
-   if (!activeCity) return
-   if (historyMode === 'push') cancelLocationHydration()
--  const currentState = historyRecord()
--  const currentView = readMapView(currentState) ?? mapViewFromUrl()
--  const nearbyState = {
--    ...currentState,
--    mapView: 'nearby',
--    mapParent: currentView === 'nearby'
--      ? readMapView({ mapView: currentState.mapParent }) ?? 'catalogue'
--      : currentView,
--  }
--  const nearbyUrl = `/map?city=${encodeURIComponent(activeCity.code)}&lat=${latitude.toFixed(5)}&lon=${longitude.toFixed(5)}`
--  if (historyMode === 'push' && currentView !== 'nearby') history.pushState(nearbyState, '', nearbyUrl)
--  else history.replaceState(nearbyState, '', nearbyUrl)
-+  if (!autoPreview) enterNearbyView(latitude, longitude, historyMode)
-   cityNetwork.hide()
-   // 只有「選點進行中」需要中止規劃;已有行程結果就保留,
-   // 點站牌不再把整趟規劃清掉,附近站牌視圖會給「返回行程候選」的退路。
-   if (interactionMode === 'trip') clearTripState()
--  interactionMode = 'nearby'
-   clearPreviewLayer()
--  routeDetail.close()
-   await nearbyPlaces.load({
-     cityCode: activeCity.code,
-@@ -1533,15 +1572,22 @@ async function openPlaceById(
- ) {
-   if (!activeCity) return
-   const cityCode = activeCity.code
-+  const cachedResult = nearbyResults.current()
-+  const cachedPlace = placeId
-+    ? cachedResult?.places.find((candidate) => candidate.placeId === placeId)
-+    : undefined
-   let place: NearbyPlace
--  try {
--    if (!placeId) throw new Error('缺少站牌識別碼')
--    place = await mapApi.place(cityCode, placeId, signal)
--  } catch (error) {
--    if (!stopUid || signal?.aborted || isStale()) throw error
--    place = await mapApi.stopPlace(cityCode, stopUid, signal)
-+  if (cachedPlace) {
-+    place = cachedPlace
-+  } else {
-+    try {
-+      if (!placeId) throw new Error('缺少站牌識別碼')
-+      place = await mapApi.place(cityCode, placeId, signal)
-+    } catch (error) {
-+      if (!stopUid || signal?.aborted || isStale()) throw error
-+      place = await mapApi.stopPlace(cityCode, stopUid, signal)
-+    }
-   }
-   if (signal?.aborted || isStale() || activeCity?.code !== cityCode) return
-   camera.focusPoint([place.latitude, place.longitude], 16)
--  nearbyResults.replace([place.latitude, place.longitude], [place])
-+  if (cachedPlace) nearbyResults.renderMap()
-+  else nearbyResults.replace([place.latitude, place.longitude], [place])
-   interactionMode = 'nearby'
-   await placeRoutes.open(place)
- }
-@@ -1600,6 +1646,20 @@ async function restoreSharedTripResults(
- }
- 
- 
-+async function openAutoPreviewPlace(place: NearbyPlace) {
-+  if (!activeCity) return
-+  cancelLocationHydration()
-+  const currentState = historyRecord()
-+  const parent = readMapView(currentState) ?? mapViewFromUrl()
-+  history.pushState({
-+    ...currentState,
-+    mapView: 'place',
-+    mapParent: parent,
-+  }, '', `/map?city=${encodeURIComponent(activeCity.code)}&place=${encodeURIComponent(place.placeId)}`)
-+  interactionMode = 'nearby'
-+  await placeRoutes.open(place)
-+}
-+
- async function openNearbyPlace(place: NearbyPlace) {
-   if (!activeCity) return
-   cancelLocationHydration()
-@@ -1620,7 +1680,10 @@ function returnToNearbyPlaces() {
- }
- 
- function placeBackLabel(): string {
--  return history.state?.mapParent === 'catalogue' ? '返回路線列表' : '附近站牌'
-+  if (history.state?.mapParent === 'catalogue') return '返回路線列表'
-+  if (history.state?.mapParent === 'route') return '返回路線'
-+  return '附近站牌'
- }
- 
- function directionFavoriteControl(place: NearbyPlace, route: PlaceRoute): HTMLButtonElement {
-@@ -1677,73 +1740,6 @@ function completePlaceRoutes({ cityCode, place }: PlaceRoutesPresentation): void {
-   clearStatus()
- }
- 
--function degradedNotice(message: string, onRetry: () => void, credentialRecovery = false): HTMLElement {
--  const notice = document.createElement('section')
--  notice.className = 'degraded-notice'
--  if (credentialRecovery) notice.classList.add('credential-recovery')
--  notice.setAttribute('role', 'status')
--  notice.appendChild(paragraph(message))
--  const actions = document.createElement('div')
--  actions.className = 'degraded-actions'
--  actions.appendChild(retryButton(onRetry))
--  const setup = document.createElement('a')
--  setup.className = 'quiet-link'
--  setup.href = '/setup'
--  setup.textContent = '檢查 TDX 設定'
--  actions.appendChild(setup)
--  notice.appendChild(actions)
--  return notice
--}
--
--function heading(title: string, description: string): HTMLElement {
--  const wrapper = document.createElement('div')
--  wrapper.className = 'drawer-heading'
--  const heading = document.createElement('h1')
--  heading.textContent = title
--  const paragraph = document.createElement('p')
--  paragraph.textContent = description
--  wrapper.appendChild(heading)
--  wrapper.appendChild(paragraph)
--  return wrapper
--}
--
--function paragraph(text: string): HTMLElement {
--  const node = document.createElement('p')
--  node.className = 'drawer-copy'
--  node.textContent = text
--  return node
--}
--
--function drawerBack(label: string, onClick: () => void): HTMLButtonElement {
--  const button = document.createElement('button')
--  button.className = 'drawer-back'
--  button.textContent = `← ${label}`
--  button.addEventListener('click', onClick)
--  return button
--}
--
--// 讀取失敗時的統一退路:skeleton/loading 畫面不能停在原地不動,
--// 一定要有明確的錯誤文字加上可以再試一次的按鈕。
--function retryButton(onClick: () => void): HTMLButtonElement {
--  const button = document.createElement('button')
--  button.className = 'quiet-button'
--  button.textContent = '再試一次'
--  button.addEventListener('click', onClick)
--  return button
--}
--
--function buttonGrid(items: Array<{ label: string; onClick: () => void }>, className?: string): HTMLElement {
--  const grid = document.createElement('div')
--  grid.className = 'selection-grid'
--  if (className) grid.classList.add(className)
--  for (const item of items) {
--    const button = document.createElement('button')
--    button.textContent = item.label
--    button.addEventListener('click', item.onClick)
--    grid.appendChild(button)
--  }
--  return grid
--}
--
- function setStatus(text: string, error = false) {
-   statusNode.textContent = text
-   statusNode.classList.remove('dismissed')
-diff --git a/web/map/drawer-primitives.ts b/web/map/drawer-primitives.ts
-new file mode 100644
-index 0000000..0000000
---- /dev/null
-+++ b/web/map/drawer-primitives.ts
-@@ -0,0 +1,67 @@
-+export function degradedNotice(
-+  message: string,
-+  onRetry: () => void,
-+  credentialRecovery = false,
-+): HTMLElement {
-+  const notice = document.createElement('section')
-+  notice.className = 'degraded-notice'
-+  if (credentialRecovery) notice.classList.add('credential-recovery')
-+  notice.setAttribute('role', 'status')
-+  notice.appendChild(paragraph(message))
-+  const actions = document.createElement('div')
-+  actions.className = 'degraded-actions'
-+  actions.appendChild(retryButton(onRetry))
-+  const setup = document.createElement('a')
-+  setup.className = 'quiet-link'
-+  setup.href = '/setup'
-+  setup.textContent = '檢查 TDX 設定'
-+  actions.appendChild(setup)
-+  notice.appendChild(actions)
-+  return notice
-+}
-+
-+export function heading(title: string, description: string): HTMLElement {
-+  const wrapper = document.createElement('div')
-+  wrapper.className = 'drawer-heading'
-+  const titleNode = document.createElement('h1')
-+  titleNode.textContent = title
-+  const descriptionNode = document.createElement('p')
-+  descriptionNode.textContent = description
-+  wrapper.appendChild(titleNode)
-+  wrapper.appendChild(descriptionNode)
-+  return wrapper
-+}
-+
-+export function paragraph(text: string): HTMLElement {
-+  const node = document.createElement('p')
-+  node.className = 'drawer-copy'
-+  node.textContent = text
-+  return node
-+}
-+
-+export function drawerBack(label: string, onClick: () => void): HTMLButtonElement {
-+  const button = document.createElement('button')
-+  button.className = 'drawer-back'
-+  button.textContent = `← ${label}`
-+  button.addEventListener('click', onClick)
-+  return button
-+}
-+
-+// 讀取失敗時的統一退路:skeleton/loading 畫面不能停在原地不動,
-+// 一定要有明確的錯誤文字加上可以再試一次的按鈕。
-+export function retryButton(onClick: () => void): HTMLButtonElement {
-+  const button = document.createElement('button')
-+  button.className = 'quiet-button'
-+  button.textContent = '再試一次'
-+  button.addEventListener('click', onClick)
-+  return button
-+}
-+
-+export function buttonGrid(
-+  items: Array<{ label: string; onClick: () => void }>,
-+  className?: string,
-+): HTMLElement {
-+  const grid = document.createElement('div')
-+  grid.className = 'selection-grid'
-+  if (className) grid.classList.add(className)
-+  for (const item of items) {
-+    const button = document.createElement('button')
-+    button.textContent = item.label
-+    button.addEventListener('click', item.onClick)
-+    grid.appendChild(button)
-+  }
-+  return grid
-+}
+from pathlib import Path
+
+MAIN_PATH = Path("web/map/main.ts")
+PRIMITIVES_PATH = Path("web/map/drawer-primitives.ts")
+LINE_LIMIT = 1792
+
+
+def replace_once(source: str, old: str, new: str, label: str) -> str:
+    count = source.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly one match, found {count}")
+    return source.replace(old, new, 1)
+
+
+source = MAIN_PATH.read_text(encoding="utf-8")
+
+source = replace_once(
+    source,
+    """import { createMapCameraController } from './camera-controller'
+import { createDrawerRenderer, type DrawerView } from './drawer-view'
+import { createMapFeatureDiscovery, type MapFeature } from './feature-discovery'
+""",
+    """import { createMapCameraController } from './camera-controller'
+import { createDrawerRenderer, type DrawerView } from './drawer-view'
+import {
+  buttonGrid,
+  degradedNotice,
+  drawerBack,
+  heading,
+  paragraph,
+  retryButton,
+} from './drawer-primitives'
+import { createMapFeatureDiscovery, type MapFeature } from './feature-discovery'
+""",
+    "drawer primitive import",
+)
+
+source = replace_once(
+    source,
+    """const nearbyPlaces = createNearbyPlacesController({
+  currentCityCode: () => activeCity?.code,
+  beginRequest: beginNavRequest,
+  isStaleRequest: isStaleNav,
+  loadNearby: mapApi.nearby,
+  onStart: ({ cityCode, origin }) => {
+    nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
+    nearbyResults.setOrigin(origin)
+    nearbyPlacesMap.renderLoadingOrigin(origin)
+    setStatus('正在找這附近的站牌…')
+  },
+  onPlaces: (presentation) => { nearbyResults.store(presentation); renderNearbyPlaces() },
+  onAutoPreview: async (place, presentation) => {
+    nearbyResults.storeAndRenderMap(presentation)
+    await openNearbyPlace(place)
+  },
+  onError: ({ cityCode, origin, autoPreview, error }) => setStatus(nearbyPlacesView.renderError({
+    cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
+    onRetry: () => void findNearbyPlaces(origin[0], origin[1], autoPreview, 'replace'),
+  }), true),
+})
+""",
+    """const nearbyPlaces = createNearbyPlacesController({
+  currentCityCode: () => activeCity?.code,
+  beginRequest: beginNavRequest,
+  isStaleRequest: isStaleNav,
+  loadNearby: mapApi.nearby,
+  onStart: ({ cityCode, origin, autoPreview }) => {
+    if (!autoPreview) {
+      nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
+      nearbyResults.setOrigin(origin)
+    }
+    nearbyPlacesMap.renderLoadingOrigin(origin)
+    setStatus('正在找這附近的站牌…')
+  },
+  onPlaces: (presentation) => {
+    if (presentation.autoPreview) enterNearbyView(presentation.origin[0], presentation.origin[1])
+    nearbyResults.store(presentation)
+    renderNearbyPlaces()
+  },
+  onAutoPreview: async (place, presentation) => {
+    nearbyResults.storeAndRenderMap(presentation)
+    await openAutoPreviewPlace(place)
+  },
+  onError: ({ cityCode, origin, autoPreview, error }) => {
+    if (autoPreview) {
+      setStatus(error instanceof Error && error.message ? error.message : '附近站牌讀取失敗', true)
+      return
+    }
+    setStatus(nearbyPlacesView.renderError({
+      cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
+      onRetry: () => void findNearbyPlaces(origin[0], origin[1], false, 'replace'),
+    }), true)
+  },
+})
+""",
+    "nearby controller presentation",
+)
+
+source = replace_once(
+    source,
+    """      activeCity = city
+      if (routeName) {
+""",
+    """      activateCityContext(city)
+      if (routeName) {
+""",
+    "silent city activation",
+)
+
+source = replace_once(
+    source,
+    """        await chooseCity(city)
+        if (hydrationIsStale()) return
+        const placeId = params.get('place')
+        const stopUid = params.get('stopUid')
+        if (placeId || stopUid) {
+          await openPlaceById(placeId, hydration.signal, hydrationIsStale, stopUid)
+          return
+        }
+        const latitudeParam = params.get('lat')
+        const longitudeParam = params.get('lon')
+        const latitude = Number(latitudeParam)
+        const longitude = Number(longitudeParam)
+        if (latitudeParam !== null && longitudeParam !== null && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          camera.focusPoint([latitude, longitude], 15)
+          await findNearbyPlaces(latitude, longitude, false, 'replace')
+        }
+""",
+    """        const placeId = params.get('place')
+        const stopUid = params.get('stopUid')
+        if (placeId || stopUid) {
+          await openPlaceById(placeId, hydration.signal, hydrationIsStale, stopUid)
+          return
+        }
+
+        const latitudeParam = params.get('lat')
+        const longitudeParam = params.get('lon')
+        const latitude = Number(latitudeParam)
+        const longitude = Number(longitudeParam)
+        if (latitudeParam !== null && longitudeParam !== null && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          camera.focusPoint([latitude, longitude], 15)
+          await findNearbyPlaces(latitude, longitude, false, 'replace')
+          return
+        }
+
+        await chooseCity(city)
+""",
+    "hydrate final destination before catalogue",
+)
+
+source = replace_once(
+    source,
+    """async function chooseCity(city: MapCity) {
+  tripController.clearPending()
+  clearTripResultsCamera()
+  activeCity = city
+  setActiveCity(city.code)
+  category = '全部'
+  routeSearchQuery = ''
+  routeScrollTop = 0
+  tripController.reset()
+  const { requestId, signal } = beginNavRequest()
+  networkButton.hidden = false
+  cityNetwork.hide()
+  selectionLayer.clearLayers()
+  routeDetail.close()
+  nearbyLayer.clearLayers()
+  clearPreviewLayer()
+  setDocumentTitle(`${city.name}公車地圖`)
+""",
+    """function activateCityContext(city: MapCity) {
+  activeCity = city
+  setActiveCity(city.code)
+  networkButton.hidden = false
+  cityNetwork.hide()
+  selectionLayer.clearLayers()
+  nearbyLayer.clearLayers()
+  setDocumentTitle(`${city.name}公車地圖`)
+}
+
+async function chooseCity(city: MapCity) {
+  tripController.clearPending()
+  clearTripResultsCamera()
+  activateCityContext(city)
+  category = '全部'
+  routeSearchQuery = ''
+  routeScrollTop = 0
+  tripController.reset()
+  const { requestId, signal } = beginNavRequest()
+  routeDetail.close()
+  clearPreviewLayer()
+""",
+    "city context extraction",
+)
+
+source = replace_once(
+    source,
+    """async function findNearbyPlaces(
+  latitude: number,
+  longitude: number,
+  autoPreview = false,
+  historyMode: 'push' | 'replace' = 'push',
+) {
+  if (!activeCity) return
+  if (historyMode === 'push') cancelLocationHydration()
+  const currentState = historyRecord()
+  const currentView = readMapView(currentState) ?? mapViewFromUrl()
+  const nearbyState = {
+    ...currentState,
+    mapView: 'nearby',
+    mapParent: currentView === 'nearby'
+      ? readMapView({ mapView: currentState.mapParent }) ?? 'catalogue'
+      : currentView,
+  }
+  const nearbyUrl = `/map?city=${encodeURIComponent(activeCity.code)}&lat=${latitude.toFixed(5)}&lon=${longitude.toFixed(5)}`
+  if (historyMode === 'push' && currentView !== 'nearby') history.pushState(nearbyState, '', nearbyUrl)
+  else history.replaceState(nearbyState, '', nearbyUrl)
+  cityNetwork.hide()
+  // 只有「選點進行中」需要中止規劃;已有行程結果就保留,
+  // 點站牌不再把整趟規劃清掉,附近站牌視圖會給「返回行程候選」的退路。
+  if (interactionMode === 'trip') clearTripState()
+  interactionMode = 'nearby'
+  clearPreviewLayer()
+  routeDetail.close()
+  await nearbyPlaces.load({
+    cityCode: activeCity.code,
+    origin: [latitude, longitude],
+    radiusMeters: map.getZoom() >= 15 ? 300 : 500,
+    autoPreview,
+  })
+}
+""",
+    """function enterNearbyView(
+  latitude: number,
+  longitude: number,
+  historyMode: 'push' | 'replace' = 'push',
+) {
+  if (!activeCity) return
+  const currentState = historyRecord()
+  const currentView = readMapView(currentState) ?? mapViewFromUrl()
+  const nearbyState = {
+    ...currentState,
+    mapView: 'nearby',
+    mapParent: currentView === 'nearby'
+      ? readMapView({ mapView: currentState.mapParent }) ?? 'catalogue'
+      : currentView,
+  }
+  const nearbyUrl = `/map?city=${encodeURIComponent(activeCity.code)}&lat=${latitude.toFixed(5)}&lon=${longitude.toFixed(5)}`
+  if (historyMode === 'push' && currentView !== 'nearby') history.pushState(nearbyState, '', nearbyUrl)
+  else history.replaceState(nearbyState, '', nearbyUrl)
+  interactionMode = 'nearby'
+  routeDetail.close()
+}
+
+async function findNearbyPlaces(
+  latitude: number,
+  longitude: number,
+  autoPreview = false,
+  historyMode: 'push' | 'replace' = 'push',
+) {
+  if (!activeCity) return
+  if (historyMode === 'push') cancelLocationHydration()
+  if (!autoPreview) enterNearbyView(latitude, longitude, historyMode)
+  cityNetwork.hide()
+  // 只有「選點進行中」需要中止規劃;已有行程結果就保留,
+  // 點站牌不再把整趟規劃清掉,附近站牌視圖會給「返回行程候選」的退路。
+  if (interactionMode === 'trip') clearTripState()
+  clearPreviewLayer()
+  await nearbyPlaces.load({
+    cityCode: activeCity.code,
+    origin: [latitude, longitude],
+    radiusMeters: map.getZoom() >= 15 ? 300 : 500,
+    autoPreview,
+  })
+}
+""",
+    "nearby navigation transaction",
+)
+
+source = replace_once(
+    source,
+    """async function openPlaceById(
+  placeId: string | null,
+  signal?: AbortSignal,
+  isStale: () => boolean = () => false,
+  stopUid?: string | null,
+) {
+  if (!activeCity) return
+  const cityCode = activeCity.code
+  let place: NearbyPlace
+  try {
+    if (!placeId) throw new Error('缺少站牌識別碼')
+    place = await mapApi.place(cityCode, placeId, signal)
+  } catch (error) {
+    if (!stopUid || signal?.aborted || isStale()) throw error
+    place = await mapApi.stopPlace(cityCode, stopUid, signal)
+  }
+  if (signal?.aborted || isStale() || activeCity?.code !== cityCode) return
+  camera.focusPoint([place.latitude, place.longitude], 16)
+  nearbyResults.replace([place.latitude, place.longitude], [place])
+  interactionMode = 'nearby'
+  await placeRoutes.open(place)
+}
+""",
+    """async function openPlaceById(
+  placeId: string | null,
+  signal?: AbortSignal,
+  isStale: () => boolean = () => false,
+  stopUid?: string | null,
+) {
+  if (!activeCity) return
+  const cityCode = activeCity.code
+  const cachedResult = nearbyResults.current()
+  const cachedPlace = placeId
+    ? cachedResult?.places.find((candidate) => candidate.placeId === placeId)
+    : undefined
+  let place: NearbyPlace
+  if (cachedPlace) {
+    place = cachedPlace
+  } else {
+    try {
+      if (!placeId) throw new Error('缺少站牌識別碼')
+      place = await mapApi.place(cityCode, placeId, signal)
+    } catch (error) {
+      if (!stopUid || signal?.aborted || isStale()) throw error
+      place = await mapApi.stopPlace(cityCode, stopUid, signal)
+    }
+  }
+  if (signal?.aborted || isStale() || activeCity?.code !== cityCode) return
+  camera.focusPoint([place.latitude, place.longitude], 16)
+  if (cachedPlace) nearbyResults.renderMap()
+  else nearbyResults.replace([place.latitude, place.longitude], [place])
+  interactionMode = 'nearby'
+  await placeRoutes.open(place)
+}
+""",
+    "cached place restoration",
+)
+
+source = replace_once(
+    source,
+    """async function openNearbyPlace(place: NearbyPlace) {
+""",
+    """async function openAutoPreviewPlace(place: NearbyPlace) {
+  if (!activeCity) return
+  cancelLocationHydration()
+  const currentState = historyRecord()
+  const parent = readMapView(currentState) ?? mapViewFromUrl()
+  history.pushState({
+    ...currentState,
+    mapView: 'place',
+    mapParent: parent,
+  }, '', `/map?city=${encodeURIComponent(activeCity.code)}&place=${encodeURIComponent(place.placeId)}`)
+  interactionMode = 'nearby'
+  await placeRoutes.open(place)
+}
+
+async function openNearbyPlace(place: NearbyPlace) {
+""",
+    "direct auto-preview place navigation",
+)
+
+source = replace_once(
+    source,
+    """function placeBackLabel(): string {
+  return history.state?.mapParent === 'catalogue' ? '返回路線列表' : '附近站牌'
+}
+""",
+    """function placeBackLabel(): string {
+  if (history.state?.mapParent === 'catalogue') return '返回路線列表'
+  if (history.state?.mapParent === 'route') return '返回路線'
+  return '附近站牌'
+}
+""",
+    "place back label",
+)
+
+source = replace_once(
+    source,
+    """function degradedNotice(message: string, onRetry: () => void, credentialRecovery = false): HTMLElement {
+  const notice = document.createElement('section')
+  notice.className = 'degraded-notice'
+  if (credentialRecovery) notice.classList.add('credential-recovery')
+  notice.setAttribute('role', 'status')
+  notice.appendChild(paragraph(message))
+  const actions = document.createElement('div')
+  actions.className = 'degraded-actions'
+  actions.appendChild(retryButton(onRetry))
+  const setup = document.createElement('a')
+  setup.className = 'quiet-link'
+  setup.href = '/setup'
+  setup.textContent = '檢查 TDX 設定'
+  actions.appendChild(setup)
+  notice.appendChild(actions)
+  return notice
+}
+
+function heading(title: string, description: string): HTMLElement {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'drawer-heading'
+  const heading = document.createElement('h1')
+  heading.textContent = title
+  const paragraph = document.createElement('p')
+  paragraph.textContent = description
+  wrapper.appendChild(heading)
+  wrapper.appendChild(paragraph)
+  return wrapper
+}
+
+function paragraph(text: string): HTMLElement {
+  const node = document.createElement('p')
+  node.className = 'drawer-copy'
+  node.textContent = text
+  return node
+}
+
+function drawerBack(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.className = 'drawer-back'
+  button.textContent = `← ${label}`
+  button.addEventListener('click', onClick)
+  return button
+}
+
+// 讀取失敗時的統一退路:skeleton/loading 畫面不能停在原地不動,
+// 一定要有明確的錯誤文字加上可以再試一次的按鈕。
+function retryButton(onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.className = 'quiet-button'
+  button.textContent = '再試一次'
+  button.addEventListener('click', onClick)
+  return button
+}
+
+function buttonGrid(items: Array<{ label: string; onClick: () => void }>, className?: string): HTMLElement {
+  const grid = document.createElement('div')
+  grid.className = 'selection-grid'
+  if (className) grid.classList.add(className)
+  for (const item of items) {
+    const button = document.createElement('button')
+    button.textContent = item.label
+    button.addEventListener('click', item.onClick)
+    grid.appendChild(button)
+  }
+  return grid
+}
+
+""",
+    "",
+    "drawer primitive extraction",
+)
+
+primitives = """export function degradedNotice(
+  message: string,
+  onRetry: () => void,
+  credentialRecovery = false,
+): HTMLElement {
+  const notice = document.createElement('section')
+  notice.className = 'degraded-notice'
+  if (credentialRecovery) notice.classList.add('credential-recovery')
+  notice.setAttribute('role', 'status')
+  notice.appendChild(paragraph(message))
+  const actions = document.createElement('div')
+  actions.className = 'degraded-actions'
+  actions.appendChild(retryButton(onRetry))
+  const setup = document.createElement('a')
+  setup.className = 'quiet-link'
+  setup.href = '/setup'
+  setup.textContent = '檢查 TDX 設定'
+  actions.appendChild(setup)
+  notice.appendChild(actions)
+  return notice
+}
+
+export function heading(title: string, description: string): HTMLElement {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'drawer-heading'
+  const titleNode = document.createElement('h1')
+  titleNode.textContent = title
+  const descriptionNode = document.createElement('p')
+  descriptionNode.textContent = description
+  wrapper.appendChild(titleNode)
+  wrapper.appendChild(descriptionNode)
+  return wrapper
+}
+
+export function paragraph(text: string): HTMLElement {
+  const node = document.createElement('p')
+  node.className = 'drawer-copy'
+  node.textContent = text
+  return node
+}
+
+export function drawerBack(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.className = 'drawer-back'
+  button.textContent = `← ${label}`
+  button.addEventListener('click', onClick)
+  return button
+}
+
+// 讀取失敗時的統一退路:skeleton/loading 畫面不能停在原地不動,
+// 一定要有明確的錯誤文字加上可以再試一次的按鈕。
+export function retryButton(onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.className = 'quiet-button'
+  button.textContent = '再試一次'
+  button.addEventListener('click', onClick)
+  return button
+}
+
+export function buttonGrid(
+  items: Array<{ label: string; onClick: () => void }>,
+  className?: string,
+): HTMLElement {
+  const grid = document.createElement('div')
+  grid.className = 'selection-grid'
+  if (className) grid.classList.add(className)
+  for (const item of items) {
+    const button = document.createElement('button')
+    button.textContent = item.label
+    button.addEventListener('click', item.onClick)
+    grid.appendChild(button)
+  }
+  return grid
+}
+"""
+
+if PRIMITIVES_PATH.exists():
+    raise SystemExit(f"{PRIMITIVES_PATH}: expected file not to exist")
+PRIMITIVES_PATH.write_text(primitives, encoding="utf-8")
+
+line_count = len(source.splitlines())
+if line_count > LINE_LIMIT:
+    raise SystemExit(f"{MAIN_PATH}: {line_count} lines exceeds {LINE_LIMIT}")
+MAIN_PATH.write_text(source, encoding="utf-8")
+print(f"updated {MAIN_PATH} ({line_count} lines) and created {PRIMITIVES_PATH}")
