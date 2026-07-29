@@ -38,7 +38,7 @@ describe('Map loading skeletons', () => {
     for (const row of list.children) {
       expect(tokens(row)).toEqual([
         'nearby-place-button',
-        'place-route-skeleton',
+        'map-loading-row',
         'nearby-place-skeleton',
       ])
       expect(row.children.map((child) => tokens(child))).toEqual([
@@ -55,12 +55,23 @@ describe('Map loading skeletons', () => {
     expect(list.ariaHidden).toBe('true')
     expect(list.children).toHaveLength(3)
     for (const row of list.children) {
-      expect(tokens(row)).toEqual(['place-route-loading-row', 'place-route-skeleton'])
+      expect(tokens(row)).toEqual(['place-route-row', 'place-route-loading-row', 'map-loading-row'])
       expect(tokens(row.children[0])).toEqual(['place-route-button'])
       expect(tokens(row.children[1])).toEqual(['favorite-direction-button', 'skeleton-favorite'])
-      expect(tokens(row.children[0].children[0])).toEqual(['route-color-tick'])
-      expect(tokens(row.children[0].children[1])).toEqual(['place-route-main'])
-      expect(tokens(row.children[0].children[2])).toEqual(['skeleton-line', 'skeleton-route-detail'])
+
+      const route = row.children[0]
+      expect(tokens(route.children[0])).toEqual(['route-color-tick'])
+      expect(tokens(route.children[1])).toEqual(['place-route-main'])
+      expect(tokens(route.children[2])).toEqual(['skeleton-line', 'skeleton-route-detail'])
+
+      const main = route.children[1]
+      expect(tokens(main.children[0])).toEqual(['skeleton-line', 'skeleton-route-name'])
+      expect(tokens(main.children[1])).toEqual(['place-route-eta'])
+      expect(tokens(main.children[1].children[0])).toEqual([
+        'eta-value',
+        'skeleton-line',
+        'skeleton-route-eta-value',
+      ])
     }
   })
 })
