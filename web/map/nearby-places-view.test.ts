@@ -174,7 +174,7 @@ describe('Nearby places view', () => {
     const loading = drawer.content[0] as unknown as FakeElement
     expect(loading.classList.contains('place-route-loading')).toBe(true)
     expect(loading.children).toHaveLength(3)
-    expect(loading.children.every((child) => child.classList.contains('place-route-skeleton'))).toBe(true)
+    expect(loading.children.every((child) => child.classList.contains('map-loading-row'))).toBe(true)
     ;(drawer.header[0] as unknown as FakeElement).click()
     expect(onBack).toHaveBeenCalledOnce()
   })
