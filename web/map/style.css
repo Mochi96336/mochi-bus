@@ -431,9 +431,6 @@ button { cursor: pointer; }
 .favorite-direction-button { width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-muted); font-size: 20px; box-shadow: none; }
 .favorite-direction-button:hover, .favorite-direction-button:focus-visible { background: var(--paper-strong); color: var(--accent-deep); }
 .favorite-direction-button.selected { background: rgba(184, 95, 73, .12); color: var(--accent-deep); }
-.place-route-loading { display: grid; gap: 8px; }
-.place-route-skeleton { height: 66px; border: 1px solid var(--line); border-radius: var(--radius-control); background: linear-gradient(100deg, var(--skeleton-base) 20%, var(--skeleton-highlight) 42%, var(--skeleton-base) 64%); background-size: 220% 100%; animation: route-loading 1.1s ease-in-out infinite; }
-@keyframes route-loading { to { background-position-x: -220%; } }
 .nearby-place-button:hover, .place-route-button:hover { background: var(--paper-strong); }
 .trip-matched-controls {
   display: grid;
@@ -918,5 +915,4 @@ button { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
-  .place-route-skeleton { background: var(--skeleton-base); }
 }
