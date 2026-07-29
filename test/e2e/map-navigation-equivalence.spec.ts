@@ -120,6 +120,34 @@ test('detail exploration keeps drawer Back but browser Back skips to the catalog
   await expect(drawer.getByRole('heading', { name: '臺南火車站' })).toBeVisible()
 })
 
+test('auto-preview keeps nearby result markers while skipping the transient list drawer', async ({ page }) => {
+  const nearbyPlaces = [
+    { placeId: 'P1', name: '臺南火車站', latitude: 22.997, longitude: 120.212, distanceMeters: 76 },
+    { placeId: 'P2', name: '成功大學', latitude: 22.999, longitude: 120.216, distanceMeters: 180 },
+  ]
+  await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
+  await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [city] } }))
+  await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({ json: { routes: [{ routeName: '15', category: '數字' }] } }))
+  await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => route.fulfill({ json: { variants: [variant('15')] } }))
+  await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({ json: { timetable: { mode: 'none', services: [] } } }))
+  await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
+  await page.route('**/api/v1/map/nearby*', (route) => route.fulfill({ json: { places: nearbyPlaces } }))
+  await page.route('**/api/v1/map/place/P1/arrivals?city=Tainan', (route) => route.fulfill({ json: { routes: [] } }))
+
+  await page.goto('/map?city=Tainan&route=15&variant=TNN-15%3A0')
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+
+  const routeStops = page.locator('.leaflet-stop-pane svg path.leaflet-interactive')
+  await expect(routeStops).toHaveCount(2)
+  await routeStops.first().click()
+
+  await expect(page).toHaveURL(/place=P1/)
+  await expect(drawer.getByRole('heading', { name: '臺南火車站' })).toBeVisible()
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(0)
+  await expect(page.locator('.leaflet-stop-pane svg path.leaflet-interactive')).toHaveCount(3)
+})
+
 test('overview, region and catalogue share drawer and browser history transitions', async ({ page }) => {
   await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
   await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [city] } }))

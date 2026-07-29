@@ -79,9 +79,14 @@ export function createNearbyPlacesController(
         ...request,
         places: loaded.slice(0, placeLimit),
       }
-      options.onPlaces(presentation)
-      if (request.autoPreview && presentation.places[0]) {
-        await options.onAutoPreview(presentation.places[0], presentation)
+      const firstPlace = presentation.places[0]
+      if (request.autoPreview && firstPlace) {
+        // The result list would exist for only one frame before the first place opens. Rendering it
+        // expands the drawer and immediately collapses it into the next loading view, so bypass that
+        // transient presentation and continue directly from nearby loading to place loading.
+        await options.onAutoPreview(firstPlace, presentation)
+      } else {
+        options.onPlaces(presentation)
       }
       return true
     } catch (error) {

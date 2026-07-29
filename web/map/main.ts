@@ -15,6 +15,7 @@ import {
 import { createPlaceRoutesView } from './place-routes-view'
 import { createNearbyPlacesController } from './nearby-places-controller'
 import { createNearbyPlacesMap } from './nearby-places-map'
+import { createNearbyResultsState } from './nearby-results-state'
 import { createNearbyPlacesView } from './nearby-places-view'
 import { createPreviewStopDotManager, createSelectablePreviewLineRenderer } from './preview-map-primitives'
 import { createNavRequestCoordinator } from '../../src/domain/map/nav-request'
@@ -68,7 +69,6 @@ import {
 } from './trip-selection-view'
 import 'leaflet/dist/leaflet.css'
 import './style.css'
-
 const regions: Array<{
   code: RegionCode
   name: string
@@ -163,6 +163,7 @@ const nearbyPlacesMap = createNearbyPlacesMap({
   createStopMarker: unifiedStopMarker,
   onOpenPlace: openNearbyPlace,
 })
+const nearbyResults = createNearbyResultsState({ renderPlaces: nearbyPlacesMap.renderPlaces, renderEndpoints: drawTripEndpoints })
 const networkLayer = L.layerGroup().addTo(map)
 const vehicleLayer = L.layerGroup().addTo(map)
 let cities: MapCity[] = readBootstrapCities()
@@ -173,8 +174,6 @@ let routesCityCode: string | undefined
 let category = '全部'
 let routeSearchQuery = ''
 let routeScrollTop = 0
-let lastNearbyPlaces: NearbyPlace[] = []
-let lastNearbyOrigin: [number, number] | undefined
 const trip = createTripRuntimeStore()
 const tripPlanLoader = createTripPlanLoader({
   loadDirect: mapApi.direct,
@@ -280,12 +279,15 @@ const nearbyPlaces = createNearbyPlacesController({
   loadNearby: mapApi.nearby,
   onStart: ({ cityCode, origin }) => {
     nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
-    lastNearbyOrigin = [...origin]
+    nearbyResults.setOrigin(origin)
     nearbyPlacesMap.renderLoadingOrigin(origin)
     setStatus('正在找這附近的站牌…')
   },
-  onPlaces: ({ places }) => { lastNearbyPlaces = places; renderNearbyPlaces() },
-  onAutoPreview: openNearbyPlace,
+  onPlaces: (presentation) => { nearbyResults.store(presentation); renderNearbyPlaces() },
+  onAutoPreview: async (place, presentation) => {
+    nearbyResults.storeAndRenderMap(presentation)
+    await openNearbyPlace(place)
+  },
   onError: ({ cityCode, origin, autoPreview, error }) => setStatus(nearbyPlacesView.renderError({
     cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
     onRetry: () => void findNearbyPlaces(origin[0], origin[1], autoPreview, 'replace'),
@@ -1200,8 +1202,7 @@ function openSearchedPlace(place: SearchPlace) {
   }, '', `/map?city=${encodeURIComponent(activeCity.code)}&place=${encodeURIComponent(place.placeId)}`)
   camera.focusPoint([place.latitude, place.longitude], 16)
   const nearbyPlace: NearbyPlace = { ...place, distanceMeters: 0 }
-  lastNearbyOrigin = [place.latitude, place.longitude]
-  lastNearbyPlaces = [nearbyPlace]
+  nearbyResults.replace([place.latitude, place.longitude], [nearbyPlace])
   interactionMode = 'nearby'
   void placeRoutes.open(nearbyPlace)
 }
@@ -1453,11 +1454,11 @@ async function findNearbyPlaces(
 }
 
 function renderNearbyPlaces() {
-  if (!activeCity || !lastNearbyOrigin) return
+  const result = nearbyResults.current()
+  if (!activeCity || !result) return
   nearbyPlaces.invalidate()
   cancelNavRequest()
-  nearbyPlacesMap.renderPlaces(lastNearbyOrigin, lastNearbyPlaces)
-  drawTripEndpoints()
+  nearbyResults.renderMap()
 
   const managedNearbyParent = history.state?.mapView === 'nearby' && history.state?.mapParent
   const nearbyBack = managedNearbyParent
@@ -1468,13 +1469,13 @@ function renderNearbyPlaces() {
     : hasTripResults() ? '返回行程候選' : '路線列表'
   nearbyPlacesView.renderPlaces({
     cityCode: activeCity.code,
-    origin: lastNearbyOrigin,
-    places: lastNearbyPlaces,
+    origin: result.origin,
+    places: result.places,
     backLabel: nearbyBackLabel,
     onBack: nearbyBack,
   })
   clearStatus()
-  const [latitude, longitude] = lastNearbyOrigin
+  const [latitude, longitude] = result.origin
   const currentState = history.state && typeof history.state === 'object' ? history.state : {}
   history.replaceState({ ...currentState, mapView: 'nearby' }, '', `/map?city=${activeCity.code}&lat=${latitude.toFixed(5)}&lon=${longitude.toFixed(5)}`)
   setDocumentTitle(`${activeCity.name}公車地圖`)
@@ -1540,8 +1541,7 @@ async function openPlaceById(
   }
   if (signal?.aborted || isStale() || activeCity?.code !== cityCode) return
   camera.focusPoint([place.latitude, place.longitude], 16)
-  lastNearbyOrigin = [place.latitude, place.longitude]
-  lastNearbyPlaces = [place]
+  nearbyResults.replace([place.latitude, place.longitude], [place])
   interactionMode = 'nearby'
   await placeRoutes.open(place)
 }

@@ -8,6 +8,7 @@ import placeRoutesSource from './place-routes-controller.ts?raw'
 import placeRoutesViewSource from './place-routes-view.ts?raw'
 import nearbyPlacesSource from './nearby-places-controller.ts?raw'
 import nearbyPlacesMapSource from './nearby-places-map.ts?raw'
+import nearbyResultsStateSource from './nearby-results-state.ts?raw'
 import nearbyPlacesViewSource from './nearby-places-view.ts?raw'
 import routeDetailSurfaceSource from './route-detail-surface.ts?raw'
 
@@ -195,7 +196,9 @@ describe('map main architecture boundary', () => {
   it('delegates Nearby Places Leaflet drawing to the Nearby places map surface', () => {
     expect(mainSource).toContain('createNearbyPlacesMap')
     expect(mainSource).toContain('nearbyPlacesMap.renderLoadingOrigin(origin)')
-    expect(mainSource).toContain('nearbyPlacesMap.renderPlaces(lastNearbyOrigin, lastNearbyPlaces)')
+    expect(mainSource).toContain('createNearbyResultsState')
+    expect(nearbyResultsStateSource).toContain('options.renderPlaces(origin, places)')
+    expect(nearbyResultsStateSource).toContain('options.renderEndpoints()')
     expect(mainSource).not.toContain("bindHoverTooltip(origin, '你點的位置')")
     expect(mainSource).not.toContain('Math.round(place.distanceMeters)')
     expect(nearbyPlacesMapSource).toContain("bindHoverTooltip(originMarker, '你點的位置')")
