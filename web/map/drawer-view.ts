@@ -152,8 +152,8 @@ export function drawerSizeForTransition(
   rememberedSize: DrawerSize | undefined,
 ): DrawerSize {
   if (explicitSize) return explicitSize
-  if (mode === 'results' || mode === 'timetable') return 'expanded'
-  if (mode === 'map-list') return 'standard'
+  if (mode === 'timetable') return 'expanded'
+  if (mode === 'map-list' || mode === 'results') return 'standard'
   if (rememberedSize && rememberedSize !== 'content') return rememberedSize
   if (preserveHeight) return 'standard'
   return 'content'
