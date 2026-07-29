@@ -1,5 +1,5 @@
-/* Loading rows mirror resolved content without borrowing resolved-row semantics. */
-.map-drawer .place-route-loading {
+/* Loading rows mirror resolved content without borrowing legacy skeleton selectors. */
+.map-drawer .map-loading-list {
   display: grid;
   gap: 0;
 }
