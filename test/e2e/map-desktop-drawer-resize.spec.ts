@@ -100,7 +100,7 @@ async function clickDesktopStageCenter(page: Page) {
   await page.mouse.click(targetX, targetY)
 }
 
-test('clamps a preserved desktop drawer height when the viewport shrinks during route loading', async ({ page }) => {
+test('recomputes the standard desktop drawer size when the viewport shrinks during route loading', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
   const routeRequested = deferred()
@@ -131,13 +131,15 @@ test('clamps a preserved desktop drawer height when the viewport shrinks during 
   await clickDesktopStageCenter(page)
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
-  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight.length > 0)).toBe(true)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveJSProperty('style.minHeight', '')
+  const beforeResize = await drawer.evaluate((element) => element.getBoundingClientRect().height)
 
   await page.setViewportSize({ width: 1280, height: 600 })
   await expect.poll(() => drawer.evaluate((element) => {
     const height = element.getBoundingClientRect().height
     const maximumHeight = Number.parseFloat(getComputedStyle(element).maxHeight)
-    return height - maximumHeight
+    return Math.abs(height - maximumHeight)
   })).toBeLessThanOrEqual(1)
 
   const resized = await drawer.evaluate((element) => {
@@ -150,11 +152,13 @@ test('clamps a preserved desktop drawer height when the viewport shrinks during 
       inlineMinHeight: element.style.minHeight,
     }
   })
-  expect(resized.inlineMinHeight).not.toBe('')
+  expect(resized.inlineMinHeight).toBe('')
+  expect(resized.height).toBeLessThan(beforeResize)
   expect(resized.height).toBeLessThanOrEqual(resized.maximumHeight + 1)
   expect(resized.bottom).toBeLessThanOrEqual(resized.viewportHeight)
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
