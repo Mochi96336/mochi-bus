@@ -1,6 +1,7 @@
 import type { Locator } from '@playwright/test'
 import { expect, test, type Page } from './fixtures'
 
+const contentOnlyScreenshotStyle = 'test/e2e/map-visual-content-only.css'
 const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
 
 const arrivals = [
@@ -182,6 +183,7 @@ test('keeps the route catalogue visual hierarchy', async ({ page }) => {
   await expect(drawer).toHaveScreenshot('map-route-catalogue.png', {
     animations: 'disabled',
     caret: 'hide',
+    stylePath: contentOnlyScreenshotStyle,
   })
 })
 
@@ -236,6 +238,7 @@ test('keeps ETA numbers dominant without hiding freshness', async ({ page }) => 
   await expect(drawer).toHaveScreenshot('map-place-arrivals.png', {
     animations: 'disabled',
     caret: 'hide',
+    stylePath: contentOnlyScreenshotStyle,
   })
 })
 
