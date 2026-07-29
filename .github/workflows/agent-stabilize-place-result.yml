@@ -1,0 +1,70 @@
+name: Stabilize place result transition
+
+on:
+  push:
+    branches:
+      - agent/fix-map-drawer-navigation
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: agent/fix-map-drawer-navigation
+          fetch-depth: 0
+      - name: Apply result transition fix
+        run: |
+          set -euo pipefail
+          python .github/agent-stabilize-place-result.py
+          rm .github/agent-stabilize-place-result.py
+          rm .github/workflows/agent-stabilize-place-result.yml
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --silent
+      - name: Run unit and source checks
+        run: |
+          set -o pipefail
+          {
+            npm test -- web/map/place-routes-view.test.ts web/map/main-size.test.ts
+            npm run typecheck
+            npm run build:map
+          } 2>&1 | tee source-check.log
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium >/dev/null 2>&1
+      - name: Run drawer stability regression
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/place-result
+        run: >-
+          npx playwright test
+          test/e2e/map-desktop-drawer-stability.spec.ts
+          --project=desktop-chromium
+          --workers=1
+          --output=test-results/place-result
+          --reporter=line,html
+      - name: Commit verified transition
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix(map): settle place drawer after layout"
+          git push origin HEAD:agent/fix-map-drawer-navigation
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: place-result-transition
+          path: |
+            source-check.log
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 3
