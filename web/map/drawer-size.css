@@ -4,16 +4,16 @@
 }
 
 /* Drawer size is a navigation state, not a measurement of whichever async view rendered last. */
-.map-drawer[data-size="content"] {
+#map-drawer[data-size="content"] {
   height: auto;
 }
 
-.map-drawer[data-size="standard"] {
+#map-drawer[data-size="standard"] {
   height: var(--map-drawer-size-standard);
   max-height: var(--map-drawer-size-standard);
 }
 
-.map-drawer[data-size="expanded"] {
+#map-drawer[data-size="expanded"] {
   height: var(--map-drawer-size-expanded);
   max-height: var(--map-drawer-size-expanded);
 }
