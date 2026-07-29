@@ -25,7 +25,7 @@ function createLoadingList(
 
 function createNearbyPlaceSkeleton(): HTMLDivElement {
   const row = document.createElement('div')
-  row.className = 'nearby-place-button place-route-skeleton nearby-place-skeleton'
+  row.className = 'nearby-place-button map-loading-row nearby-place-skeleton'
 
   const name = document.createElement('strong')
   name.className = 'skeleton-line skeleton-nearby-name'
@@ -40,7 +40,7 @@ function createNearbyPlaceSkeleton(): HTMLDivElement {
 
 function createPlaceRouteSkeleton(): HTMLDivElement {
   const row = document.createElement('div')
-  row.className = 'place-route-loading-row place-route-skeleton'
+  row.className = 'place-route-row place-route-loading-row map-loading-row'
 
   const route = document.createElement('div')
   route.className = 'place-route-button'
