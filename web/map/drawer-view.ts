@@ -1,11 +1,14 @@
 import { attachScrollFade } from '../lib/scroll-fade'
+import './drawer-size.css'
 
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
+export type DrawerSize = 'content' | 'standard' | 'expanded'
 
 export type DrawerView =
   | {
       key: string
       mode: 'compact'
+      size?: DrawerSize
       preserveMobileHeight?: boolean
       preserveDesktopHeight?: boolean
       content: readonly Node[]
@@ -13,6 +16,7 @@ export type DrawerView =
   | {
       key: string
       mode: DrawerScrollableMode
+      size?: DrawerSize
       preserveMobileHeight?: boolean
       preserveDesktopHeight?: boolean
       header: readonly Node[]
@@ -36,6 +40,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   let disposeCurrentView: (() => void) | undefined
   let currentViewKey: string | undefined
   let currentScrollRegion: HTMLDivElement | undefined
+  let currentSize: DrawerSize | undefined
 
   const dispose = () => {
     disposeCurrentView?.()
@@ -43,17 +48,17 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   }
 
   const render = (view: DrawerView): DrawerViewSession => {
-    const mobileLayout = window.matchMedia('(max-width: 640px)')
-    const desktopLayout = window.matchMedia('(min-width: 641px) and (min-height: 560px)')
-    const preserveHeight = shouldPreserveDrawerHeight(
-      view.preserveMobileHeight,
-      view.preserveDesktopHeight,
-      mobileLayout.matches,
-      desktopLayout.matches,
+    const previousViewKey = currentViewKey
+    const nextSize = drawerSizeForTransition(
+      view.size,
+      view.mode,
+      Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
+      previousViewKey,
+      view.key,
+      currentSize,
     )
-    const previousHeight = preserveHeight ? drawer.getBoundingClientRect().height : 0
     const restoredScrollTop = drawerScrollTopForTransition(
-      currentViewKey,
+      previousViewKey,
       view.key,
       currentScrollRegion?.scrollTop ?? 0,
     )
@@ -62,52 +67,16 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     const abortController = new AbortController()
     const cleanups: Array<() => void> = []
     let active = true
-    let preservedHeightReleased = false
     let scrollRegion: HTMLDivElement | undefined
-    const animateContent = shouldAnimateDrawerTransition(currentViewKey, view.key)
+    const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
     currentViewKey = view.key
+    currentSize = nextSize
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
-
-    const hasPreservedHeight = Boolean(
-      preserveHeight
-      && Number.isFinite(previousHeight)
-      && previousHeight > 0,
-    )
-    const applyPreservedMinHeight = () => {
-      const activeLayout = shouldPreserveDrawerHeight(
-        view.preserveMobileHeight,
-        view.preserveDesktopHeight,
-        mobileLayout.matches,
-        desktopLayout.matches,
-      )
-      const maximumHeight = Number.parseFloat(window.getComputedStyle(drawer).maxHeight)
-      const preservedMinHeight = drawerMinHeightForTransition(
-        !preservedHeightReleased && activeLayout,
-        previousHeight,
-        maximumHeight,
-      )
-      if (preservedMinHeight) drawer.style.minHeight = preservedMinHeight
-      else drawer.style.removeProperty('min-height')
-    }
-    const releasePreservedHeight = () => {
-      if (!active || preservedHeightReleased) return
-      preservedHeightReleased = true
-      drawer.style.removeProperty('min-height')
-    }
-    applyPreservedMinHeight()
-    if (hasPreservedHeight) {
-      if (view.preserveMobileHeight) mobileLayout.addEventListener('change', applyPreservedMinHeight)
-      if (view.preserveDesktopHeight) desktopLayout.addEventListener('change', applyPreservedMinHeight)
-      window.addEventListener('resize', applyPreservedMinHeight)
-      cleanups.push(() => {
-        if (view.preserveMobileHeight) mobileLayout.removeEventListener('change', applyPreservedMinHeight)
-        if (view.preserveDesktopHeight) desktopLayout.removeEventListener('change', applyPreservedMinHeight)
-        window.removeEventListener('resize', applyPreservedMinHeight)
-        drawer.style.removeProperty('min-height')
-      })
-    }
+    drawer.dataset.size = nextSize
+    drawer.style.removeProperty('height')
+    drawer.style.removeProperty('min-height')
 
     drawer.scrollTop = 0
     drawer.replaceChildren()
@@ -151,7 +120,9 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     return {
       signal: abortController.signal,
       scrollRegion,
-      releasePreservedHeight,
+      // Legacy callers release a measured transition height after rendering.
+      // Size states no longer depend on DOM measurement, so this is intentionally a no-op.
+      releasePreservedHeight() {},
       onDispose(cleanup) {
         if (active) cleanups.push(cleanup)
         else cleanup()
@@ -174,6 +145,24 @@ export function drawerScrollTopForTransition(
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
 }
 
+export function drawerSizeForTransition(
+  explicitSize: DrawerSize | undefined,
+  mode: DrawerView['mode'],
+  preserveHeight: boolean,
+  previousKey: string | undefined,
+  nextKey: string,
+  previousSize: DrawerSize | undefined,
+): DrawerSize {
+  if (explicitSize) return explicitSize
+  if (mode === 'results' || mode === 'timetable') return 'expanded'
+  if (mode === 'map-list') return 'standard'
+  if (previousKey === nextKey && previousSize && previousSize !== 'content') return previousSize
+  if (preserveHeight) return previousSize && previousSize !== 'content' ? previousSize : 'standard'
+  return 'content'
+}
+
+// Transitional helpers are retained for compatibility with focused unit tests and callers
+// that have not yet migrated from measured heights. The renderer no longer uses them.
 export function shouldPreserveDrawerHeight(
   preserveMobileHeight: boolean | undefined,
   preserveDesktopHeight: boolean | undefined,
