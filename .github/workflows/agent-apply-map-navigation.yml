@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/fix-map-drawer-navigation
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
