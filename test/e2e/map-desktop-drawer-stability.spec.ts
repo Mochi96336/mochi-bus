@@ -172,7 +172,7 @@ async function clickDesktopStageCenter(page: Page) {
   await page.mouse.click(targetX, targetY)
 }
 
-test('keeps stop lookup loading steps stable, then releases the desktop height for resolved content', async ({ page }) => {
+test('keeps the current drawer stable while auto-preview resolves, then opens place loading', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const nearby = deferred()
   const nearbyRequested = deferred()
@@ -218,7 +218,8 @@ test('keeps stop lookup loading steps stable, then releases the desktop height f
   await openNetwork(page)
   await clickDesktopStageCenter(page)
   await nearbyRequested.promise
-  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+  await expect(drawer.getByRole('heading', { name: city.name })).toBeVisible()
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toHaveCount(0)
   await page.waitForTimeout(100)
 
   nearby.release()
@@ -237,7 +238,8 @@ test('keeps stop lookup loading steps stable, then releases the desktop height f
   await page.waitForTimeout(120)
 
   const frames = await stopDrawerFrameCapture(page)
-  expectStableFrames(frames, ['catalogue', 'nearby-loading', 'place-loading'])
+  expectStableFrames(frames, ['catalogue', 'place-loading'])
+  expect(frames.some((frame) => frame.phase === 'nearby-loading')).toBe(false)
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
