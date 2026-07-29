@@ -1,0 +1,6 @@
+/* Content hierarchy snapshots deliberately ignore the production drawer size state.
+   Geometry and responsive sizing are covered by dedicated drawer E2E tests. */
+#map-drawer[data-size="standard"] {
+  height: auto !important;
+  max-height: min(56vh, 600px) !important;
+}
