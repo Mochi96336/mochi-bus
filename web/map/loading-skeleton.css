@@ -1,0 +1,170 @@
+/* Loading rows mirror resolved rows without borrowing legacy skeleton selectors. */
+.map-drawer .map-loading-list {
+  display: grid;
+  gap: 0;
+}
+
+.map-drawer .map-loading-row {
+  --skeleton-title-width: 48%;
+  --skeleton-meta-width: 38%;
+  position: relative;
+  height: auto;
+  overflow: hidden;
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
+}
+
+.map-drawer .map-loading-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+.map-drawer .map-loading-row::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  transform: translateX(-115%);
+  background: linear-gradient(
+    100deg,
+    transparent 22%,
+    var(--skeleton-highlight) 48%,
+    transparent 74%
+  );
+  opacity: .52;
+  pointer-events: none;
+  animation: drawer-loading-shimmer 1.35s ease-in-out infinite;
+}
+
+.map-drawer .skeleton-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.map-drawer .skeleton-line::before {
+  content: "";
+  display: block;
+  flex: none;
+  border-radius: 1px;
+  background: var(--skeleton-base);
+}
+
+/* Nearby-place rows preserve the resolved station-name and distance layout. */
+.map-drawer .skeleton-nearby-name {
+  flex: 1 1 auto;
+  min-height: 18px;
+}
+
+.map-drawer .skeleton-nearby-name::before {
+  width: var(--skeleton-title-width);
+  height: 10px;
+}
+
+.map-drawer .skeleton-nearby-distance {
+  flex: 0 0 48px;
+  justify-content: flex-end;
+  min-height: 14px;
+}
+
+.map-drawer .skeleton-nearby-distance::before {
+  width: 34px;
+  height: 7px;
+}
+
+/* Route rows mirror the resolved outer grid while remaining loading-only nodes. */
+.map-drawer .place-route-loading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.map-drawer .place-route-loading-row:last-child {
+  border-bottom: 0;
+}
+
+.map-drawer .place-route-loading-row .place-route-button {
+  border-bottom: 0;
+}
+
+.map-drawer .map-loading-row .route-color-tick {
+  background: var(--skeleton-base);
+}
+
+.map-drawer .skeleton-route-name {
+  min-height: 18px;
+}
+
+.map-drawer .skeleton-route-name::before {
+  width: var(--skeleton-title-width);
+  height: 10px;
+}
+
+.map-drawer .skeleton-route-eta-value {
+  justify-content: flex-end;
+  min-width: 42px;
+  min-height: 26px;
+}
+
+.map-drawer .skeleton-route-eta-value::before {
+  width: 42px;
+  height: 18px;
+}
+
+.map-drawer .skeleton-route-detail {
+  min-height: 17px;
+}
+
+.map-drawer .skeleton-route-detail::before {
+  width: var(--skeleton-meta-width);
+  height: 7px;
+}
+
+.map-drawer .skeleton-favorite {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-drawer .skeleton-favorite::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--skeleton-base);
+}
+
+.map-drawer .map-loading-row:nth-child(1) {
+  --skeleton-title-width: 44%;
+  --skeleton-meta-width: 56%;
+}
+
+.map-drawer .map-loading-row:nth-child(2) {
+  --skeleton-title-width: 58%;
+  --skeleton-meta-width: 36%;
+}
+
+.map-drawer .map-loading-row:nth-child(2)::after {
+  animation-delay: -.3s;
+}
+
+.map-drawer .map-loading-row:nth-child(3) {
+  --skeleton-title-width: 38%;
+  --skeleton-meta-width: 49%;
+}
+
+.map-drawer .map-loading-row:nth-child(3)::after {
+  animation-delay: -.6s;
+}
+
+@keyframes drawer-loading-shimmer {
+  to { transform: translateX(115%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-drawer .map-loading-row::after {
+    display: none;
+  }
+}

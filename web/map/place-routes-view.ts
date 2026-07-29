@@ -7,6 +7,7 @@ import type {
   PlaceRouteStart,
 } from './place-routes-controller'
 import type { DrawerView } from './drawer-view'
+import { createPlaceRouteLoadingList } from './loading-skeleton'
 
 type PlaceRoutesViewOptions = {
   renderDrawer: (view: DrawerView) => void
@@ -41,19 +42,12 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
 
   return {
     renderLoading({ cityCode, place }) {
-      const loadingList = document.createElement('div')
-      loadingList.className = 'place-route-loading'
-      for (let index = 0; index < 3; index += 1) {
-        const skeleton = document.createElement('div')
-        skeleton.className = 'place-route-skeleton'
-        loadingList.appendChild(skeleton)
-      }
       options.renderDrawer({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
         preserveDesktopHeight: true,
         header: drawerHeader(place, '正在取得路線與到站時間'),
-        content: [loadingList],
+        content: [createPlaceRouteLoadingList()],
       })
     },
 

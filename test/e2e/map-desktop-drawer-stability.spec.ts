@@ -119,7 +119,7 @@ async function startDrawerFrameCapture(page: Page) {
       let phase = 'other'
       if (heading === '臺南') phase = 'catalogue'
       else if (drawer.querySelector('.place-route-row')) phase = 'place-results'
-      else if (drawer.querySelector('.place-route-skeleton')) {
+      else if (drawer.querySelector('.map-loading-row')) {
         phase = heading === '附近站牌' ? 'nearby-loading' : 'place-loading'
       } else if (drawer.querySelector('.variant-list')) phase = 'variant-picker'
       else if (heading === '中山幹線' && description.includes('正在拼起路線與站牌')) phase = 'route-loading'
@@ -224,7 +224,7 @@ test('keeps stop lookup loading steps stable, then releases the desktop height f
   nearby.release()
   await arrivalsRequested.promise
   await expect(drawer.getByRole('heading', { name: place.name })).toBeVisible()
-  await expect(drawer.locator('.place-route-skeleton')).toHaveCount(3)
+  await expect(drawer.locator('.map-loading-row')).toHaveCount(3)
   await page.waitForTimeout(100)
 
   arrivals.release()

@@ -1,3 +1,4 @@
+import type { Locator } from '@playwright/test'
 import { expect, test, type Page } from './fixtures'
 
 const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
@@ -121,6 +122,31 @@ async function mockMap(page: Page) {
   }))
 }
 
+async function holdJsonResponse(
+  page: Page,
+  url: Parameters<Page['route']>[0],
+  json: unknown,
+): Promise<() => void> {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  await page.route(url, async (route) => {
+    await gate
+    await route.fulfill({ json })
+  })
+  return release
+}
+
+async function expectClippedScreenshot(page: Page, locator: Locator, snapshotName: string) {
+  const clip = await locator.boundingBox()
+  if (!clip) throw new Error(`Cannot capture hidden loading fixture: ${snapshotName}`)
+  const screenshot = await page.screenshot({
+    animations: 'disabled',
+    caret: 'hide',
+    clip,
+  })
+  expect(screenshot).toMatchSnapshot(snapshotName)
+}
+
 async function mockTripResults(page: Page) {
   let nearbyCall = 0
   await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
@@ -157,6 +183,46 @@ test('keeps the route catalogue visual hierarchy', async ({ page }) => {
     animations: 'disabled',
     caret: 'hide',
   })
+})
+
+test('keeps nearby loading aligned with resolved station rows', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockMap(page)
+  const releaseNearby = await holdJsonResponse(page, '**/api/v1/map/nearby*', { places: [] })
+
+  try {
+    await page.goto('/map?city=Tainan&lat=22.99000&lon=120.21000')
+
+    const drawer = page.locator('#map-drawer')
+    const loading = drawer.locator('.map-loading-list')
+    await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+    await expect(loading.locator('.nearby-place-skeleton')).toHaveCount(3)
+    await expectClippedScreenshot(page, loading, 'map-nearby-loading.png')
+  } finally {
+    releaseNearby()
+  }
+})
+
+test('keeps route loading aligned with resolved arrival rows', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockMap(page)
+  const releaseArrivals = await holdJsonResponse(
+    page,
+    '**/api/v1/map/place/P1/arrivals?city=Tainan',
+    { routes: arrivals },
+  )
+
+  try {
+    await page.goto('/map?city=Tainan&place=P1')
+
+    const drawer = page.locator('#map-drawer')
+    const loading = drawer.locator('.map-loading-list')
+    await expect(drawer.getByRole('heading', { name: '臺南火車站' })).toBeVisible()
+    await expect(loading.locator('.place-route-loading-row')).toHaveCount(3)
+    await expectClippedScreenshot(page, loading, 'map-place-arrivals-loading.png')
+  } finally {
+    releaseArrivals()
+  }
 })
 
 test('keeps ETA numbers dominant without hiding freshness', async ({ page }) => {
