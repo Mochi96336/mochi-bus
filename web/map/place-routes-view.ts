@@ -6,11 +6,11 @@ import type {
   PlaceRoutesPresentation,
   PlaceRouteStart,
 } from './place-routes-controller'
-import type { DrawerView } from './drawer-view'
+import type { DrawerView, DrawerViewSession } from './drawer-view'
 import { createPlaceRouteLoadingList } from './loading-skeleton'
 
 type PlaceRoutesViewOptions = {
-  renderDrawer: (view: DrawerView) => void
+  renderDrawer: (view: DrawerView) => DrawerViewSession
   createBackButton: (label: string, onClick: () => void) => HTMLButtonElement
   createHeading: (title: string, description: string) => HTMLElement
   createDegradedNotice: (message: string, onRetry: () => void, credentialRecovery?: boolean) => HTMLElement
@@ -38,6 +38,12 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
 
   function retry(place: NearbyPlace): () => void {
     return () => options.onRetry(place)
+  }
+
+  function renderSettled(view: DrawerView): void {
+    const session = options.renderDrawer({ ...view, preserveDesktopHeight: true })
+    const frame = requestAnimationFrame(() => session.releasePreservedHeight())
+    session.onDispose(() => cancelAnimationFrame(frame))
   }
 
   return {
@@ -88,7 +94,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
         list.appendChild(row)
       }
 
-      options.renderDrawer({
+      renderSettled({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
         header: drawerHeader(
@@ -106,7 +112,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
 
     renderError({ cityCode, place, error }) {
       const message = placeRouteFailureMessage(error)
-      options.renderDrawer({
+      renderSettled({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
         header: drawerHeader(place, message),
