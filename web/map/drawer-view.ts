@@ -41,6 +41,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   let currentViewKey: string | undefined
   let currentScrollRegion: HTMLDivElement | undefined
   let currentSize: DrawerSize | undefined
+  const sizesByViewKey = new Map<string, DrawerSize>()
 
   const dispose = () => {
     disposeCurrentView?.()
@@ -53,8 +54,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
       view.size,
       view.mode,
       Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
-      previousViewKey,
-      view.key,
+      sizesByViewKey.get(view.key),
       currentSize,
     )
     const restoredScrollTop = drawerScrollTopForTransition(
@@ -71,6 +71,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
     currentViewKey = view.key
     currentSize = nextSize
+    sizesByViewKey.set(view.key, nextSize)
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
@@ -149,14 +150,13 @@ export function drawerSizeForTransition(
   explicitSize: DrawerSize | undefined,
   mode: DrawerView['mode'],
   preserveHeight: boolean,
-  previousKey: string | undefined,
-  nextKey: string,
+  rememberedSize: DrawerSize | undefined,
   previousSize: DrawerSize | undefined,
 ): DrawerSize {
   if (explicitSize) return explicitSize
   if (mode === 'results' || mode === 'timetable') return 'expanded'
   if (mode === 'map-list') return 'standard'
-  if (previousKey === nextKey && previousSize && previousSize !== 'content') return previousSize
+  if (rememberedSize && rememberedSize !== 'content') return rememberedSize
   if (preserveHeight) return previousSize && previousSize !== 'content' ? previousSize : 'standard'
   return 'content'
 }
