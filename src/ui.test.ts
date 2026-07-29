@@ -56,7 +56,7 @@ describe('SEO metadata', () => {
     expect(html).toContain('<label for="tdx-client-secret">Client Secret</label>')
     expect(html).toContain('id="tdx-remember" type="checkbox"')
     expect(html).toContain('不勾選則關閉分頁後移除')
-    expect(html).toContain('查詢時 Worker 只收到 token，Client Secret 不會送進 Mochi Bus Worker')
+    expect(html).toContain('Mochi Bus Worker 不會收到 Client Secret')
   })
 
   // 互動邏輯(記住於此裝置 vs 只保留在此分頁、legacy migration 提示)已搬到

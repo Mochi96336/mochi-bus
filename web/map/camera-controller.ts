@@ -1,5 +1,6 @@
 import type L from 'leaflet'
 import { calculateCameraPadding, cameraPanOffset, type CameraRect } from '../../src/domain/map/camera-padding'
+import { constrainMapPanToTaiwan } from './map-pan-bounds'
 
 type PointTarget = {
   kind: 'point'
@@ -33,6 +34,12 @@ export function createMapCameraController(
   mapElement: HTMLElement,
   drawerElement: HTMLElement,
 ): MapCameraController {
+  const taiwanPanConstraint = constrainMapPanToTaiwan(
+    map,
+    mapElement,
+    mapPanReleaseSurface(window),
+  )
+
   let target: CameraTarget | undefined
   let frame: number | undefined
   let disposed = false
@@ -40,6 +47,7 @@ export function createMapCameraController(
   const apply = (animate = false) => {
     frame = undefined
     if (disposed || !target) return
+    taiwanPanConstraint.releaseForProgrammaticCamera()
 
     const padding = calculateCameraPadding(readRect(mapElement), readRect(drawerElement))
     if (target.kind === 'bounds') {
@@ -73,12 +81,17 @@ export function createMapCameraController(
     frame = window.requestAnimationFrame(() => apply())
   }
 
-  const clear = () => {
+  const clearTarget = () => {
     target = undefined
     cancelScheduledApply()
   }
 
-  const releaseOnMapInteraction = () => clear()
+  const clear = () => {
+    clearTarget()
+    taiwanPanConstraint.releaseForProgrammaticCamera()
+  }
+
+  const releaseOnMapInteraction = () => clearTarget()
   mapElement.addEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
   mapElement.addEventListener('wheel', releaseOnMapInteraction, { capture: true, passive: true })
   mapElement.addEventListener('keydown', releaseOnMapInteraction, { capture: true })
@@ -110,13 +123,26 @@ export function createMapCameraController(
     dispose() {
       if (disposed) return
       disposed = true
-      clear()
+      clearTarget()
+      taiwanPanConstraint()
       resizeObserver.disconnect()
       mapElement.removeEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
       mapElement.removeEventListener('wheel', releaseOnMapInteraction, { capture: true })
       mapElement.removeEventListener('keydown', releaseOnMapInteraction, { capture: true })
       window.removeEventListener('resize', refreshAfterViewportResize)
       window.visualViewport?.removeEventListener('resize', refreshAfterViewportResize)
+    },
+  }
+}
+
+function mapPanReleaseSurface(target: Window): Pick<EventTarget, 'addEventListener' | 'removeEventListener'> {
+  const eventTarget = target as EventTarget
+  return {
+    addEventListener(type, listener, options) {
+      eventTarget.addEventListener(type, listener, type === 'blur' ? false : options)
+    },
+    removeEventListener(type, listener, options) {
+      eventTarget.removeEventListener(type, listener, type === 'blur' ? false : options)
     },
   }
 }
