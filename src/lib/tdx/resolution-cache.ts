@@ -249,7 +249,9 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
       const serviceError = new TDXServiceError('TDX response has an invalid schema', 502, {
         failureKind: 'invalid_schema',
       })
-      if (leader) dependencies.recordCircuitFailure(circuitKey, serviceError)
+      // A parsed HTTP response proves the upstream is reachable. Endpoint schema drift remains
+      // an operation-level failure, but must not open the scoped availability circuit.
+      if (leader) dependencies.recordCircuitSuccess(circuitKey)
       return finishFailure(serviceError, true)
     }
 

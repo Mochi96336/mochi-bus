@@ -3,6 +3,8 @@ import { TDXServiceError } from './error-classification'
 import {
   createTDXCircuitBreaker,
   dataCircuitKey,
+  dataRateLimitCircuitKey,
+  redactedCircuitKey,
   tokenCircuitKey,
 } from './circuit-breaker'
 
@@ -14,10 +16,20 @@ const limitedError = (warning: 'tdx-rate-limit' | 'tdx-quota' = 'tdx-rate-limit'
 }
 
 describe('TDX circuit breaker boundary', () => {
-  it('keeps token and data circuits isolated by explicit keys', () => {
+  it('keeps token, scoped data, and credential rate-limit circuits isolated by explicit keys', () => {
     expect(tokenCircuitKey('credential')).toBe('token/credential')
-    expect(dataCircuitKey('credential')).toBe('data/credential')
+    expect(dataCircuitKey('credential', 'place_arrivals', 'City/Tainan'))
+      .toBe('data/credential/place_arrivals/City/Tainan')
+    expect(dataRateLimitCircuitKey('credential')).toBe('data-limit/credential')
     expect(tokenCircuitKey('credential')).not.toBe(dataCircuitKey('credential'))
+  })
+
+  it('redacts credential-derived identity while retaining circuit diagnostics', () => {
+    expect(redactedCircuitKey('token/secret-fingerprint')).toBe('token/*')
+    expect(redactedCircuitKey('data-limit/secret-fingerprint')).toBe('data-limit/*')
+    expect(redactedCircuitKey('data/secret-fingerprint/place_arrivals/City/Tainan'))
+      .toBe('data/*/place_arrivals/City/Tainan')
+    expect(redactedCircuitKey('unexpected')).toBe('unknown')
   })
 
   it('opens after three transient failures inside the one-minute window', () => {
@@ -40,6 +52,20 @@ describe('TDX circuit breaker boundary', () => {
     }))
     expect(opened).toHaveBeenCalledOnce()
     expect(opened).toHaveBeenCalledWith({ key: 'data/a', warning: 'tdx-unavailable', openMs: 30_000 })
+  })
+
+  it('counts invalid schema when a caller records it as a transient failure', () => {
+    const circuit = createTDXCircuitBreaker()
+    const schemaError = new TDXServiceError('invalid schema', 502, { failureKind: 'invalid_schema' })
+
+    circuit.recordFailure('token/a', schemaError)
+    circuit.recordFailure('token/a', schemaError)
+    circuit.recordFailure('token/a', schemaError)
+
+    expect(() => circuit.assertClosed('token/a')).toThrowError(expect.objectContaining({
+      warning: 'tdx-unavailable',
+      status: 503,
+    }))
   })
 
   it('forgets stale failure counts after the failure window', () => {
@@ -70,6 +96,21 @@ describe('TDX circuit breaker boundary', () => {
     time += 1
     expect(circuit.assertClosed('token/a')).toBe(true)
     expect(() => circuit.assertClosed('token/a')).toThrowError(/probe is in progress/)
+  })
+
+  it('checks multiple circuits atomically before reserving half-open probes', () => {
+    let time = 0
+    const circuit = createTDXCircuitBreaker({ now: () => time })
+    circuit.recordFailure('data-limit/a', limitedError(), '1')
+    circuit.recordFailure('data/a', transientError())
+    circuit.recordFailure('data/a', transientError())
+    circuit.recordFailure('data/a', transientError())
+    time = 1_000
+
+    expect(() => circuit.assertAllClosed(['data-limit/a', 'data/a'])).toThrow()
+
+    circuit.recordSuccess('data/a')
+    expect(circuit.assertAllClosed(['data-limit/a', 'data/a'])).toBe(true)
   })
 
   it('accepts Retry-After HTTP dates and clamps them to five minutes', () => {
