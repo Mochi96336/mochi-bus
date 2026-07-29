@@ -48,14 +48,14 @@ describe('Map loading skeletons', () => {
     }
   })
 
-  it('builds three presentation-only route rows with resolved layout columns', () => {
+  it('builds three presentation-only route rows with resolved-shaped layout columns', () => {
     const list = createPlaceRouteLoadingList() as unknown as FakeElement
 
     expect(tokens(list)).toEqual(['place-route-list', 'place-route-loading'])
     expect(list.ariaHidden).toBe('true')
     expect(list.children).toHaveLength(3)
     for (const row of list.children) {
-      expect(tokens(row)).toEqual(['place-route-row', 'place-route-loading-row', 'map-loading-row'])
+      expect(tokens(row)).toEqual(['place-route-loading-row', 'map-loading-row'])
       expect(tokens(row.children[0])).toEqual(['place-route-button'])
       expect(tokens(row.children[1])).toEqual(['favorite-direction-button', 'skeleton-favorite'])
 
