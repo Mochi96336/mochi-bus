@@ -82,7 +82,7 @@ function createHarness(options: {
 }
 
 describe('Nearby places controller', () => {
-  it('loads a bounded list and auto-previews the first place after presentation', async () => {
+  it('loads a bounded list and auto-previews the first place without presenting the transient list', async () => {
     const places = Array.from({ length: 15 }, (_, index) => place(index))
     const harness = createHarness({ loadNearby: async () => places })
     const loadRequest = request({ autoPreview: true })
@@ -91,23 +91,32 @@ describe('Nearby places controller', () => {
 
     expect(harness.starts).toEqual([loadRequest])
     expect(harness.loadNearby).toHaveBeenCalledWith('Taipei', 25, 121, 500, expect.any(AbortSignal))
-    expect(harness.presentations).toHaveLength(1)
-    expect(harness.presentations[0].places).toEqual(places.slice(0, 12))
+    expect(harness.presentations).toEqual([])
     expect(harness.previews).toEqual([{
       place: places[0],
-      presentation: harness.presentations[0],
+      presentation: {
+        ...loadRequest,
+        places: places.slice(0, 12),
+      },
     }])
     expect(harness.failures).toEqual([])
   })
 
-  it('does not auto-preview an empty result or a request that disabled it', async () => {
+  it('presents empty auto-preview results and normal requests without previewing', async () => {
+    const emptyRequest = request({ autoPreview: true })
     const empty = createHarness({ loadNearby: async () => [] })
-    await expect(empty.controller.load(request({ autoPreview: true }))).resolves.toBe(true)
+    await expect(empty.controller.load(emptyRequest)).resolves.toBe(true)
     expect(empty.previews).toEqual([])
+    expect(empty.presentations).toEqual([{ ...emptyRequest, places: [] }])
 
+    const disabledRequest = request()
     const disabled = createHarness()
-    await expect(disabled.controller.load(request())).resolves.toBe(true)
+    await expect(disabled.controller.load(disabledRequest)).resolves.toBe(true)
     expect(disabled.previews).toEqual([])
+    expect(disabled.presentations).toEqual([{
+      ...disabledRequest,
+      places: [place(1), place(2)],
+    }])
   })
 
   it('suppresses an older completion after a newer request starts', async () => {
