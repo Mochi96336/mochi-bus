@@ -120,7 +120,7 @@ test('detail exploration keeps drawer Back but browser Back skips to the catalog
   await expect(drawer.getByRole('heading', { name: '臺南火車站' })).toBeVisible()
 })
 
-test('auto-preview keeps nearby result markers while skipping the transient list drawer', async ({ page }) => {
+test('auto-preview keeps the route drawer, opens the place directly, and returns without catalogue flash', async ({ page }) => {
   const nearbyPlaces = [
     { placeId: 'P1', name: '臺南火車站', latitude: 22.997, longitude: 120.212, distanceMeters: 76 },
     { placeId: 'P2', name: '成功大學', latitude: 22.999, longitude: 120.216, distanceMeters: 180 },
@@ -131,8 +131,35 @@ test('auto-preview keeps nearby result markers while skipping the transient list
   await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => route.fulfill({ json: { variants: [variant('15')] } }))
   await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({ json: { timetable: { mode: 'none', services: [] } } }))
   await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
-  await page.route('**/api/v1/map/nearby*', (route) => route.fulfill({ json: { places: nearbyPlaces } }))
-  await page.route('**/api/v1/map/place/P1/arrivals?city=Tainan', (route) => route.fulfill({ json: { routes: [] } }))
+  let releaseNearby!: () => void
+  let signalNearbyRequested!: () => void
+  const nearbyGate = new Promise<void>((resolve) => { releaseNearby = resolve })
+  const nearbyRequested = new Promise<void>((resolve) => { signalNearbyRequested = resolve })
+  await page.route('**/api/v1/map/nearby*', async (route) => {
+    signalNearbyRequested()
+    await nearbyGate
+    await route.fulfill({ json: { places: nearbyPlaces } })
+  })
+  await page.route('**/api/v1/map/place/P1/arrivals?city=Tainan', (route) => route.fulfill({
+    json: {
+      routes: [{
+        routeName: '15',
+        routeUid: 'TNN-15',
+        variantKey: 'TNN-15:0',
+        direction: 0,
+        label: '奇美醫院 → 大成路口',
+        subRouteUid: 'TNN-15',
+        subRouteName: '15',
+        stopUid: 'S1',
+        stopName: '奇美醫院',
+        stopSequence: 1,
+        estimateSeconds: 120,
+        etaLabel: '2 分',
+        stopStatus: 0,
+        source: 'realtime',
+      }],
+    },
+  }))
 
   await page.goto('/map?city=Tainan&route=15&variant=TNN-15%3A0')
   const drawer = page.locator('#map-drawer')
@@ -142,10 +169,43 @@ test('auto-preview keeps nearby result markers while skipping the transient list
   await expect(routeStops).toHaveCount(2)
   await routeStops.first().click()
 
+  await nearbyRequested
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toHaveCount(0)
+  releaseNearby()
+
   await expect(page).toHaveURL(/place=P1/)
   await expect(drawer.getByRole('heading', { name: '臺南火車站' })).toBeVisible()
   await expect(drawer.locator('.nearby-place-button')).toHaveCount(0)
   await expect(page.locator('.leaflet-stop-pane svg path.leaflet-interactive')).toHaveCount(3)
+
+  await drawer.locator('.place-route-button').click()
+  await expect(page).toHaveURL(/route=15/)
+  await expect(drawer.getByRole('button', { name: '← 返回站點', exact: true })).toBeVisible()
+
+  await page.evaluate(() => {
+    type FrameStore = { active: boolean; headings: string[] }
+    const store: FrameStore = { active: true, headings: [] }
+    ;(window as Window & { __drawerHeadingFrames?: FrameStore }).__drawerHeadingFrames = store
+    const sample = () => {
+      if (!store.active) return
+      store.headings.push(document.querySelector<HTMLElement>('#map-drawer .drawer-heading h1')?.textContent ?? '')
+      requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+  })
+
+  await drawer.getByRole('button', { name: '← 返回站點', exact: true }).click()
+  await expect(page).toHaveURL(/place=P1/)
+  await expect(drawer.getByRole('heading', { name: '臺南火車站' })).toBeVisible()
+  await page.waitForTimeout(80)
+  const headings = await page.evaluate(() => {
+    type FrameStore = { active: boolean; headings: string[] }
+    const store = (window as Window & { __drawerHeadingFrames?: FrameStore }).__drawerHeadingFrames!
+    store.active = false
+    return store.headings
+  })
+  expect(headings).not.toContain('臺南')
 })
 
 test('overview, region and catalogue share drawer and browser history transitions', async ({ page }) => {

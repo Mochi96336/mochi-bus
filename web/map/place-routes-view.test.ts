@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tdxWarningMessages } from '../../src/domain/tdx-warning'
-import type { DrawerView } from './drawer-view'
+import type { DrawerView, DrawerViewSession } from './drawer-view'
 import type { NearbyPlace, PlaceRoute } from './map-api-client'
 import type { PlaceRoutesPresentation } from './place-routes-controller'
 import source from './place-routes-view.ts?raw'
@@ -119,6 +119,8 @@ function createHarness() {
   const onRetry = vi.fn()
   const onOpenRoute = vi.fn()
   const createFavoriteControl = vi.fn(() => element('button') as unknown as HTMLButtonElement)
+  const releasePreservedHeight = vi.fn()
+  const onDispose = vi.fn()
   const createDegradedNotice = vi.fn((_message: string, retry: () => void, credentialRecovery = false) => {
     const notice = element('section')
     notice.className = 'degraded-notice'
@@ -127,7 +129,14 @@ function createHarness() {
     return notice as unknown as HTMLElement
   })
   const view = createPlaceRoutesView({
-    renderDrawer: (drawerView) => { rendered = drawerView },
+    renderDrawer: (drawerView) => {
+      rendered = drawerView
+      return {
+        signal: new AbortController().signal,
+        releasePreservedHeight,
+        onDispose,
+      } satisfies DrawerViewSession
+    },
     createBackButton: (_label, onClick) => {
       const button = element('button')
       button.className = 'drawer-back'
@@ -155,6 +164,8 @@ function createHarness() {
     onOpenRoute,
     createFavoriteControl,
     createDegradedNotice,
+    releasePreservedHeight,
+    onDispose,
   }
 }
 
@@ -167,6 +178,11 @@ beforeEach(() => {
   vi.stubGlobal('document', {
     createElement: (tagName: string) => element(tagName),
   })
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    callback(0)
+    return 1
+  })
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
 })
 
 afterEach(() => {
@@ -201,6 +217,9 @@ describe('Place routes view', () => {
     harness.view.renderRoutes(presentation)
 
     const drawer = scrollable(harness.rendered())
+    expect(drawer.preserveDesktopHeight).toBe(true)
+    expect(harness.releasePreservedHeight).toHaveBeenCalledOnce()
+    expect(harness.onDispose).toHaveBeenCalledOnce()
     expect(harness.createDegradedNotice).toHaveBeenCalledWith(
       tdxWarningMessages['tdx-rate-limit'],
       expect.any(Function),
@@ -228,6 +247,9 @@ describe('Place routes view', () => {
 
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('place:Taipei:PLACE')
+    expect(drawer.preserveDesktopHeight).toBe(true)
+    expect(harness.releasePreservedHeight).toHaveBeenCalledOnce()
+    expect(harness.onDispose).toHaveBeenCalledOnce()
     expect(harness.createDegradedNotice).toHaveBeenCalledWith('credential', expect.any(Function), true)
     harness.createDegradedNotice.mock.calls[0][1]()
     expect(harness.onRetry).toHaveBeenCalledWith(place())
