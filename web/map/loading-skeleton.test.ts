@@ -32,7 +32,7 @@ describe('Map loading skeletons', () => {
   it('builds three presentation-only nearby rows shaped like the resolved list', () => {
     const list = createNearbyPlaceLoadingList() as unknown as FakeElement
 
-    expect(tokens(list)).toEqual(['nearby-list', 'place-route-loading'])
+    expect(tokens(list)).toEqual(['nearby-list', 'map-loading-list'])
     expect(list.ariaHidden).toBe('true')
     expect(list.children).toHaveLength(3)
     for (const row of list.children) {
@@ -51,7 +51,7 @@ describe('Map loading skeletons', () => {
   it('builds three presentation-only route rows with resolved-shaped layout columns', () => {
     const list = createPlaceRouteLoadingList() as unknown as FakeElement
 
-    expect(tokens(list)).toEqual(['place-route-list', 'place-route-loading'])
+    expect(tokens(list)).toEqual(['place-route-list', 'map-loading-list'])
     expect(list.ariaHidden).toBe('true')
     expect(list.children).toHaveLength(3)
     for (const row of list.children) {
