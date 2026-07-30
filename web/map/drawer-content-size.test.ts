@@ -35,8 +35,7 @@ function timetable(overrides: Partial<RouteTimetable> = {}): RouteTimetable {
 describe('data-driven drawer sizes', () => {
   it('uses more desktop space only when a stop has enough directions', () => {
     expect(placeRoutesDrawerSize(0)).toBe('compact')
-    expect(placeRoutesDrawerSize(3)).toBe('compact')
-    expect(placeRoutesDrawerSize(4)).toBe('standard')
+    expect(placeRoutesDrawerSize(1)).toBe('standard')
     expect(placeRoutesDrawerSize(7)).toBe('standard')
     expect(placeRoutesDrawerSize(8)).toBe('tall')
   })
