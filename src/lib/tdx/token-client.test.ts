@@ -191,6 +191,64 @@ describe('TDX token client boundary', () => {
     }))
   })
 
+  it('retries one 408 token response and bounds jitter at 750 ms', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response('request timeout', { status: 408 }))
+      .mockResolvedValueOnce(tokenResponse('recovered-token'))
+    const harness = createHarness({ fetcher, random: () => 1 })
+
+    const result = await harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'timeout-response-id',
+      TDX_CLIENT_SECRET: 'timeout-response-secret',
+    })
+
+    expect(result.token).toBe('recovered-token')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(harness.sleep).toHaveBeenCalledWith(750)
+    expect(harness.recordCircuitFailure).not.toHaveBeenCalled()
+    expect(harness.recordCircuitSuccess).toHaveBeenCalledTimes(1)
+    expect(harness.logRequestFailure).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: 1,
+      status: 408,
+      willRetry: true,
+    }))
+  })
+
+  it('records one circuit failure after repeated 5xx responses and forwards the final Retry-After', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response('unavailable', {
+        status: 503,
+        headers: { 'Retry-After': '30' },
+      }))
+      .mockResolvedValueOnce(new Response('still unavailable', {
+        status: 503,
+        headers: { 'Retry-After': '10' },
+      }))
+    const harness = createHarness({ fetcher, random: () => 0.5 })
+
+    await expect(harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'persistent-server-id',
+      TDX_CLIENT_SECRET: 'persistent-server-secret',
+    })).rejects.toMatchObject({ status: 503, failureKind: 'upstream_5xx' })
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(harness.sleep).toHaveBeenCalledTimes(1)
+    expect(harness.sleep).toHaveBeenCalledWith(500)
+    expect(harness.responseError).toHaveBeenCalledTimes(2)
+    expect(harness.recordCircuitFailure).toHaveBeenCalledTimes(1)
+    expect(harness.recordCircuitFailure).toHaveBeenCalledWith(
+      expect.stringMatching(/^token\//),
+      expect.objectContaining({ status: 503, failureKind: 'upstream_5xx' }),
+      '10',
+    )
+    expect(harness.recordCircuitSuccess).not.toHaveBeenCalled()
+    expect(harness.logRequestFailure).toHaveBeenLastCalledWith(expect.objectContaining({
+      attempt: 2,
+      status: 503,
+      willRetry: false,
+    }))
+  })
+
   it('deduplicates concurrent token requests across a retry', async () => {
     let resolveResponse!: (response: Response) => void
     const fetcher = vi.fn()
