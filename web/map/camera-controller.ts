@@ -25,7 +25,6 @@ type CameraTarget = PointTarget | BoundsTarget
 type ActiveDrawerTransition = {
   targetRect: CameraRect
   durationMs: number
-  preservedCamera?: MapCameraState
   timeout: ReturnType<typeof setTimeout>
   finishOnTransitionEnd: (event: Event) => void
 }
@@ -124,13 +123,6 @@ export function createMapCameraController(
     frame = window.requestAnimationFrame(() => apply())
   }
 
-  const restoreExactCamera = (state: MapCameraState) => {
-    map.stop()
-    clearTarget()
-    taiwanPanConstraint.releaseForProgrammaticCamera()
-    restoreMapCamera(map, state)
-  }
-
   const finishDrawerTransition = (refreshAtEnd: boolean, stopMapAnimation = false) => {
     const transition = drawerTransition
     if (!transition) return
@@ -139,9 +131,7 @@ export function createMapCameraController(
     drawerElement.removeEventListener('transitionend', transition.finishOnTransitionEnd)
     drawerElement.removeEventListener('transitioncancel', transition.finishOnTransitionEnd)
     if (stopMapAnimation) map.stop()
-    if (!refreshAtEnd) return
-    if (transition.preservedCamera) restoreExactCamera(transition.preservedCamera)
-    else refresh()
+    if (refreshAtEnd) refresh()
   }
 
   const rememberPreservedCamera = (viewKey: string) => {
@@ -152,11 +142,14 @@ export function createMapCameraController(
     if (oldest) preservedCameras.delete(oldest)
   }
 
-  const restorePreservedCamera = (viewKey: string): MapCameraState | undefined => {
+  const restorePreservedCamera = (viewKey: string): boolean => {
     const state = preservedCameras.get(viewKey)
-    if (!state) return undefined
-    restoreExactCamera(state)
-    return state
+    if (!state) return false
+    map.stop()
+    clearTarget()
+    taiwanPanConstraint.releaseForProgrammaticCamera()
+    restoreMapCamera(map, state)
+    return true
   }
 
   const prepareDrawerSizeTransition = (transition: DrawerSizeTransition) => {
@@ -166,8 +159,7 @@ export function createMapCameraController(
       rememberPreservedCamera(transition.fromView)
     }
     const restoredPreservedCamera = transition.toCamera === 'preserve'
-      ? restorePreservedCamera(transition.toView)
-      : undefined
+      && restorePreservedCamera(transition.toView)
 
     if (transition.durationMs <= 0 || transition.to === 'content') {
       if (transition.camera === 'preserve' && !restoredPreservedCamera) {
@@ -200,7 +192,6 @@ export function createMapCameraController(
     drawerTransition = {
       targetRect,
       durationMs: transition.durationMs,
-      preservedCamera: restoredPreservedCamera,
       timeout,
       finishOnTransitionEnd,
     }
@@ -209,7 +200,7 @@ export function createMapCameraController(
 
     if (transition.camera === 'preserve') {
       // Preserved workspaces own an exact user camera. Suppress the intermediate drawer
-      // resize frames and restore that exact camera once more when the transition settles.
+      // resize frames, but never reuse the old semantic bounds target during navigation.
       if (!restoredPreservedCamera) map.stop()
       clearTarget()
       return
