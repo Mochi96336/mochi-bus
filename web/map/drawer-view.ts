@@ -78,12 +78,14 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     currentViewKey = view.key
     rememberDrawerSize(sizesByViewKey, view.key, nextSize)
 
-    dispatchDrawerSizeTransition(
-      drawer,
+    dispatchDrawerSizeTransition(drawer, {
       previousSize,
       nextSize,
-      drawerCameraTransitionForNavigation(currentCameraTransition, nextCameraTransition),
-    )
+      previousViewKey,
+      nextViewKey: view.key,
+      previousCamera: currentCameraTransition,
+      nextCamera: nextCameraTransition,
+    })
     currentCameraTransition = nextCameraTransition
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
@@ -237,16 +239,29 @@ export function drawerMinHeightForTransition(
   return boundedHeight > 0 ? `${Math.ceil(boundedHeight)}px` : ''
 }
 
-function dispatchDrawerSizeTransition(
-  drawer: HTMLElement,
-  previousSize: DrawerSize | undefined,
-  nextSize: DrawerSize,
-  camera: DrawerCameraTransition,
-): void {
-  if (!previousSize || previousSize === nextSize) return
+type DrawerTransitionDispatch = {
+  previousSize: DrawerSize | undefined
+  nextSize: DrawerSize
+  previousViewKey: string | undefined
+  nextViewKey: string
+  previousCamera: DrawerCameraTransition
+  nextCamera: DrawerCameraTransition
+}
+
+function dispatchDrawerSizeTransition(drawer: HTMLElement, transition: DrawerTransitionDispatch): void {
+  if (!transition.previousSize || transition.previousSize === transition.nextSize) return
   const durationMs = drawerSizeTransitionDurationMs(getComputedStyle(drawer))
   if (durationMs <= 0) return
-  const detail: DrawerSizeTransition = { from: previousSize, to: nextSize, durationMs, camera }
+  const detail: DrawerSizeTransition = {
+    from: transition.previousSize,
+    to: transition.nextSize,
+    durationMs,
+    camera: drawerCameraTransitionForNavigation(transition.previousCamera, transition.nextCamera),
+    fromView: transition.previousViewKey,
+    toView: transition.nextViewKey,
+    fromCamera: transition.previousCamera,
+    toCamera: transition.nextCamera,
+  }
   drawer.dispatchEvent(new CustomEvent<DrawerSizeTransition>(DRAWER_SIZE_TRANSITION_EVENT, { detail }))
 }
 
