@@ -144,8 +144,8 @@ export function drawerSizeForView(
   view: DrawerView,
   rememberedSize: DrawerSize | undefined,
 ): DrawerSize {
-  // Catalogue loading, failure, and the final route list are one stable workspace.
-  // Compact here describes the temporary content structure, not a smaller navigation state.
+  // A view key names the navigation workspace. Catalogue loading, failure, and the final
+  // route list share that workspace even though their temporary content modes differ.
   const workspaceSize = view.size
     ?? (view.key.startsWith('catalogue:') ? 'standard' : undefined)
   return drawerSizeForTransition(
