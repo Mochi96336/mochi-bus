@@ -97,6 +97,9 @@ function createMapStub(order: string[]): L.Map {
     panBy: vi.fn(() => {
       order.push('panBy')
     }),
+    stop: vi.fn(() => {
+      order.push('stop')
+    }),
     project: vi.fn(() => ({
       add: () => ({ x: 0, y: 0 }),
     })),
@@ -160,6 +163,7 @@ describe('map camera controller pan-bound handoff', () => {
     controller.focusBounds([[22, 120], [25, 122]])
 
     expect(measureDrawerRectForSize).toHaveBeenCalledWith(drawerElement, 'compact')
+    expect(map.stop).toHaveBeenCalledOnce()
     expect(map.fitBounds).toHaveBeenCalledTimes(1)
     expect(map.fitBounds).toHaveBeenLastCalledWith(
       [[22, 120], [25, 122]],
@@ -201,6 +205,7 @@ describe('map camera controller pan-bound handoff', () => {
     mapElement.dispatchEvent(new Event('pointerdown'))
     browser.runFrames()
 
+    expect(map.stop).toHaveBeenCalledOnce()
     expect(map.fitBounds).toHaveBeenCalledTimes(1)
     controller.dispose()
   })
