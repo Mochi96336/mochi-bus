@@ -212,6 +212,32 @@ describe('Place routes controller', () => {
     expect(harness.loadRoutes).toHaveBeenCalledOnce()
   })
 
+  it('invalidates sibling shape tasks after the first renderer failure', async () => {
+    const failed = deferred<RouteMapVariant | undefined>()
+    const late = deferred<RouteMapVariant | undefined>()
+    const renderError = new Error('preview renderer failed')
+    const attempted: string[] = []
+    const harness = createHarness({
+      loadRoutes: async () => ({ routes: [route('FAIL', 10), route('LATE', 20)] }),
+      loadVariant: async (_city, routeName) => routeName === 'FAIL' ? failed.promise : late.promise,
+      renderPreview: (preview) => {
+        attempted.push(preview.variant.routeName)
+        if (preview.variant.routeName === 'FAIL') throw renderError
+      },
+    })
+
+    const loading = harness.controller.open(place())
+    await vi.waitFor(() => expect(harness.loadVariant).toHaveBeenCalledTimes(2))
+    failed.resolve(variant('FAIL'))
+    await expect(loading).resolves.toBe(false)
+    expect(harness.failures).toEqual([{ cityCode: 'Taipei', place: place(), error: renderError }])
+
+    late.resolve(variant('LATE'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(attempted).toEqual(['FAIL'])
+  })
+
   it('rejects stale arrivals after cancellation or a newer place starts', async () => {
     const first = deferred<PlaceArrivalsResponse>()
     const harness = createHarness({
