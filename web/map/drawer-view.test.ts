@@ -3,6 +3,7 @@ import {
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
+  drawerSizeMemoryKey,
   shouldAnimateDrawerTransition,
   shouldPreserveDrawerHeight,
 } from './drawer-view'
@@ -23,6 +24,26 @@ describe('drawer view transitions', () => {
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:C', 240)).toBe(0)
     expect(drawerScrollTopForTransition(undefined, 'trip-results:A:B', 240)).toBe(0)
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:B', -20)).toBe(0)
+  })
+
+  it('shares timetable size memory across stop content identities', () => {
+    const firstStop = {
+      key: 'timetable:ChiayiCounty:CHI-7211:0:C1',
+      mode: 'timetable' as const,
+      header: [],
+      content: [],
+    }
+    const secondStop = {
+      key: 'timetable:ChiayiCounty:CHI-7211:0:C2',
+      mode: 'timetable' as const,
+      header: [],
+      content: [],
+    }
+
+    expect(drawerSizeMemoryKey(firstStop)).toBe('timetable:ChiayiCounty:CHI-7211:0')
+    expect(drawerSizeMemoryKey(secondStop)).toBe('timetable:ChiayiCounty:CHI-7211:0')
+    expect(drawerScrollTopForTransition(firstStop.key, secondStop.key, 240)).toBe(0)
+    expect(drawerSizeMemoryKey({ ...secondStop, sizeKey: 'custom:timetable' })).toBe('custom:timetable')
   })
 
   it('keeps catalogue loading and failure in the standard workspace', () => {
