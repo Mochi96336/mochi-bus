@@ -1,5 +1,6 @@
 import type L from 'leaflet'
 import { calculateCameraPadding, cameraPanOffset, type CameraRect } from '../../src/domain/map/camera-padding'
+import { captureMapCamera, restoreMapCamera, type MapCameraState } from '../../src/domain/map/journey-camera'
 import {
   DRAWER_SIZE_TRANSITION_EVENT,
   type DrawerSize,
@@ -41,6 +42,8 @@ export type MapCameraController = {
   dispose(): void
 }
 
+const PRESERVED_CAMERA_LIMIT = 16
+
 /**
  * Keeps one semantic camera target and projects it into the part of the map that
  * is not covered by the drawer. The target survives drawer/content resizes, but
@@ -58,6 +61,7 @@ export function createMapCameraController(
     mapPanReleaseSurface(window),
   )
   const measureDrawerRectForSize = options.measureDrawerRectForSize ?? defaultDrawerRectForSize
+  const preservedCameras = new Map<string, MapCameraState>()
 
   let target: CameraTarget | undefined
   let frame: number | undefined
@@ -130,12 +134,50 @@ export function createMapCameraController(
     if (refreshAtEnd) refresh()
   }
 
+  const rememberPreservedCamera = (viewKey: string) => {
+    preservedCameras.delete(viewKey)
+    preservedCameras.set(viewKey, captureMapCamera(map))
+    if (preservedCameras.size <= PRESERVED_CAMERA_LIMIT) return
+    const oldest = preservedCameras.keys().next().value
+    if (oldest) preservedCameras.delete(oldest)
+  }
+
+  const restorePreservedCamera = (viewKey: string): boolean => {
+    const state = preservedCameras.get(viewKey)
+    if (!state) return false
+    map.stop()
+    clearTarget()
+    taiwanPanConstraint.releaseForProgrammaticCamera()
+    restoreMapCamera(map, state)
+    return true
+  }
+
   const prepareDrawerSizeTransition = (transition: DrawerSizeTransition) => {
     finishDrawerTransition(false, true)
-    if (transition.durationMs <= 0 || transition.to === 'content') return
+
+    if (transition.fromCamera === 'preserve' && transition.fromView) {
+      rememberPreservedCamera(transition.fromView)
+    }
+    const restoredPreservedCamera = transition.toCamera === 'preserve'
+      && restorePreservedCamera(transition.toView)
+
+    if (transition.durationMs <= 0 || transition.to === 'content') {
+      if (transition.camera === 'preserve' && !restoredPreservedCamera) {
+        map.stop()
+        clearTarget()
+      }
+      return
+    }
 
     const targetRect = measureDrawerRectForSize(drawerElement, transition.to)
-    if (sameCameraRect(targetRect, readRect(drawerElement))) return
+    const sizeActuallyChanges = !sameCameraRect(targetRect, readRect(drawerElement))
+    if (!sizeActuallyChanges) {
+      if (transition.camera === 'preserve' && !restoredPreservedCamera) {
+        map.stop()
+        clearTarget()
+      }
+      return
+    }
 
     const finishOnTransitionEnd = (event: Event) => {
       if (event.target !== drawerElement) return
@@ -157,10 +199,9 @@ export function createMapCameraController(
     drawerElement.addEventListener('transitioncancel', finishOnTransitionEnd)
 
     if (transition.camera === 'preserve') {
-      // This workspace owns an explicit camera restore (for example returning from route
-      // detail to journey results). Drop the old semantic target but still suppress the
-      // intermediate ResizeObserver frames until the drawer reaches its final size.
-      map.stop()
+      // Preserved workspaces own an exact user camera. Suppress the intermediate drawer
+      // resize frames, but never reuse the old semantic bounds target during navigation.
+      if (!restoredPreservedCamera) map.stop()
       clearTarget()
       return
     }
@@ -228,6 +269,7 @@ export function createMapCameraController(
       disposed = true
       finishDrawerTransition(false, true)
       clearTarget()
+      preservedCameras.clear()
       taiwanPanConstraint()
       resizeObserver.disconnect()
       mapElement.removeEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
