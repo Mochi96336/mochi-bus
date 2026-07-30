@@ -144,14 +144,7 @@ export function drawerScrollTopForTransition(
 }
 
 export function drawerSizeMemoryKey(view: DrawerView): string {
-  if (view.sizeKey) return view.sizeKey
-  if (view.mode !== 'timetable') return view.key
-
-  // Timetable stops are separate content identities so their scroll position resets, but they
-  // share one route-level size workspace. Removing only the final stop segment preserves variant
-  // keys that contain their own colon, such as `CHI-7211:0`.
-  const stopSeparator = view.key.lastIndexOf(':')
-  return stopSeparator > 'timetable:'.length ? view.key.slice(0, stopSeparator) : view.key
+  return view.sizeKey ?? view.key
 }
 
 export function drawerSizeForView(
