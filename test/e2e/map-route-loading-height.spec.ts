@@ -79,8 +79,17 @@ async function catalogueHeight(page: Page): Promise<number> {
   return drawer.evaluate((element) => element.getBoundingClientRect().height)
 }
 
+async function drawerGeometry(page: Page) {
+  return page.locator('#map-drawer').evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))
+}
+
 test('keeps the compact route state usable across portrait and short landscape breakpoints', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
+  let released = false
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
   await mockMap(page, routeGate)
@@ -112,13 +121,18 @@ test('keeps the compact route state usable across portrait and short landscape b
     await expect(drawer.locator('.drawer-back')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
-    const landscape = await drawer.evaluate((element) => ({
-      height: element.getBoundingClientRect().height,
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-    }))
-    expect(landscape.height).toBeGreaterThanOrEqual(220)
-    expect(landscape.scrollHeight - landscape.clientHeight).toBeLessThanOrEqual(1)
+    const landscapeLoading = await drawerGeometry(page)
+    expect(landscapeLoading.height).toBeGreaterThanOrEqual(220)
+    expect(landscapeLoading.scrollHeight - landscapeLoading.clientHeight).toBeLessThanOrEqual(1)
+
+    releaseRoute()
+    released = true
+    await expect(drawer.locator('.route-service-summary')).toBeVisible()
+    await expect(drawer.locator('.drawer-back')).toBeVisible()
+    await expect(drawer).toHaveAttribute('data-size', 'compact')
+    const landscapeResult = await drawerGeometry(page)
+    expect(landscapeResult.height).toBeGreaterThanOrEqual(220)
+    expect(landscapeResult.scrollHeight - landscapeResult.clientHeight).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 390, height: 844 })
     await expect.poll(async () => {
@@ -126,7 +140,7 @@ test('keeps the compact route state usable across portrait and short landscape b
       return Math.abs(height - beforeHeight)
     }).toBeLessThanOrEqual(1)
   } finally {
-    releaseRoute()
+    if (!released) releaseRoute()
   }
 
   await expect(drawer.locator('.route-service-summary')).toBeVisible()
