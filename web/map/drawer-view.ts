@@ -249,9 +249,17 @@ type DrawerTransitionDispatch = {
 }
 
 function dispatchDrawerSizeTransition(drawer: HTMLElement, transition: DrawerTransitionDispatch): void {
-  if (!transition.previousSize || transition.previousSize === transition.nextSize) return
-  const durationMs = drawerSizeTransitionDurationMs(getComputedStyle(drawer))
-  if (durationMs <= 0) return
+  if (!transition.previousSize) return
+  const sizeChanges = transition.previousSize !== transition.nextSize
+  const preserveWorkspaceChanges = transition.previousViewKey !== transition.nextViewKey
+    && (transition.previousCamera === 'preserve' || transition.nextCamera === 'preserve')
+  if (!sizeChanges && !preserveWorkspaceChanges) return
+
+  const durationMs = sizeChanges
+    ? drawerSizeTransitionDurationMs(getComputedStyle(drawer))
+    : 0
+  if (durationMs <= 0 && !preserveWorkspaceChanges) return
+
   const detail: DrawerSizeTransition = {
     from: transition.previousSize,
     to: transition.nextSize,
