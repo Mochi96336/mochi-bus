@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NearbyPlacesPresentation } from './nearby-places-controller'
+
+const autoPreviewHistory = vi.hoisted(() => ({ mark: vi.fn() }))
+
+vi.mock('./nearby-auto-preview-history', () => ({
+  markNearbyAutoPreviewOrigin: autoPreviewHistory.mark,
+}))
+
 import { createNearbyResultsState } from './nearby-results-state'
 
 const presentation: NearbyPlacesPresentation = {
@@ -14,6 +21,8 @@ const presentation: NearbyPlacesPresentation = {
 }
 
 describe('Nearby results state', () => {
+  beforeEach(() => autoPreviewHistory.mark.mockReset())
+
   it('stores results separately from rendering and can synchronize the map on demand', () => {
     const renderPlaces = vi.fn()
     const renderEndpoints = vi.fn()
@@ -22,19 +31,21 @@ describe('Nearby results state', () => {
     state.store(presentation)
     expect(state.current()).toEqual({ origin: [22.997, 120.212], places: presentation.places })
     expect(renderPlaces).not.toHaveBeenCalled()
+    expect(autoPreviewHistory.mark).not.toHaveBeenCalled()
 
     state.renderMap()
     expect(renderPlaces).toHaveBeenCalledWith([22.997, 120.212], presentation.places)
     expect(renderEndpoints).toHaveBeenCalledOnce()
   })
 
-  it('stores and renders auto-preview results in one explicit operation', () => {
+  it('stores, marks and renders auto-preview results in one explicit operation', () => {
     const renderPlaces = vi.fn()
     const renderEndpoints = vi.fn()
     const state = createNearbyResultsState({ renderPlaces, renderEndpoints })
 
     state.storeAndRenderMap(presentation)
 
+    expect(autoPreviewHistory.mark).toHaveBeenCalledWith([22.997, 120.212])
     expect(renderPlaces).toHaveBeenCalledWith([22.997, 120.212], presentation.places)
     expect(renderEndpoints).toHaveBeenCalledOnce()
   })
