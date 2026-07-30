@@ -6,6 +6,10 @@ export type DrawerSizeTransition = Readonly<{
   to: DrawerSize
   durationMs: number
   camera: DrawerCameraTransition
+  fromView?: string
+  toView: string
+  fromCamera: DrawerCameraTransition
+  toCamera: DrawerCameraTransition
 }>
 
 export const DRAWER_SIZE_TRANSITION_EVENT = 'map-drawer-size-transition'
