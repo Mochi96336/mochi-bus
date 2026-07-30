@@ -7,7 +7,6 @@ import { stopFillAccent } from './theme'
 
 const NEAREST_RADIUS_SCALE = 1.12
 const NEAREST_STROKE_WEIGHT = 3.2
-const NEAREST_STROKE_OPACITY = .62
 
 type NearbyPlacesMapOptions = {
   layer: L.LayerGroup
@@ -39,7 +38,7 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
 
   function emphasizeNearest(marker: L.CircleMarker): L.CircleMarker {
     marker.setRadius(marker.getRadius() * NEAREST_RADIUS_SCALE)
-    marker.setStyle({ weight: NEAREST_STROKE_WEIGHT, opacity: NEAREST_STROKE_OPACITY })
+    marker.setStyle({ weight: NEAREST_STROKE_WEIGHT })
     return marker
   }
 
