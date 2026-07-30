@@ -109,6 +109,11 @@ export function createMapCameraController(
     frame = undefined
   }
 
+  const clearTarget = () => {
+    target = undefined
+    cancelScheduledApply()
+  }
+
   const refresh = () => {
     if (disposed || !target || frame !== undefined) return
     frame = window.requestAnimationFrame(() => apply())
@@ -151,15 +156,19 @@ export function createMapCameraController(
     drawerElement.addEventListener('transitionend', finishOnTransitionEnd)
     drawerElement.addEventListener('transitioncancel', finishOnTransitionEnd)
 
+    if (transition.camera === 'preserve') {
+      // This workspace owns an explicit camera restore (for example returning from route
+      // detail to journey results). Drop the old semantic target but still suppress the
+      // intermediate ResizeObserver frames until the drawer reaches its final size.
+      map.stop()
+      clearTarget()
+      return
+    }
+
     // Wait one frame so a focusBounds/focusPoint issued by the new view can replace the old
     // semantic target before the synchronized camera animation begins.
     cancelScheduledApply()
     if (target) frame = window.requestAnimationFrame(() => apply(true))
-  }
-
-  const clearTarget = () => {
-    target = undefined
-    cancelScheduledApply()
   }
 
   const clear = () => {
