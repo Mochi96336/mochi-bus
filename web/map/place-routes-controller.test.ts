@@ -70,6 +70,7 @@ function deferred<T>() {
 function createHarness(options: {
   loadRoutes?: (cityCode: string, placeId: string, signal?: AbortSignal) => Promise<PlaceArrivalsResponse>
   loadVariant?: (cityCode: string, routeName: string, variantKey: string) => Promise<RouteMapVariant | undefined>
+  renderPreview?: (preview: PlaceRoutePreview) => void
   favoriteRouteUids?: () => Iterable<string>
   previewLimit?: number
 } = {}) {
@@ -86,6 +87,7 @@ function createHarness(options: {
     routes: [route('307', 120), route('605', 60)],
   })))
   const loadVariant = vi.fn(options.loadVariant ?? (async (_city: string, routeName: string) => variant(routeName)))
+  const renderPreview = options.renderPreview ?? ((preview: PlaceRoutePreview) => previews.push(preview))
   const controller = createPlaceRoutesController({
     currentCityCode: () => cityCode,
     beginRequest: () => {
@@ -101,7 +103,7 @@ function createHarness(options: {
     invalidateOtherPreviews: () => { invalidatedOtherPreviews += 1 },
     onStart: (request) => starts.push(request),
     onRoutes: (presentation) => presentations.push(presentation),
-    renderPreview: (preview) => previews.push(preview),
+    renderPreview,
     onComplete: (presentation) => completions.push(presentation),
     onError: (failure) => failures.push(failure),
     previewLimit: options.previewLimit,
@@ -192,6 +194,20 @@ describe('Place routes controller', () => {
     expect(harness.previews.map((entry) => entry.variant.routeName)).toEqual(['605'])
     expect(harness.completions).toHaveLength(1)
     expect(harness.failures).toEqual([])
+  })
+
+  it('reports renderer failures instead of hiding them as missing shapes', async () => {
+    const renderError = new Error('preview renderer failed')
+    const harness = createHarness({
+      renderPreview: () => { throw renderError },
+    })
+
+    await expect(harness.controller.open(place())).resolves.toBe(false)
+
+    expect(harness.presentations).toHaveLength(1)
+    expect(harness.completions).toEqual([])
+    expect(harness.failures).toEqual([{ cityCode: 'Taipei', place: place(), error: renderError }])
+    expect(harness.loadRoutes).toHaveBeenCalledOnce()
   })
 
   it('rejects stale route completions after cancellation or a newer place starts', async () => {
