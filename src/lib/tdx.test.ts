@@ -240,7 +240,7 @@ describe('TDX credential cache resilience', () => {
       warning: 'tdx-unavailable',
       status: 503,
     })
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(6)
   })
 
   it('keeps data failures separate from a healthy token endpoint', async () => {

@@ -20,6 +20,8 @@ function createHarness(options: {
   now?: () => number
   maxTokenCacheEntries?: number
   fetcher?: ReturnType<typeof vi.fn>
+  sleep?: (ms: number) => Promise<void>
+  random?: () => number
 } = {}) {
   const fetcher = options.fetcher ?? vi.fn(async () => tokenResponse('shared-token'))
   const assertCircuitClosed = vi.fn()
@@ -27,7 +29,11 @@ function createHarness(options: {
   const recordCircuitSuccess = vi.fn()
   const responseError = vi.fn(async (_context: string, response: Response) => {
     const error = new TDXServiceError(`token failed (${response.status})`, response.status, {
-      failureKind: response.status === 429 ? 'rate_limited' : 'upstream_4xx',
+      failureKind: response.status === 429
+        ? 'rate_limited'
+        : response.status >= 500
+          ? 'upstream_5xx'
+          : 'upstream_4xx',
     })
     if (response.status === 429) error.warning = 'tdx-rate-limit'
     return error
@@ -42,6 +48,8 @@ function createHarness(options: {
   })
   const logResponseTooLarge = vi.fn()
   const logResponseSize = vi.fn()
+  const logRequestFailure = vi.fn()
+  const sleep = options.sleep ?? vi.fn(async () => undefined)
 
   const dependencies: TDXTokenClientDependencies = {
     requestTimeoutMs: 6000,
@@ -55,8 +63,11 @@ function createHarness(options: {
     ),
     logResponseTooLarge,
     logResponseSize,
+    logRequestFailure,
     fetcher: fetcher as typeof fetch,
     now: options.now,
+    sleep,
+    random: options.random,
     maxTokenCacheEntries: options.maxTokenCacheEntries,
   }
 
@@ -70,6 +81,8 @@ function createHarness(options: {
     readJsonResponse,
     logResponseTooLarge,
     logResponseSize,
+    logRequestFailure,
+    sleep,
   }
 }
 
@@ -124,9 +137,123 @@ describe('TDX token client boundary', () => {
     expect(new Headers(init?.headers).get('Content-Type')).toBe('application/x-www-form-urlencoded')
   })
 
-  it('deduplicates concurrent token requests after asynchronous fingerprinting', async () => {
+  it('retries one transient transport failure without charging the circuit', async () => {
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new DOMException('timed out', 'TimeoutError'))
+      .mockResolvedValueOnce(tokenResponse('recovered-token'))
+    const sleep = vi.fn(async () => undefined)
+    const harness = createHarness({ fetcher, sleep, random: () => 0.5 })
+
+    const result = await harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'retry-id',
+      TDX_CLIENT_SECRET: 'retry-secret',
+    })
+
+    expect(result.token).toBe('recovered-token')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledWith(500)
+    expect(harness.recordCircuitFailure).not.toHaveBeenCalled()
+    expect(harness.recordCircuitSuccess).toHaveBeenCalledTimes(1)
+    expect(harness.logRequestFailure).toHaveBeenCalledWith({
+      operation: 'token',
+      resource: 'token',
+      credentialScope: 'shared',
+      attempt: 1,
+      maxAttempts: 2,
+      failureKind: 'timeout',
+      status: undefined,
+      willRetry: true,
+    })
+  })
+
+  it('retries one 5xx token response before recording circuit state', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(tokenResponse('recovered-token'))
+    const harness = createHarness({ fetcher, random: () => 0 })
+
+    const result = await harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'server-id',
+      TDX_CLIENT_SECRET: 'server-secret',
+    })
+
+    expect(result.token).toBe('recovered-token')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(harness.sleep).toHaveBeenCalledWith(250)
+    expect(harness.responseError).toHaveBeenCalledTimes(1)
+    expect(harness.recordCircuitFailure).not.toHaveBeenCalled()
+    expect(harness.recordCircuitSuccess).toHaveBeenCalledTimes(1)
+    expect(harness.logRequestFailure).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: 1,
+      failureKind: 'upstream_5xx',
+      status: 503,
+      willRetry: true,
+    }))
+  })
+
+  it('retries one 408 token response and bounds jitter at 750 ms', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response('request timeout', { status: 408 }))
+      .mockResolvedValueOnce(tokenResponse('recovered-token'))
+    const harness = createHarness({ fetcher, random: () => 1 })
+
+    const result = await harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'timeout-response-id',
+      TDX_CLIENT_SECRET: 'timeout-response-secret',
+    })
+
+    expect(result.token).toBe('recovered-token')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(harness.sleep).toHaveBeenCalledWith(750)
+    expect(harness.recordCircuitFailure).not.toHaveBeenCalled()
+    expect(harness.recordCircuitSuccess).toHaveBeenCalledTimes(1)
+    expect(harness.logRequestFailure).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: 1,
+      status: 408,
+      willRetry: true,
+    }))
+  })
+
+  it('records one circuit failure after repeated 5xx responses and forwards the final Retry-After', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response('unavailable', {
+        status: 503,
+        headers: { 'Retry-After': '30' },
+      }))
+      .mockResolvedValueOnce(new Response('still unavailable', {
+        status: 503,
+        headers: { 'Retry-After': '10' },
+      }))
+    const harness = createHarness({ fetcher, random: () => 0.5 })
+
+    await expect(harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'persistent-server-id',
+      TDX_CLIENT_SECRET: 'persistent-server-secret',
+    })).rejects.toMatchObject({ status: 503, failureKind: 'upstream_5xx' })
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(harness.sleep).toHaveBeenCalledTimes(1)
+    expect(harness.sleep).toHaveBeenCalledWith(500)
+    expect(harness.responseError).toHaveBeenCalledTimes(2)
+    expect(harness.recordCircuitFailure).toHaveBeenCalledTimes(1)
+    expect(harness.recordCircuitFailure).toHaveBeenCalledWith(
+      expect.stringMatching(/^token\//),
+      expect.objectContaining({ status: 503, failureKind: 'upstream_5xx' }),
+      '10',
+    )
+    expect(harness.recordCircuitSuccess).not.toHaveBeenCalled()
+    expect(harness.logRequestFailure).toHaveBeenLastCalledWith(expect.objectContaining({
+      attempt: 2,
+      status: 503,
+      willRetry: false,
+    }))
+  })
+
+  it('deduplicates concurrent token requests across a retry', async () => {
     let resolveResponse!: (response: Response) => void
-    const fetcher = vi.fn(() => new Promise<Response>((resolve) => { resolveResponse = resolve }))
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new DOMException('timed out', 'TimeoutError'))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveResponse = resolve }))
     const harness = createHarness({ fetcher })
     const env = { TDX_CLIENT_ID: 'concurrent-id', TDX_CLIENT_SECRET: 'concurrent-secret' }
 
@@ -134,12 +261,14 @@ describe('TDX token client boundary', () => {
       harness.client.getTDXToken(env),
       harness.client.getTDXToken(env),
     ])
-    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
     resolveResponse(tokenResponse('one-token'))
 
     const [first, second] = await requests
     expect(first.token).toBe('one-token')
     expect(second).toEqual(first)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(harness.recordCircuitFailure).not.toHaveBeenCalled()
     expect(harness.recordCircuitSuccess).toHaveBeenCalledTimes(1)
   })
 
@@ -170,7 +299,7 @@ describe('TDX token client boundary', () => {
     expect(fetcher).toHaveBeenCalledTimes(5)
   })
 
-  it('forwards HTTP failures and Retry-After to the existing token circuit', async () => {
+  it('forwards HTTP failures and Retry-After to the existing token circuit without retrying 429', async () => {
     const fetcher = vi.fn(async () => new Response('limited', {
       status: 429,
       headers: { 'Retry-After': '10' },
@@ -182,6 +311,8 @@ describe('TDX token client boundary', () => {
       TDX_CLIENT_SECRET: 'limited-secret',
     })).rejects.toMatchObject({ status: 429, warning: 'tdx-rate-limit' })
 
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(harness.sleep).not.toHaveBeenCalled()
     expect(harness.responseError).toHaveBeenCalledWith(
       'TDX token request failed',
       expect.any(Response),
@@ -193,6 +324,26 @@ describe('TDX token client boundary', () => {
       expect.any(TDXServiceError),
       '10',
     )
+    expect(harness.logRequestFailure).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: 1,
+      failureKind: 'rate_limited',
+      status: 429,
+      willRetry: false,
+    }))
+  })
+
+  it('does not retry non-retryable token 4xx responses', async () => {
+    const fetcher = vi.fn(async () => new Response('bad credentials', { status: 400 }))
+    const harness = createHarness({ fetcher })
+
+    await expect(harness.client.getTDXToken({
+      TDX_CLIENT_ID: 'bad-id',
+      TDX_CLIENT_SECRET: 'bad-secret',
+    })).rejects.toMatchObject({ status: 400, failureKind: 'upstream_4xx' })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(harness.sleep).not.toHaveBeenCalled()
+    expect(harness.recordCircuitFailure).toHaveBeenCalledTimes(1)
   })
 
   it('classifies transport, invalid JSON and missing-token failures without caching', async () => {
@@ -202,23 +353,30 @@ describe('TDX token client boundary', () => {
       TDX_CLIENT_ID: 'timeout-id',
       TDX_CLIENT_SECRET: 'timeout-secret',
     })).rejects.toMatchObject({ failureKind: 'timeout' })
+    expect(timeoutFetcher).toHaveBeenCalledTimes(2)
     expect(timeoutHarness.recordCircuitFailure).toHaveBeenCalledTimes(1)
+    expect(timeoutHarness.logRequestFailure).toHaveBeenCalledTimes(2)
+    expect(timeoutHarness.logRequestFailure).toHaveBeenLastCalledWith(expect.objectContaining({
+      attempt: 2,
+      failureKind: 'timeout',
+      willRetry: false,
+    }))
 
-    const invalidHarness = createHarness({
-      fetcher: vi.fn(async () => new Response('{invalid-json')),
-    })
+    const invalidFetcher = vi.fn(async () => new Response('{invalid-json'))
+    const invalidHarness = createHarness({ fetcher: invalidFetcher })
     await expect(invalidHarness.client.getTDXToken({
       TDX_CLIENT_ID: 'json-id',
       TDX_CLIENT_SECRET: 'json-secret',
     })).rejects.toMatchObject({ failureKind: 'invalid_json', status: 502 })
+    expect(invalidFetcher).toHaveBeenCalledTimes(1)
 
-    const missingHarness = createHarness({
-      fetcher: vi.fn(async () => new Response(JSON.stringify({ expires_in: 3600 }))),
-    })
+    const missingFetcher = vi.fn(async () => new Response(JSON.stringify({ expires_in: 3600 })))
+    const missingHarness = createHarness({ fetcher: missingFetcher })
     await expect(missingHarness.client.getTDXToken({
       TDX_CLIENT_ID: 'missing-id',
       TDX_CLIENT_SECRET: 'missing-secret',
     })).rejects.toMatchObject({ failureKind: 'invalid_schema', status: 502 })
+    expect(missingFetcher).toHaveBeenCalledTimes(1)
     expect(missingHarness.recordCircuitSuccess).not.toHaveBeenCalled()
   })
 
