@@ -1,11 +1,7 @@
 import L from 'leaflet'
 import { bindTextTooltip } from './leaflet-tooltip'
 import type { NearbyPlace } from './map-api-client'
-import {
-  publishNearbyCameraBegin,
-  publishNearbyCameraCancel,
-  publishNearbyCameraSettle,
-} from './nearby-map-events'
+import { publishNearbyCameraFocus } from './nearby-map-events'
 import type { NearbyOrigin } from './nearby-places-view'
 import { stopFillAccent } from './theme'
 
@@ -41,7 +37,7 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
     renderLoadingOrigin(origin) {
       options.layer.clearLayers()
       createOriginMarker(origin).addTo(options.layer)
-      publishNearbyCameraBegin(origin)
+      publishNearbyCameraFocus(origin)
     },
 
     renderPlaces(origin, places) {
@@ -60,10 +56,6 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
           })
           .addTo(options.layer)
       }
-
-      const nearest = places[0]
-      if (nearest) publishNearbyCameraSettle([nearest.latitude, nearest.longitude])
-      else publishNearbyCameraCancel()
     },
   }
 }
