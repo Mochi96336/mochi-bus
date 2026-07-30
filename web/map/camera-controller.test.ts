@@ -11,12 +11,22 @@ const panConstraint = vi.hoisted(() => {
   }
 })
 
+const leaflet = vi.hoisted(() => ({
+  stopPropagation: vi.fn(),
+}))
+
 vi.mock('./map-pan-bounds', () => ({
   constrainMapPanToTaiwan: panConstraint.constrain,
 }))
+vi.mock('leaflet', () => ({
+  default: { DomEvent: { stopPropagation: leaflet.stopPropagation } },
+}))
+vi.mock('./leaflet-tooltip', () => ({ bindTextTooltip: <T>(layer: T): T => layer }))
 
 import { createMapCameraController } from './camera-controller'
-import { NEARBY_ORIGIN_RENDERED_EVENT } from './nearby-map-events'
+import type { NearbyPlace } from './map-api-client'
+import { createNearbyPlacesMap } from './nearby-places-map'
+
 
 type Rect = {
   left: number
@@ -25,11 +35,6 @@ type Rect = {
   bottom: number
   width: number
   height: number
-}
-
-type MapHarness = {
-  map: L.Map
-  fire(type: string, data?: Record<string, unknown>): void
 }
 
 function element(rect: Rect): HTMLElement {
@@ -76,11 +81,10 @@ function latLng(value: L.LatLngExpression): { lat: number; lng: number } {
   return { lat: 0, lng: 0 }
 }
 
-function createMapStub(order: string[]): MapHarness {
-  const handlers = new Map<string, Set<(event: unknown) => void>>()
+function createMapStub(order: string[]): L.Map {
   let center = { lat: 23.5, lng: 121 }
   let zoom = 12
-  const map = {
+  return {
     fitBounds: vi.fn(() => {
       order.push('fitBounds')
     }),
@@ -115,23 +119,48 @@ function createMapStub(order: string[]): MapHarness {
     getCenter: vi.fn(() => center),
     getZoom: vi.fn(() => zoom),
     invalidateSize: vi.fn(),
-    on: vi.fn((type: string, handler: (event: unknown) => void) => {
-      const listeners = handlers.get(type) ?? new Set()
-      listeners.add(handler)
-      handlers.set(type, listeners)
-      return map
-    }),
-    off: vi.fn((type: string, handler: (event: unknown) => void) => {
-      handlers.get(type)?.delete(handler)
-      return map
-    }),
   } as unknown as L.Map
+}
 
+class FakeLayerGroup {
+  markers: FakeMarker[] = []
+  clearLayers(): this {
+    this.markers = []
+    return this
+  }
+}
+
+class FakeMarker {
+  private readonly listeners = new Map<string, (event: unknown) => void>()
+
+  addTo(layer: FakeLayerGroup): this {
+    layer.markers.push(this)
+    return this
+  }
+
+  on(type: string, listener: (event: unknown) => void): this {
+    this.listeners.set(type, listener)
+    return this
+  }
+}
+
+function createNearbySurface() {
+  const layer = new FakeLayerGroup()
+  return createNearbyPlacesMap({
+    layer: layer as unknown as L.LayerGroup,
+    hoverCapable: false,
+    createStopMarker: () => new FakeMarker() as unknown as L.CircleMarker,
+    onOpenPlace: () => undefined,
+  })
+}
+
+function place(latitude: number, longitude: number): NearbyPlace {
   return {
-    map,
-    fire(type, data = {}) {
-      for (const handler of handlers.get(type) ?? []) handler({ type, target: map, ...data })
-    },
+    placeId: 'PLACE',
+    name: '測試站牌',
+    latitude,
+    longitude,
+    distanceMeters: 100,
   }
 }
 
@@ -149,7 +178,7 @@ describe('map camera controller pan-bound handoff', () => {
 
   it('releases pending pan bounds before point and bounds camera movement', () => {
     const order: string[] = []
-    const { map } = createMapStub(order)
+    const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
     panConstraint.releaseForProgrammaticCamera.mockImplementation(() => {
@@ -173,57 +202,96 @@ describe('map camera controller pan-bound handoff', () => {
     expect(panConstraint.dispose).toHaveBeenCalledOnce()
   })
 
-  it('starts a drawer-aware pan when the loading origin follows a map pointer click', () => {
+  it('connects the real Nearby Places surface to begin and settle camera motion', () => {
     const order: string[] = []
-    const harness = createMapStub(order)
+    const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 900, top: 0, right: 1200, bottom: 800, width: 300, height: 800 })
     panConstraint.releaseForProgrammaticCamera.mockImplementation(() => order.push('release'))
-    const controller = createMapCameraController(harness.map, mapElement, drawerElement)
+    const controller = createMapCameraController(map, mapElement, drawerElement)
+    const nearby = createNearbySurface()
 
     mapElement.dispatchEvent(new Event('pointerdown'))
-    harness.fire(NEARBY_ORIGIN_RENDERED_EVENT, { origin: [25, 121.5] })
+    nearby.renderLoadingOrigin([25, 121.5])
 
     expect(order).toEqual(['release', 'stop', 'panTo'])
-    const [cameraCenter, panOptions] = vi.mocked(harness.map.panTo).mock.calls[0]
+    const [cameraCenter, panOptions] = vi.mocked(map.panTo).mock.calls[0]
     expect(cameraCenter).toEqual(expect.objectContaining({ lat: expect.any(Number), lng: expect.any(Number) }))
     expect(cameraCenter).not.toEqual({ lat: 25, lng: 121.5 })
     expect(panOptions).toEqual(expect.objectContaining({ animate: true, duration: .32 }))
+
+    order.length = 0
+    nearby.renderPlaces([25, 121.5], [place(26, 122.5)])
+    expect(order).toEqual(['release', 'stop', 'panTo'])
+    expect(vi.mocked(map.panTo).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ animate: true, duration: .2 }),
+    )
     controller.dispose()
   })
 
   it('does not animate URL hydration origins without a recent map pointer click', () => {
     const order: string[] = []
-    const harness = createMapStub(order)
+    const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
-    const controller = createMapCameraController(harness.map, mapElement, drawerElement)
+    const controller = createMapCameraController(map, mapElement, drawerElement)
 
-    harness.fire(NEARBY_ORIGIN_RENDERED_EVENT, { origin: [25, 121.5] })
+    createNearbySurface().renderLoadingOrigin([25, 121.5])
 
     expect(order).toEqual([])
     controller.dispose()
   })
 
-  it('turns the final nearby focus into a short settle and suppresses it after user intervention', () => {
+  it('suppresses settle after user intervention', () => {
     const order: string[] = []
-    const harness = createMapStub(order)
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
+    const controller = createMapCameraController(map, mapElement, drawerElement)
+    const nearby = createNearbySurface()
+
+    mapElement.dispatchEvent(new Event('pointerdown'))
+    nearby.renderLoadingOrigin([25, 121.5])
+    order.length = 0
+    mapElement.dispatchEvent(new Event('pointerdown'))
+    nearby.renderPlaces([25, 121.5], [place(26, 122.5)])
+
+    expect(order).toEqual([])
+    controller.dispose()
+  })
+
+  it('does not let a failed nearby transition swallow a later unrelated focus', () => {
+    const order: string[] = []
+    const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
     panConstraint.releaseForProgrammaticCamera.mockImplementation(() => order.push('release'))
-    const controller = createMapCameraController(harness.map, mapElement, drawerElement)
+    const controller = createMapCameraController(map, mapElement, drawerElement)
 
     mapElement.dispatchEvent(new Event('pointerdown'))
-    harness.fire(NEARBY_ORIGIN_RENDERED_EVENT, { origin: [25, 121.5] })
+    createNearbySurface().renderLoadingOrigin([25, 121.5])
     order.length = 0
-    controller.focusPoint([25.001, 121.501], 12)
-    expect(order).toEqual(['release'])
+    controller.focusPoint([24, 120], 12)
+
+    expect(order).toEqual(['release', 'setView'])
+    controller.dispose()
+  })
+
+  it('does not jump again when route completion repeats the settled station target', () => {
+    const order: string[] = []
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
+    const controller = createMapCameraController(map, mapElement, drawerElement)
+    const nearby = createNearbySurface()
+    const selected = place(26, 122.5)
 
     mapElement.dispatchEvent(new Event('pointerdown'))
-    harness.fire(NEARBY_ORIGIN_RENDERED_EVENT, { origin: [25.5, 121.8] })
+    nearby.renderLoadingOrigin([25, 121.5])
+    nearby.renderPlaces([25, 121.5], [selected])
     order.length = 0
-    mapElement.dispatchEvent(new Event('pointerdown'))
-    controller.focusPoint([25.51, 121.81], 12)
+    controller.focusPoint([selected.latitude, selected.longitude], 12)
+
     expect(order).toEqual([])
     controller.dispose()
   })
@@ -232,10 +300,10 @@ describe('map camera controller pan-bound handoff', () => {
     vi.unstubAllGlobals()
     installBrowserStubs(true)
     const order: string[] = []
-    const harness = createMapStub(order)
+    const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
-    const controller = createMapCameraController(harness.map, mapElement, drawerElement)
+    const controller = createMapCameraController(map, mapElement, drawerElement)
 
     controller.focusPoint([25, 121.5], 14, { animate: true })
 
