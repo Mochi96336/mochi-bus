@@ -200,7 +200,7 @@ describe('Place routes view', () => {
     expect(harness.onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders a short stop compactly with route color, ETA and actions', () => {
+  it('renders an ordinary stop at standard size with route color, ETA and actions', () => {
     const harness = createHarness()
     const staleRoute = route({ source: 'stale-realtime', etaLabel: '2 分', estimateSeconds: 120 })
     const presentation: PlaceRoutesPresentation = {
@@ -213,7 +213,7 @@ describe('Place routes view', () => {
     harness.view.renderRoutes(presentation)
 
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('compact')
+    expect(drawer.size).toBe('standard')
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
     expect(harness.onDispose).not.toHaveBeenCalled()
