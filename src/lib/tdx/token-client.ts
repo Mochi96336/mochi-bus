@@ -266,7 +266,7 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     credentialKey: string,
     isShared: boolean,
   ): Promise<string> => {
-    const existing = tokenFlights.get(key)
+    const existing = tokenFlights.get(credentialKey)
     if (existing) return existing
 
     dependencies.assertCircuitClosed(tokenCircuitKey(credentialKey))
