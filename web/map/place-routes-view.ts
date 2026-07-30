@@ -41,8 +41,8 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
     return () => options.onRetry(place)
   }
 
-  function renderSettled(view: DrawerView, size: DrawerSize): void {
-    options.renderDrawer({ ...view, size })
+  function renderSettled(view: DrawerView, size?: DrawerSize): void {
+    options.renderDrawer(size ? { ...view, size } : view)
   }
 
   return {
@@ -50,7 +50,6 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
       options.renderDrawer({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
-        size: 'standard',
         header: drawerHeader(place, '正在取得路線與到站時間'),
         content: [createPlaceRouteLoadingList()],
       })
@@ -120,7 +119,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
           retry(place),
           options.isCredentialRecovery(error),
         )],
-      }, 'compact')
+      })
       return message
     },
   }
