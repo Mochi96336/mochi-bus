@@ -27,6 +27,8 @@ class FakeLayerGroup {
 
 class FakeMarker {
   private readonly listeners = new Map<string, (event: unknown) => void>()
+  radius = 10
+  style: L.PathOptions = {}
 
   constructor(
     readonly position: L.LatLngExpression,
@@ -41,6 +43,20 @@ class FakeMarker {
 
   on(type: string, listener: (event: unknown) => void): this {
     this.listeners.set(type, listener)
+    return this
+  }
+
+  getRadius(): number {
+    return this.radius
+  }
+
+  setRadius(radius: number): this {
+    this.radius = radius
+    return this
+  }
+
+  setStyle(style: L.PathOptions): this {
+    this.style = { ...this.style, ...style }
     return this
   }
 
@@ -99,9 +115,9 @@ describe('Nearby places map', () => {
     unsubscribe()
   })
 
-  it('renders result markers without changing the camera target', () => {
+  it('gives only the nearest result a restrained visual emphasis without changing the camera target', () => {
     const harness = createHarness()
-    const places = [place(1, 120.4), place(2, 48.7)]
+    const places = [place(1, 48.7), place(2, 120.4)]
     const focus = vi.fn()
     const unsubscribe = subscribeNearbyCameraFocus(focus)
 
@@ -111,9 +127,13 @@ describe('Nearby places map', () => {
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(1, [...origin], true, stopFillAccent)
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(2, [places[0].latitude, places[0].longitude], true)
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(3, [places[1].latitude, places[1].longitude], true)
+    expect(harness.markers[1].radius).toBeCloseTo(11.2)
+    expect(harness.markers[1].style).toEqual({ weight: 3.2, opacity: .62 })
+    expect(harness.markers[2].radius).toBe(10)
+    expect(harness.markers[2].style).toEqual({})
     expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(1, harness.markers[0], '你點的位置')
-    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(2, harness.markers[1], 'Place 1 · 120 m')
-    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(3, harness.markers[2], 'Place 2 · 49 m')
+    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(2, harness.markers[1], '最近 · Place 1 · 49 m')
+    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(3, harness.markers[2], 'Place 2 · 120 m')
     expect(focus).not.toHaveBeenCalled()
     unsubscribe()
   })
