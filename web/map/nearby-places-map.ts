@@ -5,6 +5,10 @@ import { publishNearbyCameraFocus } from './nearby-map-events'
 import type { NearbyOrigin } from './nearby-places-view'
 import { stopFillAccent } from './theme'
 
+const NEAREST_RADIUS_SCALE = 1.12
+const NEAREST_STROKE_WEIGHT = 3.2
+const NEAREST_STROKE_OPACITY = .62
+
 type NearbyPlacesMapOptions = {
   layer: L.LayerGroup
   hoverCapable: boolean
@@ -33,6 +37,15 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
     return options.createStopMarker([...origin], true, stopFillAccent)
   }
 
+  function emphasizeNearest(marker: L.CircleMarker): L.CircleMarker {
+    marker.setRadius(marker.getRadius() * NEAREST_RADIUS_SCALE)
+    marker.setStyle({
+      weight: NEAREST_STROKE_WEIGHT,
+      opacity: NEAREST_STROKE_OPACITY,
+    })
+    return marker
+  }
+
   return {
     renderLoadingOrigin(origin) {
       options.layer.clearLayers()
@@ -45,10 +58,14 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
       const originMarker = createOriginMarker(origin).addTo(options.layer)
       bindHoverTooltip(originMarker, '你點的位置')
 
-      for (const place of places) {
+      for (const [index, place] of places.entries()) {
+        const nearest = index === 0
+        const marker = options.createStopMarker([place.latitude, place.longitude], true)
+        if (nearest) emphasizeNearest(marker)
+
         bindHoverTooltip(
-          options.createStopMarker([place.latitude, place.longitude], true),
-          `${place.name} · ${Math.round(place.distanceMeters)} m`,
+          marker,
+          `${nearest ? '最近 · ' : ''}${place.name} · ${Math.round(place.distanceMeters)} m`,
         )
           .on('click', (event) => {
             L.DomEvent.stopPropagation(event)
