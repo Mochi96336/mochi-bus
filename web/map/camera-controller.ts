@@ -3,7 +3,6 @@ import { calculateCameraPadding, cameraPanOffset, type CameraRect } from '../../
 import { constrainMapPanToTaiwan } from './map-pan-bounds'
 import { subscribeNearbyCameraTransitions } from './nearby-map-events'
 
-
 type PointMotion = 'instant' | 'auto' | 'pan'
 
 type PointTarget = {
@@ -183,6 +182,9 @@ export function createMapCameraController(
   mapElement.addEventListener('keydown', releaseOnOtherMapInteraction, { capture: true })
 
   const beginNearbyTransition = (origin: readonly [number, number]) => {
+    // Every nearby request owns a fresh transition. Even retries and URL-driven
+    // renders that do not animate must invalidate any unfinished pointer request.
+    clearNearbyTransition()
     if (disposed || Date.now() - lastPointerDownAt > RECENT_POINTER_WINDOW_MS) return
     lastPointerDownAt = Number.NEGATIVE_INFINITY
     nearbyTransition = { expiresAt: Date.now() + NEARBY_SETTLE_WINDOW_MS }
@@ -215,6 +217,7 @@ export function createMapCameraController(
   const unsubscribeNearbyTransitions = subscribeNearbyCameraTransitions({
     begin: beginNearbyTransition,
     settle: settleNearbyTransition,
+    cancel: clearNearbyTransition,
   })
 
   const resizeObserver = new ResizeObserver(() => refresh())
@@ -238,8 +241,9 @@ export function createMapCameraController(
         && !options.animate
         && !options.motion
       if (sameSemanticTarget) {
+        // Keep an in-flight settle intact. Drawer/viewport observers already own
+        // geometry corrections; a duplicate semantic focus must not stop and restart it.
         target = { ...previousTarget, center, zoom }
-        refresh()
         return
       }
 
