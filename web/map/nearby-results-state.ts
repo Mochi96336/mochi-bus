@@ -39,7 +39,8 @@ export function createNearbyResultsState(options: NearbyResultsStateOptions): Ne
     // Cached/back-navigation renders are not request completions. Retire any unfinished
     // transition before the map surface republishes its nearest-place settle event.
     if (!allowRequestSettle) publishNearbyCameraCancel()
-    options.renderPlaces(snapshot.origin, snapshot.places)
+    const { origin, places } = snapshot
+    options.renderPlaces(origin, places)
     options.renderEndpoints()
   }
 
