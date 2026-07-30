@@ -120,6 +120,7 @@ export function createPlaceRoutesController(
     requestGeneration: number,
   ): Promise<boolean> {
     const { requestId, signal } = options.beginRequest()
+    let routesPresented = false
 
     try {
       const arrivals = await options.loadRoutes(cityCode, place.placeId, signal)
@@ -139,23 +140,27 @@ export function createPlaceRoutesController(
         warning: arrivals.warning,
       }
       options.onRoutes(presentation)
+      routesPresented = true
 
       const previewTasks = routes.slice(0, previewLimit).map(async (entry) => {
+        let variant: RouteMapVariant | undefined
         try {
-          const variant = await options.loadVariant(
+          variant = await options.loadVariant(
             cityCode,
             entry.route.routeName,
             entry.route.variantKey,
           )
-          if (!variant || !isCurrent(requestGeneration, cityCode, requestId)) return
-          // Render each route as soon as its shape arrives instead of making the
-          // fastest previews wait for the slowest request in the batch.
-          const preview: PlaceRoutePreview = { ...entry, variant }
-          options.renderPreview(preview)
         } catch {
-          // Shape previews are auxiliary. One missing route geometry must not turn
-          // an already usable arrivals list into a page-level failure.
+          // Shape previews are auxiliary. A network or data failure for one shape
+          // must not turn an already usable arrivals list into a page-level failure.
+          return
         }
+        if (!variant || !isCurrent(requestGeneration, cityCode, requestId)) return
+
+        // Keep rendering outside the load catch: a renderer bug is a real application
+        // failure and must not be silently disguised as a missing route shape.
+        const preview: PlaceRoutePreview = { ...entry, variant }
+        options.renderPreview(preview)
       })
       await Promise.all(previewTasks)
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
@@ -164,6 +169,11 @@ export function createPlaceRoutesController(
       return true
     } catch (error) {
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
+
+      if (routesPresented) {
+        options.onError({ cityCode, place, error })
+        return false
+      }
 
       consecutiveFailures += 1
       const decision = decideRetry(error, consecutiveFailures)
