@@ -1,5 +1,7 @@
 :root {
+  --map-drawer-size-compact: min(36vh, 300px);
   --map-drawer-size-standard: min(44vh, 420px);
+  --map-drawer-size-tall: min(56vh, 560px);
   --map-drawer-size-expanded: min(64vh, 680px);
 }
 
@@ -8,14 +10,33 @@
   height: auto;
 }
 
+#map-drawer[data-size="compact"] {
+  height: var(--map-drawer-size-compact);
+  max-height: var(--map-drawer-size-compact);
+}
+
 #map-drawer[data-size="standard"] {
   height: var(--map-drawer-size-standard);
   max-height: var(--map-drawer-size-standard);
 }
 
+#map-drawer[data-size="tall"] {
+  height: var(--map-drawer-size-tall);
+  max-height: var(--map-drawer-size-tall);
+}
+
 #map-drawer[data-size="expanded"] {
   height: var(--map-drawer-size-expanded);
   max-height: var(--map-drawer-size-expanded);
+}
+
+@media (min-width: 641px) and (prefers-reduced-motion: no-preference) {
+  #map-drawer[data-size="compact"],
+  #map-drawer[data-size="standard"],
+  #map-drawer[data-size="tall"],
+  #map-drawer[data-size="expanded"] {
+    transition: height 160ms ease, max-height 160ms ease;
+  }
 }
 
 @media (max-width: 640px) {
@@ -29,6 +50,8 @@
         - var(--map-drawer-mobile-bottom, 10px)
       )
     );
+    --map-drawer-size-compact: var(--map-drawer-size-standard);
+    --map-drawer-size-tall: var(--map-drawer-size-standard);
     --map-drawer-size-expanded: min(
       72dvh,
       42rem,
@@ -51,6 +74,8 @@
         - var(--map-drawer-mobile-bottom, 10px)
       )
     );
+    --map-drawer-size-compact: var(--map-drawer-size-standard);
+    --map-drawer-size-tall: var(--map-drawer-size-standard);
     --map-drawer-size-expanded: var(--map-drawer-size-standard);
   }
 }
