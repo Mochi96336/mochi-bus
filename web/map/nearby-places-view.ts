@@ -54,6 +54,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
+        size: 'standard',
         preserveDesktopHeight: true,
         header: drawerHeader('附近站牌', '正在搜尋附近站牌', backLabel, onBack),
         content: [createNearbyPlaceLoadingList()],
@@ -79,6 +80,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       const session = options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
+        size: 'standard',
         preserveDesktopHeight: places.length > 0,
         header: drawerHeader(
           '附近站牌',
@@ -102,6 +104,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
+        size: 'standard',
         header: drawerHeader('附近站牌讀取失敗', message, backLabel, onBack),
         content: [options.createRetryButton(onRetry)],
       })

@@ -165,7 +165,7 @@ async function expectFocusedContentAboveDrawer(
   routePath: ReturnType<Page['locator']>,
   maxDrawerHeight: number,
 ) {
-  await expect.poll(async () => Math.round((await drawer.boundingBox())?.height ?? 0)).toBeLessThan(maxDrawerHeight)
+  await expect.poll(async () => Math.round((await drawer.boundingBox())?.height ?? 0)).toBeLessThanOrEqual(maxDrawerHeight)
   await expect.poll(async () => {
     const drawerBox = await drawer.boundingBox()
     const pathBox = await routePath.boundingBox()

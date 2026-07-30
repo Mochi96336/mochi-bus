@@ -41,7 +41,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
   }
 
   function renderSettled(view: DrawerView): void {
-    const session = options.renderDrawer({ ...view, preserveDesktopHeight: true })
+    const session = options.renderDrawer({ ...view, size: 'standard', preserveDesktopHeight: true })
     const frame = requestAnimationFrame(() => session.releasePreservedHeight())
     session.onDispose(() => cancelAnimationFrame(frame))
   }
@@ -51,6 +51,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
       options.renderDrawer({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
+        size: 'standard',
         preserveDesktopHeight: true,
         header: drawerHeader(place, '正在取得路線與到站時間'),
         content: [createPlaceRouteLoadingList()],

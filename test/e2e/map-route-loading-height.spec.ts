@@ -74,11 +74,12 @@ async function mockMap(page: Page, routeGate: Promise<void>, variantCount = 1) {
 async function catalogueHeight(page: Page): Promise<number> {
   const drawer = page.locator('#map-drawer')
   await expect(drawer).toHaveAttribute('data-mode', 'map-list')
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer.locator('.map-route-button')).toHaveCount(routeNames.length)
   return drawer.evaluate((element) => element.getBoundingClientRect().height)
 }
 
-test('keeps the mobile route drawer height stable while route data is loading', async ({ page }) => {
+test('keeps the mobile route drawer in the standard size while route data is loading', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -91,27 +92,35 @@ test('keeps the mobile route drawer height stable while route data is loading', 
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
+    await expect(drawer).toHaveAttribute('data-size', 'standard')
 
     const loading = await drawer.evaluate((element) => ({
       height: element.getBoundingClientRect().height,
       minHeight: element.style.minHeight,
     }))
     expect(Math.abs(loading.height - beforeHeight)).toBeLessThanOrEqual(1)
-    expect(loading.minHeight).not.toBe('')
+    expect(loading.minHeight).toBe('')
 
     await page.setViewportSize({ width: 844, height: 390 })
-    await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).toBe('')
+    await expect.poll(() => drawer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(beforeHeight)
+    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    await expect(drawer).toHaveJSProperty('style.minHeight', '')
+
     await page.setViewportSize({ width: 390, height: 844 })
-    await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).not.toBe('')
+    await expect.poll(async () => {
+      const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+      return Math.abs(height - beforeHeight)
+    }).toBeLessThanOrEqual(1)
   } finally {
     releaseRoute()
   }
 
   await expect(drawer.locator('.route-service-summary')).toBeVisible()
-  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).toBe('')
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('keeps the catalogue height through loading before showing a variant picker', async ({ page }) => {
+test('keeps the standard catalogue size through loading before showing a variant picker', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -124,6 +133,7 @@ test('keeps the catalogue height through loading before showing a variant picker
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
+    await expect(drawer).toHaveAttribute('data-size', 'standard')
     await expect.poll(async () => {
       const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
       return Math.abs(height - beforeHeight) <= 1
@@ -133,6 +143,7 @@ test('keeps the catalogue height through loading before showing a variant picker
   }
 
   await expect(drawer).toHaveAttribute('data-mode', 'map-list')
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer.locator('.variant-button')).toHaveCount(2)
-  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight)).toBe('')
+  await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })

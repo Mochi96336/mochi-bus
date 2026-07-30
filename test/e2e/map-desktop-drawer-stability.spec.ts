@@ -31,6 +31,7 @@ type DrawerFrame = {
   height: number
   view: string
   mode: string
+  size: string
   phase: string
 }
 
@@ -106,7 +107,7 @@ async function mockBootstrap(page: Page, routeCount = 80) {
 
 async function startDrawerFrameCapture(page: Page) {
   await page.evaluate(() => {
-    type Frame = { top: number; height: number; view: string; mode: string; phase: string }
+    type Frame = { top: number; height: number; view: string; mode: string; size: string; phase: string }
     type FrameStore = { active: boolean; frames: Frame[] }
     const store: FrameStore = { active: true, frames: [] }
     ;(window as Window & { __drawerFrameStore?: FrameStore }).__drawerFrameStore = store
@@ -129,6 +130,7 @@ async function startDrawerFrameCapture(page: Page) {
         height: rect.height,
         view: drawer.dataset.view ?? '',
         mode: drawer.dataset.mode ?? '',
+        size: drawer.dataset.size ?? '',
         phase,
       })
       window.requestAnimationFrame(sample)
@@ -139,7 +141,7 @@ async function startDrawerFrameCapture(page: Page) {
 
 async function stopDrawerFrameCapture(page: Page): Promise<DrawerFrame[]> {
   return page.evaluate(() => {
-    type Frame = { top: number; height: number; view: string; mode: string; phase: string }
+    type Frame = { top: number; height: number; view: string; mode: string; size: string; phase: string }
     type FrameStore = { active: boolean; frames: Frame[] }
     const store = (window as Window & { __drawerFrameStore?: FrameStore }).__drawerFrameStore!
     store.active = false
@@ -147,9 +149,10 @@ async function stopDrawerFrameCapture(page: Page): Promise<DrawerFrame[]> {
   })
 }
 
-function expectStableFrames(frames: DrawerFrame[], phases: string[]) {
+function expectStableFrames(frames: DrawerFrame[], phases: string[], size = 'standard') {
   const selected = frames.filter((frame) => phases.includes(frame.phase))
   expect(new Set(selected.map((frame) => frame.phase))).toEqual(new Set(phases))
+  expect(new Set(selected.map((frame) => frame.size))).toEqual(new Set([size]))
   expect(Math.max(...selected.map((frame) => frame.top)) - Math.min(...selected.map((frame) => frame.top))).toBeLessThanOrEqual(1)
   expect(Math.max(...selected.map((frame) => frame.height)) - Math.min(...selected.map((frame) => frame.height))).toBeLessThanOrEqual(1)
 }
@@ -172,7 +175,7 @@ async function clickDesktopStageCenter(page: Page) {
   await page.mouse.click(targetX, targetY)
 }
 
-test('keeps the current drawer stable while auto-preview resolves, then opens place loading', async ({ page }) => {
+test('keeps one standard drawer size while auto-preview resolves into place results', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const nearby = deferred()
   const nearbyRequested = deferred()
@@ -211,6 +214,7 @@ test('keeps the current drawer stable while auto-preview resolves, then opens pl
   const drawer = page.locator('#map-drawer')
   await expect(drawer.getByRole('heading', { name: city.name })).toBeVisible()
   await expect(drawer).toHaveAttribute('data-mode', 'map-list')
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   await startDrawerFrameCapture(page)
@@ -238,13 +242,13 @@ test('keeps the current drawer stable while auto-preview resolves, then opens pl
   await page.waitForTimeout(120)
 
   const frames = await stopDrawerFrameCapture(page)
-  expectStableFrames(frames, ['catalogue', 'place-loading'])
+  expectStableFrames(frames, ['catalogue', 'place-loading', 'place-results'])
   expect(frames.some((frame) => frame.phase === 'nearby-loading')).toBe(false)
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('releases the desktop height for non-auto-preview nearby results opened from the URL', async ({ page }) => {
+test('keeps URL-opened nearby loading and results at the standard size', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const nearby = deferred()
   const nearbyRequested = deferred()
@@ -259,18 +263,21 @@ test('releases the desktop height for non-auto-preview nearby results opened fro
   const drawer = page.locator('#map-drawer')
   await nearbyRequested.promise
   await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
-  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight.length > 0)).toBe(true)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveJSProperty('style.height', '')
+  await expect(drawer).toHaveJSProperty('style.minHeight', '')
   const loadingHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
 
   nearby.release()
   await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   const resolvedHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-  expect(resolvedHeight).toBeLessThan(loadingHeight)
+  expect(Math.abs(resolvedHeight - loadingHeight)).toBeLessThanOrEqual(1)
 })
 
-test('keeps a desktop full-network route click stable through loading without fixing the final route card height', async ({ page }) => {
+test('keeps a full-network route click at one standard size through loading and result', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
   const routeRequested = deferred()
@@ -303,27 +310,30 @@ test('keeps a desktop full-network route click stable through loading without fi
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
   await expect(drawer).toHaveAttribute('data-mode', 'compact')
-  await expect.poll(() => drawer.evaluate((element) => element.style.minHeight.length > 0)).toBe(true)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveJSProperty('style.minHeight', '')
   await page.waitForTimeout(100)
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
   await expect(drawer.locator('.route-service-summary')).toHaveCount(0)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await page.waitForTimeout(120)
 
   const frames = await stopDrawerFrameCapture(page)
-  expectStableFrames(frames, ['catalogue', 'route-loading'])
+  expectStableFrames(frames, ['catalogue', 'route-loading', 'route-results'])
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('keeps a sparse desktop catalogue content-sized outside transitions', async ({ page }) => {
+test('keeps a sparse desktop catalogue in the standard workspace', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await mockBootstrap(page, 1)
   await page.goto('/map?city=Tainan')
 
   const drawer = page.locator('#map-drawer')
   await expect(drawer.getByRole('heading', { name: city.name })).toBeVisible()
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   const geometry = await drawer.evaluate((element) => ({
     height: element.getBoundingClientRect().height,
     viewportHeight: window.innerHeight,
@@ -332,5 +342,6 @@ test('keeps a sparse desktop catalogue content-sized outside transitions', async
   }))
   expect(geometry.inlineHeight).toBe('')
   expect(geometry.inlineMinHeight).toBe('')
-  expect(geometry.height).toBeLessThan(geometry.viewportHeight * 0.5)
+  expect(geometry.height).toBeLessThanOrEqual(geometry.viewportHeight * 0.5)
+  expect(geometry.height).toBeGreaterThan(geometry.viewportHeight * 0.4)
 })
