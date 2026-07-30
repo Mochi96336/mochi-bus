@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  drawerCameraTransitionForNavigation,
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
@@ -17,6 +18,13 @@ describe('drawer view transitions', () => {
   it('animates navigation to another view or identity', () => {
     expect(shouldAnimateDrawerTransition('catalogue:CHI', 'route:CHI:7211')).toBe(true)
     expect(shouldAnimateDrawerTransition('place:CHI:stop-1', 'place:CHI:stop-2')).toBe(true)
+  })
+
+  it('preserves the camera when either navigation endpoint owns an explicit camera', () => {
+    expect(drawerCameraTransitionForNavigation('predict', 'predict')).toBe('predict')
+    expect(drawerCameraTransitionForNavigation('predict', 'preserve')).toBe('preserve')
+    expect(drawerCameraTransitionForNavigation('preserve', 'predict')).toBe('preserve')
+    expect(drawerCameraTransitionForNavigation('preserve', 'preserve')).toBe('preserve')
   })
 
   it('keeps scroll position when refreshing the same view and resets it on navigation', () => {
