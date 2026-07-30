@@ -60,12 +60,21 @@ async function mockMap(page: Page, routeGate: Promise<void>, variantCount = 1) {
   await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({
     json: {
       timetable: {
-        mode: 'none',
+        mode: 'departure',
         selectedStop: null,
-        departureStop: null,
+        departureStop: { stopUid: 'S1', stopName: '臺南火車站', sequence: 1 },
         stops: [],
         timedStopCount: 0,
-        services: [],
+        services: [{
+          id: 'weekday',
+          label: '平日',
+          days: [1, 2, 3, 4, 5],
+          today: true,
+          times: ['06:10', '07:10'],
+          periods: [],
+          firstTime: '06:10',
+          lastTime: '07:10',
+        }],
       },
     },
   }))
