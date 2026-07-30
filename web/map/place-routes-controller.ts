@@ -141,6 +141,9 @@ export function createPlaceRoutesController(
       }
       options.onRoutes(presentation)
       routesPresented = true
+      // Arrivals are the core result. History, title and loading status complete now;
+      // route shapes remain auxiliary and may continue appearing in the background.
+      options.onComplete(presentation)
 
       const previewTasks = routes.slice(0, previewLimit).map(async (entry) => {
         let variant: RouteMapVariant | undefined
@@ -164,8 +167,6 @@ export function createPlaceRoutesController(
       })
       await Promise.all(previewTasks)
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
-
-      options.onComplete(presentation)
       return true
     } catch (error) {
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
