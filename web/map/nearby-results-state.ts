@@ -1,4 +1,5 @@
 import type { NearbyPlace } from './map-api-client'
+import { publishNearbyCameraCancel } from './nearby-map-events'
 import type { NearbyPlacesPresentation } from './nearby-places-controller'
 import type { NearbyOrigin } from './nearby-places-view'
 
@@ -22,36 +23,60 @@ export type NearbyResultsState = {
 }
 
 export function createNearbyResultsState(options: NearbyResultsStateOptions): NearbyResultsState {
-  let origin: NearbyResultsSnapshot['origin'] | undefined
-  let places: NearbyPlace[] = []
+  let committed: NearbyResultsSnapshot | undefined
+  let pendingOrigin: NearbyResultsSnapshot['origin'] | undefined
 
-  function renderMap(): void {
-    if (!origin) return
-    options.renderPlaces(origin, places)
+  function cloneSnapshot(snapshot: NearbyResultsSnapshot): NearbyResultsSnapshot {
+    return { origin: [...snapshot.origin], places: [...snapshot.places] }
+  }
+
+  function displaySnapshot(): NearbyResultsSnapshot | undefined {
+    if (committed) return committed
+    if (pendingOrigin) return { origin: [...pendingOrigin], places: [] }
+  }
+
+  function renderSnapshot(snapshot: NearbyResultsSnapshot, allowRequestSettle: boolean): void {
+    // Cached/back-navigation renders are not request completions. Retire any unfinished
+    // transition before the map surface republishes its nearest-place settle event.
+    if (!allowRequestSettle) publishNearbyCameraCancel()
+    options.renderPlaces(snapshot.origin, snapshot.places)
     options.renderEndpoints()
   }
 
   function store(presentation: NearbyPlacesPresentation): void {
-    origin = [...presentation.origin]
-    places = presentation.places
+    committed = {
+      origin: [...presentation.origin],
+      places: [...presentation.places],
+    }
+    pendingOrigin = undefined
   }
 
   return {
+    // Loading owns a pending origin, not half of the last successful snapshot. If the
+    // request fails, returning to Nearby either restores the previous complete result
+    // or shows an empty result at the first requested origin.
     setOrigin(nextOrigin) {
-      origin = [...nextOrigin]
+      pendingOrigin = [...nextOrigin]
     },
     store,
     storeAndRenderMap(presentation) {
       store(presentation)
-      renderMap()
+      if (committed) renderSnapshot(committed, true)
     },
     replace(nextOrigin, nextPlaces) {
-      origin = [...nextOrigin]
-      places = nextPlaces
+      committed = { origin: [...nextOrigin], places: [...nextPlaces] }
+      pendingOrigin = undefined
     },
     current() {
-      return origin ? { origin, places } : undefined
+      const snapshot = displaySnapshot()
+      return snapshot ? cloneSnapshot(snapshot) : undefined
     },
-    renderMap,
+    renderMap() {
+      const snapshot = displaySnapshot()
+      if (!snapshot) return
+      if (!committed) committed = cloneSnapshot(snapshot)
+      pendingOrigin = undefined
+      renderSnapshot(committed, false)
+    },
   }
 }
