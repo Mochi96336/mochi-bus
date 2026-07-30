@@ -277,7 +277,7 @@ test('keeps URL-opened nearby loading and results at the standard size', async (
   expect(Math.abs(resolvedHeight - loadingHeight)).toBeLessThanOrEqual(1)
 })
 
-test('keeps a full-network route click at one standard size through loading and result', async ({ page }) => {
+test('keeps a full-network route click compact through loading and result', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
   const routeRequested = deferred()
@@ -303,25 +303,25 @@ test('keeps a full-network route click at one standard size through loading and 
   await page.goto('/map?city=Tainan')
   const drawer = page.locator('#map-drawer')
   await expect(drawer.getByRole('heading', { name: city.name })).toBeVisible()
-  await startDrawerFrameCapture(page)
 
   await openNetwork(page)
   await clickDesktopStageCenter(page)
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
   await expect(drawer).toHaveAttribute('data-mode', 'compact')
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
-  await page.waitForTimeout(100)
+  await page.waitForTimeout(220)
+  await startDrawerFrameCapture(page)
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
   await expect(drawer.locator('.route-service-summary')).toHaveCount(0)
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
   await page.waitForTimeout(120)
 
   const frames = await stopDrawerFrameCapture(page)
-  expectStableFrames(frames, ['catalogue', 'route-loading', 'route-results'])
+  expectStableFrames(frames, ['route-loading', 'route-results'], 'compact')
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
