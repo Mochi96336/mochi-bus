@@ -2,7 +2,7 @@ import { attachScrollFade } from '../lib/scroll-fade'
 import './drawer-size.css'
 
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
-export type DrawerSize = 'content' | 'standard' | 'expanded'
+export type DrawerSize = 'content' | 'compact' | 'standard' | 'tall' | 'expanded'
 
 const DRAWER_SIZE_MEMORY_LIMIT = 32
 
