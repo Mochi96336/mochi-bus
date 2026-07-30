@@ -55,7 +55,6 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
         size: 'standard',
-        preserveDesktopHeight: true,
         header: drawerHeader('附近站牌', '正在搜尋附近站牌', backLabel, onBack),
         content: [createNearbyPlaceLoadingList()],
       })
@@ -77,11 +76,10 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         button.addEventListener('click', () => options.onOpenPlace(place))
         list.appendChild(button)
       }
-      const session = options.renderDrawer({
+      options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
         size: 'standard',
-        preserveDesktopHeight: places.length > 0,
         header: drawerHeader(
           '附近站牌',
           places.length
@@ -93,10 +91,6 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
         content: [list],
         footer: [options.createTripModeButton()],
       })
-      if (places.length) {
-        const frame = requestAnimationFrame(() => session.releasePreservedHeight())
-        session.onDispose(() => cancelAnimationFrame(frame))
-      }
     },
 
     renderError({ cityCode, origin, error, backLabel, onBack, onRetry }) {

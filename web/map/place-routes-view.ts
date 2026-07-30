@@ -6,7 +6,8 @@ import type {
   PlaceRoutesPresentation,
   PlaceRouteStart,
 } from './place-routes-controller'
-import type { DrawerView, DrawerViewSession } from './drawer-view'
+import type { DrawerSize, DrawerView, DrawerViewSession } from './drawer-view'
+import { placeRoutesDrawerSize } from './drawer-content-size'
 import { createPlaceRouteLoadingList } from './loading-skeleton'
 
 type PlaceRoutesViewOptions = {
@@ -40,10 +41,8 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
     return () => options.onRetry(place)
   }
 
-  function renderSettled(view: DrawerView): void {
-    const session = options.renderDrawer({ ...view, size: 'standard', preserveDesktopHeight: true })
-    const frame = requestAnimationFrame(() => session.releasePreservedHeight())
-    session.onDispose(() => cancelAnimationFrame(frame))
+  function renderSettled(view: DrawerView, size?: DrawerSize): void {
+    options.renderDrawer(size ? { ...view, size } : view)
   }
 
   return {
@@ -51,8 +50,6 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
       options.renderDrawer({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
-        size: 'standard',
-        preserveDesktopHeight: true,
         header: drawerHeader(place, '正在取得路線與到站時間'),
         content: [createPlaceRouteLoadingList()],
       })
@@ -108,7 +105,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
             : []),
           list,
         ],
-      })
+      }, placeRoutesDrawerSize(routes.length))
     },
 
     renderError({ cityCode, place, error }) {

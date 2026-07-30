@@ -2,13 +2,14 @@ import { attachScrollFade } from '../lib/scroll-fade'
 import './drawer-size.css'
 
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
-export type DrawerSize = 'content' | 'standard' | 'expanded'
+export type DrawerSize = 'content' | 'compact' | 'standard' | 'tall' | 'expanded'
 
 const DRAWER_SIZE_MEMORY_LIMIT = 32
 
 export type DrawerView =
   | {
       key: string
+      sizeKey?: string
       mode: 'compact'
       size?: DrawerSize
       preserveMobileHeight?: boolean
@@ -17,6 +18,7 @@ export type DrawerView =
     }
   | {
       key: string
+      sizeKey?: string
       mode: DrawerScrollableMode
       size?: DrawerSize
       preserveMobileHeight?: boolean
@@ -51,12 +53,8 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
 
   const render = (view: DrawerView): DrawerViewSession => {
     const previousViewKey = currentViewKey
-    const nextSize = drawerSizeForTransition(
-      view.size,
-      view.mode,
-      Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
-      sizesByViewKey.get(view.key),
-    )
+    const sizeKey = drawerSizeMemoryKey(view)
+    const nextSize = drawerSizeForView(view, sizesByViewKey.get(sizeKey))
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
       view.key,
@@ -70,7 +68,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
     currentViewKey = view.key
-    rememberDrawerSize(sizesByViewKey, view.key, nextSize)
+    rememberDrawerSize(sizesByViewKey, sizeKey, nextSize)
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
@@ -145,6 +143,26 @@ export function drawerScrollTopForTransition(
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
 }
 
+export function drawerSizeMemoryKey(view: DrawerView): string {
+  return view.sizeKey ?? view.key
+}
+
+export function drawerSizeForView(
+  view: DrawerView,
+  rememberedSize: DrawerSize | undefined,
+): DrawerSize {
+  // A view key names the navigation workspace. Catalogue loading, failure, and the final
+  // route list share that workspace even though their temporary content modes differ.
+  const workspaceSize = view.size
+    ?? (view.key.startsWith('catalogue:') ? 'standard' : undefined)
+  return drawerSizeForTransition(
+    workspaceSize,
+    view.mode,
+    Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
+    rememberedSize,
+  )
+}
+
 export function drawerSizeForTransition(
   explicitSize: DrawerSize | undefined,
   mode: DrawerView['mode'],
@@ -152,9 +170,8 @@ export function drawerSizeForTransition(
   rememberedSize: DrawerSize | undefined,
 ): DrawerSize {
   if (explicitSize) return explicitSize
-  if (mode === 'timetable') return 'expanded'
-  if (mode === 'map-list' || mode === 'results') return 'standard'
   if (rememberedSize && rememberedSize !== 'content') return rememberedSize
+  if (mode === 'map-list' || mode === 'results' || mode === 'timetable') return 'standard'
   if (preserveHeight) return 'standard'
   return 'content'
 }

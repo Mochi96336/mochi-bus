@@ -178,11 +178,6 @@ beforeEach(() => {
   vi.stubGlobal('document', {
     createElement: (tagName: string) => element(tagName),
   })
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-    callback(0)
-    return 1
-  })
-  vi.stubGlobal('cancelAnimationFrame', vi.fn())
 })
 
 afterEach(() => {
@@ -190,12 +185,13 @@ afterEach(() => {
 })
 
 describe('Place routes view', () => {
-  it('renders the three-row loading skeleton without owning status or navigation', () => {
+  it('renders the three-row loading skeleton without overriding a remembered workspace size', () => {
     const harness = createHarness()
     harness.view.renderLoading({ cityCode: 'Taipei', place: place() })
 
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('place:Taipei:PLACE')
+    expect(drawer.size).toBeUndefined()
     const loading = drawer.content[0] as unknown as FakeElement
     expect(loading.classList.contains('map-loading-list')).toBe(true)
     expect(loading.children).toHaveLength(3)
@@ -204,7 +200,7 @@ describe('Place routes view', () => {
     expect(harness.onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders route color, ETA tone, stale freshness, favorite control, warning, and route callback', () => {
+  it('renders an ordinary stop at standard size with route color, ETA and actions', () => {
     const harness = createHarness()
     const staleRoute = route({ source: 'stale-realtime', etaLabel: '2 分', estimateSeconds: 120 })
     const presentation: PlaceRoutesPresentation = {
@@ -217,9 +213,10 @@ describe('Place routes view', () => {
     harness.view.renderRoutes(presentation)
 
     const drawer = scrollable(harness.rendered())
-    expect(drawer.preserveDesktopHeight).toBe(true)
-    expect(harness.releasePreservedHeight).toHaveBeenCalledOnce()
-    expect(harness.onDispose).toHaveBeenCalledOnce()
+    expect(drawer.size).toBe('standard')
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
+    expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
+    expect(harness.onDispose).not.toHaveBeenCalled()
     expect(harness.createDegradedNotice).toHaveBeenCalledWith(
       tdxWarningMessages['tdx-rate-limit'],
       expect.any(Function),
@@ -239,7 +236,19 @@ describe('Place routes view', () => {
     expect(harness.onRetry).toHaveBeenCalledWith(place())
   })
 
-  it('renders an error with credential recovery and returns the status message', () => {
+  it('promotes a busy stop to the tall workspace', () => {
+    const harness = createHarness()
+    const routes = Array.from({ length: 8 }, (_, index) => ({
+      route: route({ routeUid: `R${index}`, routeName: String(index + 1), variantKey: `R${index}:0` }),
+      color: '#123456',
+    }))
+
+    harness.view.renderRoutes({ cityCode: 'Taipei', place: place(), routes, warning: undefined })
+
+    expect(scrollable(harness.rendered()).size).toBe('tall')
+  })
+
+  it('renders an error without replacing the remembered workspace size', () => {
     const harness = createHarness()
     const error = new Error('credential')
 
@@ -247,9 +256,10 @@ describe('Place routes view', () => {
 
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('place:Taipei:PLACE')
-    expect(drawer.preserveDesktopHeight).toBe(true)
-    expect(harness.releasePreservedHeight).toHaveBeenCalledOnce()
-    expect(harness.onDispose).toHaveBeenCalledOnce()
+    expect(drawer.size).toBeUndefined()
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
+    expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
+    expect(harness.onDispose).not.toHaveBeenCalled()
     expect(harness.createDegradedNotice).toHaveBeenCalledWith('credential', expect.any(Function), true)
     harness.createDegradedNotice.mock.calls[0][1]()
     expect(harness.onRetry).toHaveBeenCalledWith(place())

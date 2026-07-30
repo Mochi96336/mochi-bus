@@ -7,14 +7,16 @@ describe('drawer size states', () => {
     expect(drawerSizeForTransition('standard', 'compact', false, undefined)).toBe('standard')
   })
 
-  it('maps scrollable workspaces to stable size states', () => {
+  it('maps unknown scrollable workspaces to the neutral standard size', () => {
     expect(drawerSizeForTransition(undefined, 'map-list', false, undefined)).toBe('standard')
     expect(drawerSizeForTransition(undefined, 'results', false, undefined)).toBe('standard')
-    expect(drawerSizeForTransition(undefined, 'timetable', false, undefined)).toBe('expanded')
+    expect(drawerSizeForTransition(undefined, 'timetable', false, undefined)).toBe('standard')
   })
 
-  it('restores a remembered non-content size after visiting another workspace', () => {
+  it('restores a remembered non-content size before applying the mode fallback', () => {
     expect(drawerSizeForTransition(undefined, 'compact', false, 'standard')).toBe('standard')
+    expect(drawerSizeForTransition(undefined, 'map-list', false, 'tall')).toBe('tall')
+    expect(drawerSizeForTransition(undefined, 'timetable', false, 'compact')).toBe('compact')
   })
 
   it('treats legacy preserve-height loading views as standard workspaces', () => {
