@@ -96,6 +96,7 @@ export function createTripResultsView(options: TripResultsViewOptions): TripResu
     options.renderDrawer({
       key: `trip-results:${state.from.place.placeId}:${state.to.place.placeId}`,
       mode: 'results',
+      cameraTransition: 'preserve',
       header: [
         options.createBackButton('重新選目的地', options.onResumeDestination),
         options.createHeading(
@@ -192,6 +193,7 @@ export function createTripResultsView(options: TripResultsViewOptions): TripResu
     options.renderDrawer({
       key: `trip-results:${state.from.place.placeId}:${state.to.place.placeId}`,
       mode: 'results',
+      cameraTransition: 'preserve',
       header: [
         options.createBackButton('重新選目的地', options.onResumeDestination),
         options.createHeading(
@@ -214,6 +216,7 @@ export function createTripResultsView(options: TripResultsViewOptions): TripResu
       options.renderDrawer({
         key: `trip-results:${view.context.from.placeId}:${view.context.to.placeId}`,
         mode: 'compact',
+        cameraTransition: 'preserve',
         content: [
           options.createBackButton('重新選目的地', options.onResumeDestination),
           options.createHeading(
