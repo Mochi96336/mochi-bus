@@ -39,10 +39,7 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
 
   function emphasizeNearest(marker: L.CircleMarker): L.CircleMarker {
     marker.setRadius(marker.getRadius() * NEAREST_RADIUS_SCALE)
-    marker.setStyle({
-      weight: NEAREST_STROKE_WEIGHT,
-      opacity: NEAREST_STROKE_OPACITY,
-    })
+    marker.setStyle({ weight: NEAREST_STROKE_WEIGHT, opacity: NEAREST_STROKE_OPACITY })
     return marker
   }
 
