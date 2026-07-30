@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
+  drawerSizeForView,
+  drawerSizeMemoryKey,
   shouldAnimateDrawerTransition,
   shouldPreserveDrawerHeight,
 } from './drawer-view'
@@ -22,6 +24,79 @@ describe('drawer view transitions', () => {
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:C', 240)).toBe(0)
     expect(drawerScrollTopForTransition(undefined, 'trip-results:A:B', 240)).toBe(0)
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:B', -20)).toBe(0)
+  })
+
+  it('uses an explicit size workspace without changing content identity', () => {
+    const sizeKey = 'timetable:ChiayiCounty:CHI-7211:0'
+    const firstStop = {
+      key: `${sizeKey}:C1`,
+      sizeKey,
+      mode: 'timetable' as const,
+      header: [],
+      content: [],
+    }
+    const secondStop = {
+      key: `${sizeKey}:C2`,
+      sizeKey,
+      mode: 'timetable' as const,
+      header: [],
+      content: [],
+    }
+
+    expect(drawerSizeMemoryKey(firstStop)).toBe(sizeKey)
+    expect(drawerSizeMemoryKey(secondStop)).toBe(sizeKey)
+    expect(drawerScrollTopForTransition(firstStop.key, secondStop.key, 240)).toBe(0)
+    expect(drawerSizeMemoryKey({ ...secondStop, sizeKey: undefined })).toBe(secondStop.key)
+  })
+
+  it('keeps catalogue loading and failure in the standard workspace', () => {
+    expect(drawerSizeForView({
+      key: 'catalogue:Tainan',
+      mode: 'compact',
+      content: [],
+    }, undefined)).toBe('standard')
+    expect(drawerSizeForView({
+      key: 'catalogue:Tainan',
+      mode: 'compact',
+      size: 'compact',
+      content: [],
+    }, undefined)).toBe('compact')
+    expect(drawerSizeForView({
+      key: 'region:south',
+      mode: 'compact',
+      content: [],
+    }, undefined)).toBe('content')
+  })
+
+  it('restores the remembered workspace before falling back from a content mode', () => {
+    expect(drawerSizeForView({
+      key: 'place:Tainan:busy-stop',
+      mode: 'map-list',
+      header: [],
+      content: [],
+    }, 'tall')).toBe('tall')
+    expect(drawerSizeForView({
+      key: 'timetable:Tainan:R1:',
+      mode: 'timetable',
+      header: [],
+      content: [],
+    }, 'compact')).toBe('compact')
+    expect(drawerSizeForView({
+      key: 'timetable:Tainan:R2:',
+      mode: 'timetable',
+      header: [],
+      content: [],
+    }, undefined)).toBe('standard')
+  })
+
+  it('lets an explicit final size replace a remembered loading size', () => {
+    expect(drawerSizeForView({
+      key: 'place:Tainan:busy-stop',
+      mode: 'map-list',
+      size: 'standard',
+      header: [],
+      content: [],
+    }, 'tall')).toBe('standard')
   })
 
   it('uses the previous measured height only for an explicitly preserved transition', () => {

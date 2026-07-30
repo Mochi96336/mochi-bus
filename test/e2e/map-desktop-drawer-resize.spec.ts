@@ -100,7 +100,7 @@ async function clickDesktopStageCenter(page: Page) {
   await page.mouse.click(targetX, targetY)
 }
 
-test('recomputes the standard desktop drawer size when the viewport shrinks during route loading', async ({ page }) => {
+test('recomputes the compact desktop drawer size when the viewport shrinks during route loading', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
   const routeRequested = deferred()
@@ -131,7 +131,7 @@ test('recomputes the standard desktop drawer size when the viewport shrinks duri
   await clickDesktopStageCenter(page)
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   const beforeResize = await drawer.evaluate((element) => element.getBoundingClientRect().height)
 
@@ -159,6 +159,6 @@ test('recomputes the standard desktop drawer size when the viewport shrinks duri
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })

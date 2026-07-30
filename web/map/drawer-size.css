@@ -1,19 +1,31 @@
 :root {
+  --map-drawer-size-compact: min(36vh, 300px);
   --map-drawer-size-standard: min(44vh, 420px);
+  --map-drawer-size-tall: min(56vh, 560px);
   --map-drawer-size-expanded: min(64vh, 680px);
 }
 
 /* Drawer size is a navigation state, not a measurement of whichever async view rendered last. */
-#map-drawer[data-size="content"] {
+.map-drawer[data-size="content"] {
   height: auto;
 }
 
-#map-drawer[data-size="standard"] {
+.map-drawer[data-size="compact"] {
+  height: var(--map-drawer-size-compact);
+  max-height: var(--map-drawer-size-compact);
+}
+
+.map-drawer[data-size="standard"] {
   height: var(--map-drawer-size-standard);
   max-height: var(--map-drawer-size-standard);
 }
 
-#map-drawer[data-size="expanded"] {
+.map-drawer[data-size="tall"] {
+  height: var(--map-drawer-size-tall);
+  max-height: var(--map-drawer-size-tall);
+}
+
+.map-drawer[data-size="expanded"] {
   height: var(--map-drawer-size-expanded);
   max-height: var(--map-drawer-size-expanded);
 }
@@ -29,6 +41,8 @@
         - var(--map-drawer-mobile-bottom, 10px)
       )
     );
+    --map-drawer-size-compact: var(--map-drawer-size-standard);
+    --map-drawer-size-tall: var(--map-drawer-size-standard);
     --map-drawer-size-expanded: min(
       72dvh,
       42rem,
@@ -41,16 +55,32 @@
   }
 }
 
-@media (max-width: 640px) and (max-height: 520px) and (min-aspect-ratio: 1 / 1) {
+/* Landscape uses continuous minimums rather than a hard height breakpoint. The formulas
+   preserve usable route content around 390 px tall, stay continuous across 640/641 px and
+   520/521 px, then naturally rejoin the regular vh-based desktop sizes. */
+@media (min-aspect-ratio: 1 / 1) {
   :root {
-    --map-drawer-size-standard: min(
-      60dvh,
-      calc(
-        100dvh
-        - var(--map-mobile-top-clearance, 66px)
-        - var(--map-drawer-mobile-bottom, 10px)
-      )
+    --map-drawer-landscape-top-clearance: max(66px, calc(env(safe-area-inset-top) + 48px));
+    --map-drawer-landscape-available-height: calc(
+      100dvh
+      - var(--map-drawer-landscape-top-clearance)
+      - var(--map-drawer-mobile-bottom, 10px)
     );
-    --map-drawer-size-expanded: var(--map-drawer-size-standard);
+    --map-drawer-size-compact: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(260px, 36dvh, 300px)
+    );
+    --map-drawer-size-standard: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(300px, 44dvh, 420px)
+    );
+    --map-drawer-size-tall: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(340px, 56dvh, 560px)
+    );
+    --map-drawer-size-expanded: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(380px, 64dvh, 680px)
+    );
   }
 }

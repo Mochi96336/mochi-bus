@@ -1,5 +1,6 @@
 import L, { type GeoJSON as LeafletGeoJSON } from 'leaflet'
 import type { DrawerView, DrawerViewSession } from './drawer-view'
+import { routeVariantsDrawerSize, timetableDrawerSize } from './drawer-content-size'
 import type {
   RouteMapVariant,
   RouteTimetable,
@@ -161,8 +162,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
-      preserveMobileHeight: true,
-      preserveDesktopHeight: true,
+      size: 'compact',
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, '正在拼起路線與站牌…'),
@@ -174,6 +174,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
+      size: 'compact',
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, view.message),
@@ -244,6 +245,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `route-variants:${view.cityCode}:${view.routeName}`,
       mode: 'map-list',
+      size: routeVariantsDrawerSize(view.variants.length),
       header: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, '同一路線可能穿過不同街廓，點線或點列表選一條。'),
@@ -287,6 +289,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `route:${view.cityCode}:${view.variant.routeName}`,
       mode: 'compact',
+      size: 'compact',
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.variant.routeName, `${view.variant.label} · ${view.variant.stops.features.length} 站`),
@@ -301,6 +304,14 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     return timetableSummary
   }
 
+  function timetableDrawerKeys(cityCode: string, variantKey: string, stopUid: string | undefined) {
+    const sizeKey = `timetable:${cityCode}:${variantKey}`
+    return {
+      key: `${sizeKey}:${stopUid ?? ''}`,
+      sizeKey,
+    }
+  }
+
   function showTimetableLoading(
     cityCode: string,
     variant: RouteMapVariant,
@@ -308,7 +319,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     onBack: () => void,
   ): void {
     options.renderDrawer({
-      key: `timetable:${cityCode}:${variant.variantKey}:${stopUid ?? ""}`,
+      ...timetableDrawerKeys(cityCode, variant.variantKey, stopUid),
       mode: 'timetable',
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
@@ -327,7 +338,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     onRetry: () => void,
   ): void {
     options.renderDrawer({
-      key: `timetable:${cityCode}:${variant.variantKey}:${stopUid ?? ""}`,
+      ...timetableDrawerKeys(cityCode, variant.variantKey, stopUid),
       mode: 'timetable',
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
@@ -350,13 +361,19 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
 
   function showTimetable(view: TimetableViewOptions): { available: boolean } {
     const available = view.timetable.mode !== 'none' && view.timetable.services.length > 0
+    const drawerKeys = timetableDrawerKeys(
+      view.cityCode,
+      view.variant.variantKey,
+      view.timetable.selectedStop?.stopUid,
+    )
     if (!available) {
       const panel = document.createElement('div')
       panel.className = 'timetable-panel'
       panel.appendChild(options.paragraph('這個方向目前沒有公開的表定班次資料。'))
       options.renderDrawer({
-        key: `timetable:${view.cityCode}:${view.variant.variantKey}:${view.timetable.selectedStop?.stopUid ?? ""}`,
+        ...drawerKeys,
         mode: 'timetable',
+        size: 'compact',
         header: [
           options.drawerBack(`返回 ${view.variant.routeName}`, view.onBack),
           options.heading(view.variant.routeName, `時刻 · ${view.variant.label}`),
@@ -368,8 +385,9 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
 
     const panel = createTimetablePanel(view.timetable, view.onSelectStop)
     options.renderDrawer({
-      key: `timetable:${view.cityCode}:${view.variant.variantKey}:${view.timetable.selectedStop?.stopUid ?? ""}`,
+      ...drawerKeys,
       mode: 'timetable',
+      size: timetableDrawerSize(view.timetable),
       header: [
         options.drawerBack(`返回 ${view.variant.routeName}`, view.onBack),
         options.heading(view.variant.routeName, `時刻 · ${view.variant.label}`),

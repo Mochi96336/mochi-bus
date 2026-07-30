@@ -62,16 +62,6 @@ type FakeSession = {
   session: DrawerViewSession
 }
 
-let nextFrameId = 1
-let frameCallbacks = new Map<number, FrameRequestCallback>()
-
-function runAnimationFrames() {
-  for (const [frameId, callback] of [...frameCallbacks]) {
-    frameCallbacks.delete(frameId)
-    callback(0)
-  }
-}
-
 function element(tagName = 'div'): FakeElement {
   return new FakeElement(tagName)
 }
@@ -146,16 +136,7 @@ function scrollable(view: DrawerView | undefined): Exclude<DrawerView, { mode: '
 const origin: NearbyOrigin = [25.01234, 121.56789]
 
 beforeEach(() => {
-  nextFrameId = 1
-  frameCallbacks = new Map()
   vi.stubGlobal('document', { createElement: (tagName: string) => element(tagName) })
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-    const frameId = nextFrameId
-    nextFrameId += 1
-    frameCallbacks.set(frameId, callback)
-    return frameId
-  })
-  vi.stubGlobal('cancelAnimationFrame', (frameId: number) => { frameCallbacks.delete(frameId) })
 })
 
 afterEach(() => {
@@ -163,13 +144,14 @@ afterEach(() => {
 })
 
 describe('Nearby places view', () => {
-  it('renders the loading skeleton, preserves the transition height, and delegates the back action', () => {
+  it('renders the loading skeleton at the explicit standard size and delegates the back action', () => {
     const harness = createHarness()
     const onBack = vi.fn()
     harness.view.renderLoading({ cityCode: 'Taipei', origin, backLabel: '附近站牌', onBack })
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('nearby:Taipei:25.01234:121.56789')
-    expect(drawer.preserveDesktopHeight).toBe(true)
+    expect(drawer.size).toBe('standard')
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|正在搜尋附近站牌')
     const loading = drawer.content[0] as unknown as FakeElement
     expect(loading.classList.contains('map-loading-list')).toBe(true)
@@ -179,15 +161,14 @@ describe('Nearby places view', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders rounded distances, releases the transition height on the next frame, opens the selected place, and includes the Trip footer', () => {
+  it('renders rounded distances without a deferred height release, opens the selected place, and includes the Trip footer', () => {
     const harness = createHarness()
     const places = [place('A', '市政府', 120.4), place('B', '捷運站', 48.7)]
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.preserveDesktopHeight).toBe(true)
+    expect(drawer.size).toBe('standard')
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.sessions[0].releasePreservedHeight).not.toHaveBeenCalled()
-    runAnimationFrames()
-    expect(harness.sessions[0].releasePreservedHeight).toHaveBeenCalledOnce()
     expect((drawer.header[1] as unknown as FakeElement).textContent)
       .toBe('附近站牌|2 個附近站牌，點任一站牌預覽所有經過路線。')
     const list = drawer.content[0] as unknown as FakeElement
@@ -200,24 +181,12 @@ describe('Nearby places view', () => {
     expect(harness.createTripModeButton).toHaveBeenCalledOnce()
   })
 
-  it('cancels the deferred release when navigation replaces the nearby result in the same frame', () => {
-    const harness = createHarness()
-    harness.view.renderPlaces({
-      cityCode: 'Taipei', origin, places: [place('A', '市政府', 120)], backLabel: '路線列表', onBack: vi.fn(),
-    })
-    const resultSession = harness.sessions[0]
-    harness.view.renderLoading({ cityCode: 'Taipei', origin, backLabel: '附近站牌', onBack: vi.fn() })
-    runAnimationFrames()
-    expect(resultSession.controller.signal.aborted).toBe(true)
-    expect(resultSession.releasePreservedHeight).not.toHaveBeenCalled()
-  })
-
-  it('renders the existing empty-state copy without place buttons or a preserved height', () => {
+  it('renders the existing empty-state copy at the same standard size', () => {
     const harness = createHarness()
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.preserveDesktopHeight).toBe(false)
-    expect(frameCallbacks.size).toBe(0)
+    expect(drawer.size).toBe('standard')
+    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
     expect(list.children).toHaveLength(1)
@@ -235,6 +204,7 @@ describe('Nearby places view', () => {
     })
     expect(message).toBe('附近服務忙碌中')
     const drawer = scrollable(harness.rendered())
+    expect(drawer.size).toBe('standard')
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌讀取失敗|附近服務忙碌中')
     ;(drawer.header[0] as unknown as FakeElement).click()
     ;(drawer.content[0] as unknown as FakeElement).click()
