@@ -243,7 +243,7 @@ describe('Place routes view', () => {
       color: '#123456',
     }))
 
-    harness.view.renderRoutes({ cityCode: 'Taipei', place: place(), routes })
+    harness.view.renderRoutes({ cityCode: 'Taipei', place: place(), routes, warning: undefined })
 
     expect(scrollable(harness.rendered()).size).toBe('tall')
   })
