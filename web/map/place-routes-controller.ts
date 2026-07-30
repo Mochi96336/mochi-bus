@@ -172,6 +172,9 @@ export function createPlaceRoutesController(
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
 
       if (routesPresented) {
+        // Promise.all cannot cancel sibling tasks. Invalidate this generation before
+        // surfacing a renderer failure so later shape responses cannot keep drawing.
+        generation += 1
         options.onError({ cityCode, place, error })
         return false
       }
