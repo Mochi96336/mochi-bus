@@ -1,5 +1,6 @@
 import type { NearbyPlace } from './map-api-client'
 import type { NearbyPlacesPresentation } from './nearby-places-controller'
+import { markNearbyAutoPreviewOrigin } from './nearby-auto-preview-history'
 import type { NearbyOrigin } from './nearby-places-view'
 
 type NearbyResultsStateOptions = {
@@ -58,6 +59,7 @@ export function createNearbyResultsState(options: NearbyResultsStateOptions): Ne
     store,
     storeAndRenderMap(presentation) {
       store(presentation)
+      markNearbyAutoPreviewOrigin(presentation.origin)
       if (committed) renderSnapshot(committed)
     },
     replace(nextOrigin, nextPlaces) {
