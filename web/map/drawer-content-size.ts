@@ -2,7 +2,7 @@ import type { DrawerSize } from './drawer-view'
 import type { RouteTimetable, TimetableService } from './map-api-client'
 
 export function placeRoutesDrawerSize(routeCount: number): DrawerSize {
-  if (routeCount <= 3) return 'compact'
+  if (routeCount === 0) return 'compact'
   if (routeCount <= 7) return 'standard'
   return 'tall'
 }
