@@ -1,5 +1,9 @@
 import type L from 'leaflet'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  DRAWER_CAMERA_WORKSPACE_EVENT,
+  type DrawerCameraWorkspace,
+} from './drawer-size-transition'
 
 const panConstraint = vi.hoisted(() => {
   const releaseForProgrammaticCamera = vi.fn()
@@ -83,15 +87,21 @@ function installBrowserStubs() {
   }
 }
 
+type MapStub = L.Map & {
+  setCamera(center: { lat: number; lng: number }, zoom: number): void
+}
+
 function createMapStub(
   order: string[],
   initialCamera = { center: { lat: 23.5, lng: 121 }, zoom: 12 },
-): L.Map {
+): MapStub {
   let center = { ...initialCamera.center }
   let zoom = initialCamera.zoom
-  return {
+  const handlers = new Map<string, Set<(event?: unknown) => void>>()
+  const mapStub = {
     fitBounds: vi.fn(() => {
       order.push('fitBounds')
+      return mapStub
     }),
     flyTo: vi.fn((nextCenter: L.LatLngExpression, nextZoom?: number) => {
       order.push('flyTo')
@@ -100,6 +110,7 @@ function createMapStub(
         : nextCenter as L.LatLng
       center = { lat: value.lat, lng: value.lng }
       if (nextZoom !== undefined) zoom = nextZoom
+      return mapStub
     }),
     setView: vi.fn((nextCenter: L.LatLngExpression, nextZoom?: number) => {
       order.push('setView')
@@ -108,12 +119,15 @@ function createMapStub(
         : nextCenter as L.LatLng
       center = { lat: value.lat, lng: value.lng }
       if (nextZoom !== undefined) zoom = nextZoom
+      return mapStub
     }),
     panBy: vi.fn(() => {
       order.push('panBy')
+      return mapStub
     }),
     stop: vi.fn(() => {
       order.push('stop')
+      return mapStub
     }),
     getCenter: vi.fn(() => ({ ...center } as L.LatLng)),
     getZoom: vi.fn(() => zoom),
@@ -122,7 +136,32 @@ function createMapStub(
     })),
     unproject: vi.fn(() => ({ lat: 23.5, lng: 121 })),
     invalidateSize: vi.fn(),
-  } as unknown as L.Map
+    on: vi.fn((type: string, handler: (event?: unknown) => void) => {
+      const listeners = handlers.get(type) ?? new Set()
+      listeners.add(handler)
+      handlers.set(type, listeners)
+      return mapStub
+    }),
+    off: vi.fn((type: string, handler: (event?: unknown) => void) => {
+      handlers.get(type)?.delete(handler)
+      return mapStub
+    }),
+    fire: vi.fn((type: string) => {
+      handlers.get(type)?.forEach((handler) => handler())
+      return mapStub
+    }),
+    setCamera(nextCenter: { lat: number; lng: number }, nextZoom: number) {
+      center = { ...nextCenter }
+      zoom = nextZoom
+    },
+  }
+  return mapStub as unknown as MapStub
+}
+
+function announceWorkspace(drawer: HTMLElement, workspace: DrawerCameraWorkspace) {
+  drawer.dispatchEvent(new CustomEvent<DrawerCameraWorkspace>(DRAWER_CAMERA_WORKSPACE_EVENT, {
+    detail: workspace,
+  }))
 }
 
 describe('map camera controller pan-bound handoff', () => {
@@ -216,55 +255,33 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
-  it('captures a preserved workspace on departure and restores it on return', () => {
+  it('restores the latest settled user camera when returning to a preserved workspace', () => {
     installBrowserStubs()
     const order: string[] = []
-    const savedCamera = { center: { lat: 25.0478, lng: 121.5319 }, zoom: 16 }
-    const map = createMapStub(order, savedCamera)
+    const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 780, top: 386, right: 1180, bottom: 782, width: 400, height: 396 })
-    const controller = createMapCameraController(map, mapElement, drawerElement, {
-      measureDrawerRectForSize: (_drawer, size) => size === 'compact'
-        ? { left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 }
-        : { left: 780, top: 386, right: 1180, bottom: 782, width: 400, height: 396 },
-    })
+    const controller = createMapCameraController(map, mapElement, drawerElement)
 
-    controller.prepareDrawerSizeTransition({
-      from: 'standard',
-      to: 'compact',
-      durationMs: 160,
-      camera: 'preserve',
-      fromView: 'trip-results:A:B',
-      toView: 'route:Taipei:B',
-      fromCamera: 'preserve',
-      toCamera: 'predict',
-    })
-    map.setView([23.1, 120.2], 11)
-    drawerElement.setRect({ left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 })
-    drawerElement.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'height' }))
+    announceWorkspace(drawerElement, { view: 'trip-results:A:B', camera: 'preserve' })
+    map.setCamera({ lat: 25.0478, lng: 121.5319 }, 16)
+    map.fire('zoomend')
 
-    controller.prepareDrawerSizeTransition({
-      from: 'compact',
-      to: 'standard',
-      durationMs: 160,
-      camera: 'preserve',
-      fromView: 'route:Taipei:B',
-      toView: 'trip-results:A:B',
-      fromCamera: 'predict',
-      toCamera: 'preserve',
-    })
+    announceWorkspace(drawerElement, { view: 'route:Taipei:B', camera: 'predict' })
+    map.setCamera({ lat: 23.1, lng: 120.2 }, 11)
+    announceWorkspace(drawerElement, { view: 'trip-results:A:B', camera: 'preserve' })
 
     expect(map.setView).toHaveBeenLastCalledWith(
-      [savedCamera.center.lat, savedCamera.center.lng],
-      savedCamera.zoom,
+      [25.0478, 121.5319],
+      16,
       { animate: false },
     )
-    expect(map.getCenter()).toEqual(savedCamera.center)
-    expect(map.getZoom()).toBe(savedCamera.zoom)
+    expect(map.getCenter()).toEqual({ lat: 25.0478, lng: 121.5319 })
+    expect(map.getZoom()).toBe(16)
     controller.dispose()
   })
 
-  it('drops an old target while a preserved camera workspace resizes without a snapshot', () => {
+  it('drops an old target while a preserved camera workspace resizes', () => {
     const browser = installBrowserStubs()
     const order: string[] = []
     const map = createMapStub(order)
