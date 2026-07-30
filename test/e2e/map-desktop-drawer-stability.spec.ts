@@ -313,6 +313,7 @@ test('keeps a full-network route click compact through loading and result', asyn
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   await page.waitForTimeout(220)
   await startDrawerFrameCapture(page)
+  await page.waitForTimeout(40)
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
