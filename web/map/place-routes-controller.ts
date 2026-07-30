@@ -141,26 +141,40 @@ export function createPlaceRoutesController(
       }
       options.onRoutes(presentation)
       routesPresented = true
-
-      const previews = await Promise.all(routes.slice(0, previewLimit).map(async (entry) => {
-        const variant = await options.loadVariant(
-          cityCode,
-          entry.route.routeName,
-          entry.route.variantKey,
-        )
-        return variant ? { ...entry, variant } : undefined
-      }))
-      if (!isCurrent(requestGeneration, cityCode, requestId)) return false
-
-      for (const preview of previews) {
-        if (preview) options.renderPreview(preview)
-      }
+      // Arrivals are the core result. History, title and loading status complete now;
+      // route shapes remain auxiliary and may continue appearing in the background.
       options.onComplete(presentation)
+
+      const previewTasks = routes.slice(0, previewLimit).map(async (entry) => {
+        let variant: RouteMapVariant | undefined
+        try {
+          variant = await options.loadVariant(
+            cityCode,
+            entry.route.routeName,
+            entry.route.variantKey,
+          )
+        } catch {
+          // Shape previews are auxiliary. A network or data failure for one shape
+          // must not turn an already usable arrivals list into a page-level failure.
+          return
+        }
+        if (!variant || !isCurrent(requestGeneration, cityCode, requestId)) return
+
+        // Keep rendering outside the load catch: a renderer bug is a real application
+        // failure and must not be silently disguised as a missing route shape.
+        const preview: PlaceRoutePreview = { ...entry, variant }
+        options.renderPreview(preview)
+      })
+      await Promise.all(previewTasks)
+      if (!isCurrent(requestGeneration, cityCode, requestId)) return false
       return true
     } catch (error) {
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
 
       if (routesPresented) {
+        // Promise.all cannot cancel sibling tasks. Invalidate this generation before
+        // surfacing a renderer failure so later shape responses cannot keep drawing.
+        generation += 1
         options.onError({ cityCode, place, error })
         return false
       }

@@ -6,6 +6,7 @@ import {
   type NearbyPlacesPresentation,
   type NearbyPlacesRequest,
 } from './nearby-places-controller'
+import { subscribeNearbyCameraTransitions } from './nearby-map-events'
 
 function place(index: number): NearbyPlace {
   return {
@@ -161,15 +162,27 @@ describe('Nearby places controller', () => {
     expect(stale.presentations).toEqual([])
   })
 
-  it('reports active errors without retaining a retry request', async () => {
+  it('cancels the active camera transition before reporting an error', async () => {
     const error = new Error('nearby failed')
     const harness = createHarness({ loadNearby: async () => { throw error } })
     const loadRequest = request({ origin: [24.5, 120.5], radiusMeters: 300 })
+    const order: string[] = []
+    const unsubscribe = subscribeNearbyCameraTransitions({
+      begin: vi.fn(),
+      settle: vi.fn(),
+      cancel: () => order.push('cancel'),
+    })
 
-    await expect(harness.controller.load(loadRequest)).resolves.toBe(false)
-    expect(harness.failures).toEqual([{ ...loadRequest, error }])
-    expect(harness.starts).toEqual([loadRequest])
-    expect(harness.presentations).toEqual([])
+    try {
+      await expect(harness.controller.load(loadRequest)).resolves.toBe(false)
+      order.push('assert')
+      expect(order).toEqual(['cancel', 'assert'])
+      expect(harness.failures).toEqual([{ ...loadRequest, error }])
+      expect(harness.starts).toEqual([loadRequest])
+      expect(harness.presentations).toEqual([])
+    } finally {
+      unsubscribe()
+    }
   })
 
   it('does not start for a different or missing city and rejects invalid limits', async () => {
