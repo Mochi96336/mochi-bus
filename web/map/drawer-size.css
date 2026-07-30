@@ -64,9 +64,11 @@
   }
 }
 
-@media (max-width: 640px) and (max-height: 520px) and (min-aspect-ratio: 1 / 1) {
+/* A short landscape viewport can be wider than the mobile breakpoint. Collapse all fixed
+   states to one usable sheet height so 640 -> 641 px never drops compact content to ~140 px. */
+@media (max-height: 520px) and (min-aspect-ratio: 1 / 1) {
   :root {
-    --map-drawer-size-standard: min(
+    --map-drawer-short-landscape-size: min(
       60dvh,
       calc(
         100dvh
@@ -74,8 +76,9 @@
         - var(--map-drawer-mobile-bottom, 10px)
       )
     );
-    --map-drawer-size-compact: var(--map-drawer-size-standard);
-    --map-drawer-size-tall: var(--map-drawer-size-standard);
-    --map-drawer-size-expanded: var(--map-drawer-size-standard);
+    --map-drawer-size-compact: var(--map-drawer-short-landscape-size);
+    --map-drawer-size-standard: var(--map-drawer-short-landscape-size);
+    --map-drawer-size-tall: var(--map-drawer-short-landscape-size);
+    --map-drawer-size-expanded: var(--map-drawer-short-landscape-size);
   }
 }
