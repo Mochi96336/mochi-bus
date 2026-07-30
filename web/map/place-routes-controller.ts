@@ -73,7 +73,7 @@ export function createPlaceRoutesController(
 ): PlaceRoutesController {
   const previewLimit = options.previewLimit ?? DEFAULT_PREVIEW_LIMIT
   if (!Number.isInteger(previewLimit) || previewLimit <= 0) {
-    throw new Error('Place route preview limit must be a positive integer')
+    throw new Error('Nearby place preview limit must be a positive integer')
   }
 
   const decideRetry = options.retryDecision ?? placeRetryDecision
@@ -150,7 +150,8 @@ export function createPlaceRoutesController(
           if (!variant || !isCurrent(requestGeneration, cityCode, requestId)) return
           // Render each route as soon as its shape arrives instead of making the
           // fastest previews wait for the slowest request in the batch.
-          options.renderPreview({ ...entry, variant })
+          const preview: PlaceRoutePreview = { ...entry, variant }
+          options.renderPreview(preview)
         } catch {
           // Shape previews are auxiliary. One missing route geometry must not turn
           // an already usable arrivals list into a page-level failure.
