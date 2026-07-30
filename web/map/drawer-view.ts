@@ -1,8 +1,13 @@
 import { attachScrollFade } from '../lib/scroll-fade'
+import {
+  DRAWER_SIZE_TRANSITION_EVENT,
+  type DrawerSize,
+  type DrawerSizeTransition,
+} from './drawer-size-transition'
 import './drawer-size.css'
 
+export type { DrawerSize } from './drawer-size-transition'
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
-export type DrawerSize = 'content' | 'compact' | 'standard' | 'tall' | 'expanded'
 
 const DRAWER_SIZE_MEMORY_LIMIT = 32
 
@@ -51,6 +56,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
 
   const render = (view: DrawerView): DrawerViewSession => {
     const previousViewKey = currentViewKey
+    const previousSize = drawerSizeFromDataset(drawer.dataset.size)
     const nextSize = drawerSizeForView(view, sizesByViewKey.get(view.key))
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
@@ -67,6 +73,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     currentViewKey = view.key
     rememberDrawerSize(sizesByViewKey, view.key, nextSize)
 
+    dispatchDrawerSizeTransition(drawer, previousSize, nextSize)
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
     drawer.dataset.size = nextSize
@@ -169,6 +176,23 @@ export function drawerSizeForTransition(
   return 'content'
 }
 
+export function drawerSizeTransitionDurationMs(
+  style: Pick<CSSStyleDeclaration, 'transitionProperty' | 'transitionDuration' | 'transitionDelay'>,
+): number {
+  const properties = transitionValues(style.transitionProperty)
+  const durations = transitionValues(style.transitionDuration).map(cssTimeMs)
+  const delays = transitionValues(style.transitionDelay).map(cssTimeMs)
+  let maximum = 0
+
+  properties.forEach((property, index) => {
+    if (property !== 'all' && property !== 'height' && property !== 'max-height') return
+    const duration = durations[index % Math.max(1, durations.length)] ?? 0
+    const delay = delays[index % Math.max(1, delays.length)] ?? 0
+    maximum = Math.max(maximum, duration + delay)
+  })
+  return maximum
+}
+
 // Transitional helpers are retained for compatibility with focused unit tests and callers
 // that have not yet migrated from measured heights. The renderer no longer uses them.
 export function shouldPreserveDrawerHeight(
@@ -193,6 +217,35 @@ export function drawerMinHeightForTransition(
     ? Math.min(previousHeight, Math.max(0, maximumHeight))
     : previousHeight
   return boundedHeight > 0 ? `${Math.ceil(boundedHeight)}px` : ''
+}
+
+function dispatchDrawerSizeTransition(
+  drawer: HTMLElement,
+  previousSize: DrawerSize | undefined,
+  nextSize: DrawerSize,
+): void {
+  if (!previousSize || previousSize === nextSize) return
+  const durationMs = drawerSizeTransitionDurationMs(getComputedStyle(drawer))
+  if (durationMs <= 0) return
+  const detail: DrawerSizeTransition = { from: previousSize, to: nextSize, durationMs }
+  drawer.dispatchEvent(new CustomEvent<DrawerSizeTransition>(DRAWER_SIZE_TRANSITION_EVENT, { detail }))
+}
+
+function drawerSizeFromDataset(value: string | undefined): DrawerSize | undefined {
+  if (value === 'content' || value === 'compact' || value === 'standard' || value === 'tall' || value === 'expanded') {
+    return value
+  }
+  return undefined
+}
+
+function transitionValues(value: string): string[] {
+  return value.split(',').map((entry) => entry.trim()).filter(Boolean)
+}
+
+function cssTimeMs(value: string): number {
+  if (value.endsWith('ms')) return Number.parseFloat(value) || 0
+  if (value.endsWith('s')) return (Number.parseFloat(value) || 0) * 1000
+  return 0
 }
 
 function rememberDrawerSize(memory: Map<string, DrawerSize>, key: string, size: DrawerSize) {
