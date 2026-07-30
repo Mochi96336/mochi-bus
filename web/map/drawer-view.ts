@@ -1,7 +1,9 @@
 import { attachScrollFade } from '../lib/scroll-fade'
 import {
+  DRAWER_CAMERA_WORKSPACE_EVENT,
   DRAWER_SIZE_TRANSITION_EVENT,
   type DrawerCameraTransition,
+  type DrawerCameraWorkspace,
   type DrawerSize,
   type DrawerSizeTransition,
 } from './drawer-size-transition'
@@ -75,9 +77,12 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     let active = true
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
-    currentViewKey = view.key
     rememberDrawerSize(sizesByViewKey, view.key, nextSize)
 
+    if (previousViewKey !== view.key || currentCameraTransition !== nextCameraTransition) {
+      const detail: DrawerCameraWorkspace = { view: view.key, camera: nextCameraTransition }
+      drawer.dispatchEvent(new CustomEvent<DrawerCameraWorkspace>(DRAWER_CAMERA_WORKSPACE_EVENT, { detail }))
+    }
     dispatchDrawerSizeTransition(drawer, {
       previousSize,
       nextSize,
@@ -86,6 +91,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
       previousCamera: currentCameraTransition,
       nextCamera: nextCameraTransition,
     })
+    currentViewKey = view.key
     currentCameraTransition = nextCameraTransition
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
