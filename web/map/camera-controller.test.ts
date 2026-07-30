@@ -202,7 +202,7 @@ describe('map camera controller pan-bound handoff', () => {
     expect(panConstraint.dispose).toHaveBeenCalledOnce()
   })
 
-  it('connects the real Nearby Places surface to begin and settle camera motion', () => {
+  it('connects the real Nearby Places surface to one origin camera movement', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
@@ -222,10 +222,9 @@ describe('map camera controller pan-bound handoff', () => {
 
     order.length = 0
     nearby.renderPlaces([25, 121.5], [place(26, 122.5)])
-    expect(order).toEqual(['release', 'stop', 'panTo'])
-    expect(vi.mocked(map.panTo).mock.calls.at(-1)?.[1]).toEqual(
-      expect.objectContaining({ animate: true, duration: .2 }),
-    )
+
+    expect(order).toEqual([])
+    expect(map.panTo).toHaveBeenCalledTimes(1)
     controller.dispose()
   })
 
@@ -242,7 +241,7 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
-  it('suppresses settle after user intervention', () => {
+  it('does not move again when results arrive after user intervention', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
@@ -260,7 +259,7 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
-  it('does not let a failed nearby transition swallow a later unrelated focus', () => {
+  it('does not let a Nearby origin target swallow a later unrelated focus', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
@@ -277,7 +276,7 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
-  it('does not jump again when route completion repeats the settled station target', () => {
+  it('moves to a station only after an explicit focus request', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
@@ -290,9 +289,10 @@ describe('map camera controller pan-bound handoff', () => {
     nearby.renderLoadingOrigin([25, 121.5])
     nearby.renderPlaces([25, 121.5], [selected])
     order.length = 0
-    controller.focusPoint([selected.latitude, selected.longitude], 12)
 
-    expect(order).toEqual([])
+    controller.focusPoint([selected.latitude, selected.longitude], 12, { animate: true })
+
+    expect(order).toEqual(['stop', 'panTo'])
     controller.dispose()
   })
 
