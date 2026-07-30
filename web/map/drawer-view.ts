@@ -1,6 +1,7 @@
 import { attachScrollFade } from '../lib/scroll-fade'
 import {
   DRAWER_SIZE_TRANSITION_EVENT,
+  type DrawerCameraTransition,
   type DrawerSize,
   type DrawerSizeTransition,
 } from './drawer-size-transition'
@@ -16,6 +17,7 @@ export type DrawerView =
       key: string
       mode: 'compact'
       size?: DrawerSize
+      cameraTransition?: DrawerCameraTransition
       preserveMobileHeight?: boolean
       preserveDesktopHeight?: boolean
       content: readonly Node[]
@@ -24,6 +26,7 @@ export type DrawerView =
       key: string
       mode: DrawerScrollableMode
       size?: DrawerSize
+      cameraTransition?: DrawerCameraTransition
       preserveMobileHeight?: boolean
       preserveDesktopHeight?: boolean
       header: readonly Node[]
@@ -73,7 +76,12 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     currentViewKey = view.key
     rememberDrawerSize(sizesByViewKey, view.key, nextSize)
 
-    dispatchDrawerSizeTransition(drawer, previousSize, nextSize)
+    dispatchDrawerSizeTransition(
+      drawer,
+      previousSize,
+      nextSize,
+      view.cameraTransition ?? 'predict',
+    )
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
     drawer.dataset.size = nextSize
@@ -223,11 +231,12 @@ function dispatchDrawerSizeTransition(
   drawer: HTMLElement,
   previousSize: DrawerSize | undefined,
   nextSize: DrawerSize,
+  camera: DrawerCameraTransition,
 ): void {
   if (!previousSize || previousSize === nextSize) return
   const durationMs = drawerSizeTransitionDurationMs(getComputedStyle(drawer))
   if (durationMs <= 0) return
-  const detail: DrawerSizeTransition = { from: previousSize, to: nextSize, durationMs }
+  const detail: DrawerSizeTransition = { from: previousSize, to: nextSize, durationMs, camera }
   drawer.dispatchEvent(new CustomEvent<DrawerSizeTransition>(DRAWER_SIZE_TRANSITION_EVENT, { detail }))
 }
 
