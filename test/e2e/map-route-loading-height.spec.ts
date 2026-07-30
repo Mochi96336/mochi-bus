@@ -79,7 +79,7 @@ async function catalogueHeight(page: Page): Promise<number> {
   return drawer.evaluate((element) => element.getBoundingClientRect().height)
 }
 
-test('keeps the mobile route drawer in the standard size while route data is loading', async ({ page }) => {
+test('keeps the compact route state at the standard mobile sheet height while loading', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -92,7 +92,7 @@ test('keeps the mobile route drawer in the standard size while route data is loa
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
-    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    await expect(drawer).toHaveAttribute('data-size', 'compact')
 
     const loading = await drawer.evaluate((element) => ({
       height: element.getBoundingClientRect().height,
@@ -103,7 +103,7 @@ test('keeps the mobile route drawer in the standard size while route data is loa
 
     await page.setViewportSize({ width: 844, height: 390 })
     await expect.poll(() => drawer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(beforeHeight)
-    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
 
     await page.setViewportSize({ width: 390, height: 844 })
@@ -116,11 +116,11 @@ test('keeps the mobile route drawer in the standard size while route data is loa
   }
 
   await expect(drawer.locator('.route-service-summary')).toBeVisible()
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('keeps the standard catalogue size through loading before showing a variant picker', async ({ page }) => {
+test('keeps the mobile sheet height through compact loading before a compact variant picker', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -133,7 +133,7 @@ test('keeps the standard catalogue size through loading before showing a variant
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
-    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect.poll(async () => {
       const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
       return Math.abs(height - beforeHeight) <= 1
@@ -143,7 +143,11 @@ test('keeps the standard catalogue size through loading before showing a variant
   }
 
   await expect(drawer).toHaveAttribute('data-mode', 'map-list')
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer.locator('.variant-button')).toHaveCount(2)
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
+  await expect.poll(async () => {
+    const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+    return Math.abs(height - beforeHeight) <= 1
+  }).toBe(true)
 })
