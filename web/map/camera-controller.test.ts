@@ -132,6 +132,7 @@ class FakeLayerGroup {
 
 class FakeMarker {
   private readonly listeners = new Map<string, (event: unknown) => void>()
+  private radius = 10
 
   addTo(layer: FakeLayerGroup): this {
     layer.markers.push(this)
@@ -140,6 +141,19 @@ class FakeMarker {
 
   on(type: string, listener: (event: unknown) => void): this {
     this.listeners.set(type, listener)
+    return this
+  }
+
+  getRadius(): number {
+    return this.radius
+  }
+
+  setRadius(radius: number): this {
+    this.radius = radius
+    return this
+  }
+
+  setStyle(): this {
     return this
   }
 }
