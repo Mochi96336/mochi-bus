@@ -167,13 +167,14 @@ export function createMapCameraController(
   mapElement.addEventListener('wheel', releaseOnOtherMapInteraction, { capture: true, passive: true })
   mapElement.addEventListener('keydown', releaseOnOtherMapInteraction, { capture: true })
 
-  const focusNearbyOrigin = (event: NearbyOriginRenderedEvent) => {
-    if (disposed || Date.now() - lastPointerDownAt > RECENT_POINTER_WINDOW_MS) return
+  const focusNearbyOrigin = (event: L.LeafletEvent) => {
+    const origin = (event as NearbyOriginRenderedEvent).origin
+    if (!origin || disposed || Date.now() - lastPointerDownAt > RECENT_POINTER_WINDOW_MS) return
     nearbyTransition = {
       cancelled: false,
       expiresAt: Date.now() + NEARBY_SETTLE_WINDOW_MS,
     }
-    target = { kind: 'point', center: [...event.origin], zoom: map.getZoom() }
+    target = { kind: 'point', center: [...origin], zoom: map.getZoom() }
     cancelScheduledApply()
     apply({ motion: 'pan' })
   }
