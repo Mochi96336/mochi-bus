@@ -2,7 +2,9 @@ import type L from 'leaflet'
 import { calculateCameraPadding, cameraPanOffset, type CameraRect } from '../../src/domain/map/camera-padding'
 import { captureMapCamera, restoreMapCamera, type MapCameraState } from '../../src/domain/map/journey-camera'
 import {
+  DRAWER_CAMERA_WORKSPACE_EVENT,
   DRAWER_SIZE_TRANSITION_EVENT,
+  type DrawerCameraWorkspace,
   type DrawerSize,
   type DrawerSizeTransition,
 } from './drawer-size-transition'
@@ -66,6 +68,7 @@ export function createMapCameraController(
   let target: CameraTarget | undefined
   let frame: number | undefined
   let drawerTransition: ActiveDrawerTransition | undefined
+  let cameraWorkspace: DrawerCameraWorkspace | undefined
   let disposed = false
 
   const apply = (animate = false) => {
@@ -142,6 +145,10 @@ export function createMapCameraController(
     if (oldest) preservedCameras.delete(oldest)
   }
 
+  const rememberCurrentWorkspaceCamera = () => {
+    if (cameraWorkspace?.camera === 'preserve') rememberPreservedCamera(cameraWorkspace.view)
+  }
+
   const restorePreservedCamera = (viewKey: string): boolean => {
     const state = preservedCameras.get(viewKey)
     if (!state) return false
@@ -154,30 +161,10 @@ export function createMapCameraController(
 
   const prepareDrawerSizeTransition = (transition: DrawerSizeTransition) => {
     finishDrawerTransition(false, true)
-
-    if (transition.fromCamera === 'preserve' && transition.fromView) {
-      rememberPreservedCamera(transition.fromView)
-    }
-    const restoredPreservedCamera = transition.toCamera === 'preserve'
-      && restorePreservedCamera(transition.toView)
-
-    if (transition.durationMs <= 0 || transition.to === 'content') {
-      if (transition.camera === 'preserve' && !restoredPreservedCamera) {
-        map.stop()
-        clearTarget()
-      }
-      return
-    }
+    if (transition.durationMs <= 0 || transition.to === 'content') return
 
     const targetRect = measureDrawerRectForSize(drawerElement, transition.to)
-    const sizeActuallyChanges = !sameCameraRect(targetRect, readRect(drawerElement))
-    if (!sizeActuallyChanges) {
-      if (transition.camera === 'preserve' && !restoredPreservedCamera) {
-        map.stop()
-        clearTarget()
-      }
-      return
-    }
+    if (sameCameraRect(targetRect, readRect(drawerElement))) return
 
     const finishOnTransitionEnd = (event: Event) => {
       if (event.target !== drawerElement) return
@@ -199,9 +186,7 @@ export function createMapCameraController(
     drawerElement.addEventListener('transitioncancel', finishOnTransitionEnd)
 
     if (transition.camera === 'preserve') {
-      // Preserved workspaces own an exact user camera. Suppress the intermediate drawer
-      // resize frames, but never reuse the old semantic bounds target during navigation.
-      if (!restoredPreservedCamera) map.stop()
+      map.stop()
       clearTarget()
       return
     }
@@ -242,11 +227,27 @@ export function createMapCameraController(
   window.addEventListener('resize', refreshAfterViewportResize)
   window.visualViewport?.addEventListener('resize', refreshAfterViewportResize)
 
+  const onDrawerCameraWorkspace = (event: Event) => {
+    const nextWorkspace = (event as CustomEvent<DrawerCameraWorkspace>).detail
+    if (!nextWorkspace) return
+    if (cameraWorkspace?.camera === 'preserve' && cameraWorkspace.view !== nextWorkspace.view) {
+      rememberPreservedCamera(cameraWorkspace.view)
+    }
+    const workspaceChanged = cameraWorkspace?.view !== nextWorkspace.view
+    cameraWorkspace = nextWorkspace
+    if (workspaceChanged && nextWorkspace.camera === 'preserve') {
+      restorePreservedCamera(nextWorkspace.view)
+    }
+  }
   const onDrawerSizeTransition = (event: Event) => {
     const transition = (event as CustomEvent<DrawerSizeTransition>).detail
     if (transition) prepareDrawerSizeTransition(transition)
   }
+  const onMapCameraSettled = () => rememberCurrentWorkspaceCamera()
+  drawerElement.addEventListener(DRAWER_CAMERA_WORKSPACE_EVENT, onDrawerCameraWorkspace)
   drawerElement.addEventListener(DRAWER_SIZE_TRANSITION_EVENT, onDrawerSizeTransition)
+  map.on('moveend', onMapCameraSettled)
+  map.on('zoomend', onMapCameraSettled)
 
   return {
     focusPoint(center, zoom, focusOptions = {}) {
@@ -272,9 +273,12 @@ export function createMapCameraController(
       preservedCameras.clear()
       taiwanPanConstraint()
       resizeObserver.disconnect()
+      map.off('moveend', onMapCameraSettled)
+      map.off('zoomend', onMapCameraSettled)
       mapElement.removeEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
       mapElement.removeEventListener('wheel', releaseOnMapInteraction, { capture: true })
       mapElement.removeEventListener('keydown', releaseOnMapInteraction, { capture: true })
+      drawerElement.removeEventListener(DRAWER_CAMERA_WORKSPACE_EVENT, onDrawerCameraWorkspace)
       drawerElement.removeEventListener(DRAWER_SIZE_TRANSITION_EVENT, onDrawerSizeTransition)
       window.removeEventListener('resize', refreshAfterViewportResize)
       window.visualViewport?.removeEventListener('resize', refreshAfterViewportResize)
