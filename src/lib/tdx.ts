@@ -153,6 +153,24 @@ const tokenClient = createTDXTokenClient({
     logTDXResponseTooLarge(error as TDXPayloadTooLargeError, observation)
   ),
   logResponseSize: logTDXResponseSize,
+  logRequestFailure: ({
+    credentialScope,
+    attempt,
+    maxAttempts,
+    failureKind,
+    status,
+    willRetry,
+  }) => {
+    console.error(JSON.stringify({
+      message: 'tdx_token_request_failed',
+      credentialScope,
+      attempt,
+      maxAttempts,
+      failureClass: failureKind ?? 'unknown',
+      status: status ?? null,
+      willRetry,
+    }))
+  },
 })
 
 export const getTDXToken = tokenClient.getTDXToken
