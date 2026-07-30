@@ -65,7 +65,7 @@ export type TDXTokenClientDependencies = {
     declaredBytes?: number
     sampled: boolean
   }) => void
-  logRequestFailure: (observation: TDXTokenRequestFailureObservation) => void
+  logRequestFailure?: (observation: TDXTokenRequestFailureObservation) => void
   fetcher?: typeof fetch
   now?: () => number
   sleep?: (ms: number) => Promise<void>
@@ -76,8 +76,8 @@ export type TDXTokenClientDependencies = {
 
 type TokenCacheEntry = { value: string; expiresAt: number }
 
-// Token credential/cache ownership lives here. Circuit state, bounded response reading and safe logging
-// remain injected by the TDX client façade so token and data state machines stay separate.
+// Token credential/cache ownership lives here. Circuit state and bounded response reading remain injected
+// by the TDX client façade; the fallback log is credential-safe and can be replaced in tests.
 // Global fetch and clock are resolved at call time so Worker/test injection remains effective.
 export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): {
   getTDXToken: (env: TDXCredentialEnv) => Promise<TDXTokenResult>
@@ -90,6 +90,7 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     ? dependencies.sleep(ms)
     : new Promise<void>((resolve) => { setTimeout(resolve, ms) })
   const random = () => dependencies.random ? dependencies.random() : Math.random()
+  const emitRequestFailure = dependencies.logRequestFailure ?? defaultLogRequestFailure
   const maxTokenCacheEntries = dependencies.maxTokenCacheEntries ?? DEFAULT_MAX_TOKEN_CACHE_ENTRIES
   const maxTokenSingleflightEntries = dependencies.maxTokenSingleflightEntries
     ?? DEFAULT_MAX_TOKEN_SINGLEFLIGHT_ENTRIES
@@ -141,7 +142,7 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     error: TDXServiceError,
     willRetry: boolean,
   ): void => {
-    dependencies.logRequestFailure({
+    emitRequestFailure({
       operation: 'token',
       resource: 'token',
       credentialScope: isShared ? 'shared' : 'byok',
@@ -328,6 +329,25 @@ async function sha256Hex(value: string): Promise<string> {
   const input = new TextEncoder().encode(value)
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input))
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const defaultLogRequestFailure = ({
+  credentialScope,
+  attempt,
+  maxAttempts,
+  failureKind,
+  status,
+  willRetry,
+}: TDXTokenRequestFailureObservation): void => {
+  console.error(JSON.stringify({
+    message: 'tdx_token_request_failed',
+    credentialScope,
+    attempt,
+    maxAttempts,
+    failureClass: failureKind ?? 'unknown',
+    status: status ?? null,
+    willRetry,
+  }))
 }
 
 const isRetryableTokenStatus = (status: number): boolean => status === 408 || status >= 500 && status <= 599
