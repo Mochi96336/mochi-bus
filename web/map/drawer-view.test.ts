@@ -44,6 +44,37 @@ describe('drawer view transitions', () => {
     }, undefined)).toBe('content')
   })
 
+  it('restores the remembered workspace before falling back from a content mode', () => {
+    expect(drawerSizeForView({
+      key: 'place:Tainan:busy-stop',
+      mode: 'map-list',
+      header: [],
+      content: [],
+    }, 'tall')).toBe('tall')
+    expect(drawerSizeForView({
+      key: 'timetable:Tainan:R1:',
+      mode: 'timetable',
+      header: [],
+      content: [],
+    }, 'compact')).toBe('compact')
+    expect(drawerSizeForView({
+      key: 'timetable:Tainan:R2:',
+      mode: 'timetable',
+      header: [],
+      content: [],
+    }, undefined)).toBe('standard')
+  })
+
+  it('lets an explicit final size replace a remembered loading size', () => {
+    expect(drawerSizeForView({
+      key: 'place:Tainan:busy-stop',
+      mode: 'map-list',
+      size: 'standard',
+      header: [],
+      content: [],
+    }, 'tall')).toBe('standard')
+  })
+
   it('uses the previous measured height only for an explicitly preserved transition', () => {
     expect(drawerMinHeightForTransition(true, 319.2)).toBe('320px')
     expect(drawerMinHeightForTransition(true, 319.2, 280)).toBe('280px')
