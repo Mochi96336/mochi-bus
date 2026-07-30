@@ -114,18 +114,19 @@ export function createMapCameraController(
     frame = window.requestAnimationFrame(() => apply())
   }
 
-  const finishDrawerTransition = (refreshAtEnd: boolean) => {
+  const finishDrawerTransition = (refreshAtEnd: boolean, stopMapAnimation = false) => {
     const transition = drawerTransition
     if (!transition) return
     drawerTransition = undefined
     clearTimeout(transition.timeout)
     drawerElement.removeEventListener('transitionend', transition.finishOnTransitionEnd)
     drawerElement.removeEventListener('transitioncancel', transition.finishOnTransitionEnd)
+    if (stopMapAnimation) map.stop()
     if (refreshAtEnd) refresh()
   }
 
   const prepareDrawerSizeTransition = (transition: DrawerSizeTransition) => {
-    finishDrawerTransition(false)
+    finishDrawerTransition(false, true)
     if (transition.durationMs <= 0 || transition.to === 'content') return
 
     const targetRect = measureDrawerRectForSize(drawerElement, transition.to)
@@ -162,13 +163,13 @@ export function createMapCameraController(
   }
 
   const clear = () => {
-    finishDrawerTransition(false)
+    finishDrawerTransition(false, true)
     clearTarget()
     taiwanPanConstraint.releaseForProgrammaticCamera()
   }
 
   const releaseOnMapInteraction = () => {
-    finishDrawerTransition(false)
+    finishDrawerTransition(false, true)
     clearTarget()
   }
   mapElement.addEventListener('pointerdown', releaseOnMapInteraction, { capture: true })
@@ -184,7 +185,7 @@ export function createMapCameraController(
   resizeObserver.observe(drawerElement)
 
   const refreshAfterViewportResize = () => {
-    finishDrawerTransition(false)
+    finishDrawerTransition(false, true)
     map.invalidateSize({ pan: false })
     refresh()
   }
@@ -201,11 +202,13 @@ export function createMapCameraController(
     focusPoint(center, zoom, focusOptions = {}) {
       target = { kind: 'point', center, zoom }
       cancelScheduledApply()
+      if (drawerTransition) map.stop()
       apply(Boolean(drawerTransition) || focusOptions.animate)
     },
     focusBounds(bounds, focusOptions = {}) {
       target = { kind: 'bounds', bounds, maxZoom: focusOptions.maxZoom }
       cancelScheduledApply()
+      if (drawerTransition) map.stop()
       apply(Boolean(drawerTransition))
     },
     prepareDrawerSizeTransition,
@@ -214,7 +217,7 @@ export function createMapCameraController(
     dispose() {
       if (disposed) return
       disposed = true
-      finishDrawerTransition(false)
+      finishDrawerTransition(false, true)
       clearTarget()
       taiwanPanConstraint()
       resizeObserver.disconnect()
