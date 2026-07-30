@@ -32,6 +32,14 @@ const TRIP_TRANSITION_CALLS = [
   'trip.restore(',
 ]
 
+function functionSection(source: string, name: string, nextName: string): string {
+  const start = source.indexOf(`function ${name}(`)
+  const end = source.indexOf(`function ${nextName}(`, start)
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  return source.slice(start, end)
+}
+
 describe('map main architecture boundary', () => {
   it('does not grow without extracting another responsibility', () => {
     const lineCount = mainSource.split(/\r?\n/).length
@@ -98,8 +106,10 @@ describe('map main architecture boundary', () => {
     expect(mainSource).not.toContain('previewRequest')
     expect(mainSource).not.toContain('await mapApi.placeRoutes(')
     expect(placeRoutesSource).toContain('options.onRoutes(presentation)')
-    expect(placeRoutesSource).toContain('options.renderPreview(preview)')
     expect(placeRoutesSource).toContain('options.onComplete(presentation)')
+    expect(placeRoutesSource.indexOf('options.onComplete(presentation)'))
+      .toBeLessThan(placeRoutesSource.indexOf('const previewTasks'))
+    expect(placeRoutesSource).toContain('options.renderPreview(preview)')
     for (const dependency of [
       'leaflet',
       'history.',
@@ -122,6 +132,17 @@ describe('map main architecture boundary', () => {
     ]) {
       expect(placeRoutesSource).not.toContain(dependency)
     }
+  })
+
+  it('keeps place selection and route completion camera ownership separate', () => {
+    const autoPreview = functionSection(mainSource, 'openAutoPreviewPlace', 'openNearbyPlace')
+    const manualSelection = functionSection(mainSource, 'openNearbyPlace', 'returnToNearbyPlaces')
+    const completion = functionSection(mainSource, 'completePlaceRoutes', 'setStatus')
+
+    expect(autoPreview).not.toContain('camera.focusPoint(')
+    expect(manualSelection).toContain('camera.focusPoint(')
+    expect(manualSelection.indexOf('camera.focusPoint(')).toBeLessThan(manualSelection.indexOf('placeRoutes.open(place)'))
+    expect(completion).not.toContain('camera.')
   })
 
   it('delegates Place route Drawer presentation to the Place routes view', () => {
