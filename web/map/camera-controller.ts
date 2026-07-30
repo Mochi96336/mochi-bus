@@ -45,6 +45,7 @@ export type MapCameraController = {
 }
 
 const PRESERVED_CAMERA_LIMIT = 16
+const CAMERA_EPSILON = 1e-7
 
 /**
  * Keeps one semantic camera target and projects it into the part of the map that
@@ -69,6 +70,9 @@ export function createMapCameraController(
   let frame: number | undefined
   let drawerTransition: ActiveDrawerTransition | undefined
   let cameraWorkspace: DrawerCameraWorkspace | undefined
+  let capturePreservedCameraAfterInteraction = false
+  let lockedPreservedView: string | undefined
+  let restoringPreservedCamera = false
   let disposed = false
 
   const apply = (animate = false) => {
@@ -140,22 +144,32 @@ export function createMapCameraController(
   const rememberPreservedCamera = (viewKey: string) => {
     preservedCameras.delete(viewKey)
     preservedCameras.set(viewKey, captureMapCamera(map))
+    lockedPreservedView = viewKey
     if (preservedCameras.size <= PRESERVED_CAMERA_LIMIT) return
     const oldest = preservedCameras.keys().next().value
     if (oldest) preservedCameras.delete(oldest)
   }
 
-  const rememberCurrentWorkspaceCamera = () => {
-    if (cameraWorkspace?.camera === 'preserve') rememberPreservedCamera(cameraWorkspace.view)
+  const invalidateCurrentPreservedCamera = () => {
+    if (cameraWorkspace?.camera !== 'preserve') return
+    preservedCameras.delete(cameraWorkspace.view)
+    capturePreservedCameraAfterInteraction = false
+    if (lockedPreservedView === cameraWorkspace.view) lockedPreservedView = undefined
   }
 
   const restorePreservedCamera = (viewKey: string): boolean => {
     const state = preservedCameras.get(viewKey)
     if (!state) return false
-    map.stop()
-    clearTarget()
-    taiwanPanConstraint.releaseForProgrammaticCamera()
-    restoreMapCamera(map, state)
+    restoringPreservedCamera = true
+    try {
+      map.stop()
+      clearTarget()
+      taiwanPanConstraint.releaseForProgrammaticCamera()
+      restoreMapCamera(map, state)
+      lockedPreservedView = viewKey
+    } finally {
+      restoringPreservedCamera = false
+    }
     return true
   }
 
@@ -204,6 +218,10 @@ export function createMapCameraController(
   }
 
   const releaseOnMapInteraction = () => {
+    if (cameraWorkspace?.camera === 'preserve') {
+      capturePreservedCameraAfterInteraction = true
+      if (lockedPreservedView === cameraWorkspace.view) lockedPreservedView = undefined
+    }
     finishDrawerTransition(false, true)
     clearTarget()
   }
@@ -230,10 +248,8 @@ export function createMapCameraController(
   const onDrawerCameraWorkspace = (event: Event) => {
     const nextWorkspace = (event as CustomEvent<DrawerCameraWorkspace>).detail
     if (!nextWorkspace) return
-    if (cameraWorkspace?.camera === 'preserve' && cameraWorkspace.view !== nextWorkspace.view) {
-      rememberPreservedCamera(cameraWorkspace.view)
-    }
     const workspaceChanged = cameraWorkspace?.view !== nextWorkspace.view
+    capturePreservedCameraAfterInteraction = false
     cameraWorkspace = nextWorkspace
     if (workspaceChanged && nextWorkspace.camera === 'preserve') {
       restorePreservedCamera(nextWorkspace.view)
@@ -243,7 +259,18 @@ export function createMapCameraController(
     const transition = (event as CustomEvent<DrawerSizeTransition>).detail
     if (transition) prepareDrawerSizeTransition(transition)
   }
-  const onMapCameraSettled = () => rememberCurrentWorkspaceCamera()
+  const onMapCameraSettled = () => {
+    if (restoringPreservedCamera || cameraWorkspace?.camera !== 'preserve') return
+    if (capturePreservedCameraAfterInteraction) {
+      capturePreservedCameraAfterInteraction = false
+      rememberPreservedCamera(cameraWorkspace.view)
+      return
+    }
+    if (lockedPreservedView !== cameraWorkspace.view) return
+    const expected = preservedCameras.get(cameraWorkspace.view)
+    if (!expected || sameMapCamera(captureMapCamera(map), expected)) return
+    restorePreservedCamera(cameraWorkspace.view)
+  }
   drawerElement.addEventListener(DRAWER_CAMERA_WORKSPACE_EVENT, onDrawerCameraWorkspace)
   drawerElement.addEventListener(DRAWER_SIZE_TRANSITION_EVENT, onDrawerSizeTransition)
   map.on('moveend', onMapCameraSettled)
@@ -251,12 +278,14 @@ export function createMapCameraController(
 
   return {
     focusPoint(center, zoom, focusOptions = {}) {
+      invalidateCurrentPreservedCamera()
       target = { kind: 'point', center, zoom }
       cancelScheduledApply()
       if (drawerTransition) map.stop()
       apply(Boolean(drawerTransition) || focusOptions.animate)
     },
     focusBounds(bounds, focusOptions = {}) {
+      invalidateCurrentPreservedCamera()
       target = { kind: 'bounds', bounds, maxZoom: focusOptions.maxZoom }
       cancelScheduledApply()
       if (drawerTransition) map.stop()
@@ -301,6 +330,12 @@ function defaultDrawerRectForSize(drawer: HTMLElement, size: DrawerSize): Camera
   } finally {
     probe.remove()
   }
+}
+
+function sameMapCamera(a: MapCameraState, b: MapCameraState): boolean {
+  return a.zoom === b.zoom
+    && Math.abs(a.center[0] - b.center[0]) <= CAMERA_EPSILON
+    && Math.abs(a.center[1] - b.center[1]) <= CAMERA_EPSILON
 }
 
 function sameCameraRect(a: CameraRect, b: CameraRect): boolean {
