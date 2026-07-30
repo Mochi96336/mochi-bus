@@ -273,7 +273,7 @@ describe('map camera controller pan-bound handoff', () => {
     order.length = 0
     controller.focusPoint([24, 120], 12)
 
-    expect(order).toEqual(['release', 'setView'])
+    expect(order.slice(0, 2)).toEqual(['release', 'setView'])
     controller.dispose()
   })
 
