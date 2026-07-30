@@ -68,11 +68,12 @@
    states to one usable sheet height so 640 -> 641 px never drops compact content to ~140 px. */
 @media (max-height: 520px) and (min-aspect-ratio: 1 / 1) {
   :root {
+    --map-drawer-short-top-clearance: max(66px, calc(env(safe-area-inset-top) + 48px));
     --map-drawer-short-landscape-size: min(
       60dvh,
       calc(
         100dvh
-        - var(--map-mobile-top-clearance, 66px)
+        - var(--map-drawer-short-top-clearance)
         - var(--map-drawer-mobile-bottom, 10px)
       )
     );
