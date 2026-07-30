@@ -70,7 +70,7 @@
   :root {
     --map-drawer-short-top-clearance: max(66px, calc(env(safe-area-inset-top) + 48px));
     --map-drawer-short-landscape-size: min(
-      60dvh,
+      66dvh,
       calc(
         100dvh
         - var(--map-drawer-short-top-clearance)
