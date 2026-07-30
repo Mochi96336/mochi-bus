@@ -1,8 +1,25 @@
-import type L from 'leaflet'
 import type { NearbyOrigin } from './nearby-places-view'
 
-export const NEARBY_ORIGIN_RENDERED_EVENT = 'mochi:nearby-origin-rendered'
+export type NearbyCameraTransitionListener = {
+  begin(origin: NearbyOrigin): void
+  settle(position: NearbyOrigin): void
+}
 
-export type NearbyOriginRenderedEvent = L.LeafletEvent & {
-  origin: NearbyOrigin
+const listeners = new Set<NearbyCameraTransitionListener>()
+
+export function publishNearbyCameraBegin(origin: NearbyOrigin): void {
+  const snapshot: NearbyOrigin = [...origin]
+  for (const listener of listeners) listener.begin(snapshot)
+}
+
+export function publishNearbyCameraSettle(position: NearbyOrigin): void {
+  const snapshot: NearbyOrigin = [...position]
+  for (const listener of listeners) listener.settle(snapshot)
+}
+
+export function subscribeNearbyCameraTransitions(
+  listener: NearbyCameraTransitionListener,
+): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
 }
