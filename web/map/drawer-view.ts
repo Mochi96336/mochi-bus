@@ -49,6 +49,7 @@ export type DrawerRenderer = {
 export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
   let disposeCurrentView: (() => void) | undefined
   let currentViewKey: string | undefined
+  let currentCameraTransition: DrawerCameraTransition = 'predict'
   let currentScrollRegion: HTMLDivElement | undefined
   const sizesByViewKey = new Map<string, DrawerSize>()
 
@@ -61,6 +62,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     const previousViewKey = currentViewKey
     const previousSize = drawerSizeFromDataset(drawer.dataset.size)
     const nextSize = drawerSizeForView(view, sizesByViewKey.get(view.key))
+    const nextCameraTransition = view.cameraTransition ?? 'predict'
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
       view.key,
@@ -80,8 +82,9 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
       drawer,
       previousSize,
       nextSize,
-      view.cameraTransition ?? 'predict',
+      drawerCameraTransitionForNavigation(currentCameraTransition, nextCameraTransition),
     )
+    currentCameraTransition = nextCameraTransition
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
     drawer.dataset.size = nextSize
@@ -145,6 +148,13 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
 
 export function shouldAnimateDrawerTransition(previousKey: string | undefined, nextKey: string): boolean {
   return previousKey !== undefined && previousKey !== nextKey
+}
+
+export function drawerCameraTransitionForNavigation(
+  previous: DrawerCameraTransition,
+  next: DrawerCameraTransition,
+): DrawerCameraTransition {
+  return previous === 'preserve' || next === 'preserve' ? 'preserve' : 'predict'
 }
 
 export function drawerScrollTopForTransition(
