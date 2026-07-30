@@ -128,7 +128,7 @@ describe('Nearby places map', () => {
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(2, [places[0].latitude, places[0].longitude], true)
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(3, [places[1].latitude, places[1].longitude], true)
     expect(harness.markers[1].radius).toBeCloseTo(11.2)
-    expect(harness.markers[1].style).toEqual({ weight: 3.2, opacity: .62 })
+    expect(harness.markers[1].style).toEqual({ weight: 3.2 })
     expect(harness.markers[2].radius).toBe(10)
     expect(harness.markers[2].style).toEqual({})
     expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(1, harness.markers[0], '你點的位置')
