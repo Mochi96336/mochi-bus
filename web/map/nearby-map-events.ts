@@ -1,30 +1,15 @@
 import type { NearbyOrigin } from './nearby-places-view'
 
-export type NearbyCameraTransitionListener = {
-  begin(origin: NearbyOrigin): void
-  settle(position: NearbyOrigin): void
-  cancel?(): void
-}
+export type NearbyCameraFocusListener = (origin: NearbyOrigin) => void
 
-const listeners = new Set<NearbyCameraTransitionListener>()
+const listeners = new Set<NearbyCameraFocusListener>()
 
-export function publishNearbyCameraBegin(origin: NearbyOrigin): void {
+export function publishNearbyCameraFocus(origin: NearbyOrigin): void {
   const snapshot: NearbyOrigin = [...origin]
-  for (const listener of listeners) listener.begin(snapshot)
+  for (const listener of listeners) listener(snapshot)
 }
 
-export function publishNearbyCameraSettle(position: NearbyOrigin): void {
-  const snapshot: NearbyOrigin = [...position]
-  for (const listener of listeners) listener.settle(snapshot)
-}
-
-export function publishNearbyCameraCancel(): void {
-  for (const listener of listeners) listener.cancel?.()
-}
-
-export function subscribeNearbyCameraTransitions(
-  listener: NearbyCameraTransitionListener,
-): () => void {
+export function subscribeNearbyCameraFocus(listener: NearbyCameraFocusListener): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { NearbyPlacesPresentation } from './nearby-places-controller'
-import { subscribeNearbyCameraTransitions } from './nearby-map-events'
 import { createNearbyResultsState } from './nearby-results-state'
 
 const presentation: NearbyPlacesPresentation = {
@@ -29,20 +28,15 @@ describe('Nearby results state', () => {
     expect(renderEndpoints).toHaveBeenCalledOnce()
   })
 
-  it('stores and renders auto-preview results in one explicit operation without cancelling their settle', () => {
+  it('stores and renders auto-preview results in one explicit operation', () => {
     const renderPlaces = vi.fn()
-    const cancel = vi.fn()
-    const unsubscribe = subscribeNearbyCameraTransitions({ begin: vi.fn(), settle: vi.fn(), cancel })
-    const state = createNearbyResultsState({ renderPlaces, renderEndpoints: vi.fn() })
+    const renderEndpoints = vi.fn()
+    const state = createNearbyResultsState({ renderPlaces, renderEndpoints })
 
-    try {
-      state.storeAndRenderMap(presentation)
+    state.storeAndRenderMap(presentation)
 
-      expect(renderPlaces).toHaveBeenCalledWith([22.997, 120.212], presentation.places)
-      expect(cancel).not.toHaveBeenCalled()
-    } finally {
-      unsubscribe()
-    }
+    expect(renderPlaces).toHaveBeenCalledWith([22.997, 120.212], presentation.places)
+    expect(renderEndpoints).toHaveBeenCalledOnce()
   })
 
   it('keeps a pending origin separate from the last complete result', () => {
@@ -67,26 +61,5 @@ describe('Nearby results state', () => {
     state.renderMap()
     expect(renderPlaces).toHaveBeenCalledWith([23.123, 120.456], [])
     expect(state.current()).toEqual({ origin: [23.123, 120.456], places: [] })
-  })
-
-  it('cancels an unfinished request transition before rendering cached places', () => {
-    const order: string[] = []
-    const unsubscribe = subscribeNearbyCameraTransitions({
-      begin: vi.fn(),
-      settle: vi.fn(),
-      cancel: () => order.push('cancel'),
-    })
-    const state = createNearbyResultsState({
-      renderPlaces: () => order.push('render'),
-      renderEndpoints: () => order.push('endpoints'),
-    })
-    state.store(presentation)
-
-    try {
-      state.renderMap()
-      expect(order).toEqual(['cancel', 'render', 'endpoints'])
-    } finally {
-      unsubscribe()
-    }
   })
 })
