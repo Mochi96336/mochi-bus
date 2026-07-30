@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
+  drawerSizeForView,
   shouldAnimateDrawerTransition,
   shouldPreserveDrawerHeight,
 } from './drawer-view'
@@ -22,6 +23,25 @@ describe('drawer view transitions', () => {
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:C', 240)).toBe(0)
     expect(drawerScrollTopForTransition(undefined, 'trip-results:A:B', 240)).toBe(0)
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:B', -20)).toBe(0)
+  })
+
+  it('keeps catalogue loading and failure in the standard workspace', () => {
+    expect(drawerSizeForView({
+      key: 'catalogue:Tainan',
+      mode: 'compact',
+      content: [],
+    }, undefined)).toBe('standard')
+    expect(drawerSizeForView({
+      key: 'catalogue:Tainan',
+      mode: 'compact',
+      size: 'compact',
+      content: [],
+    }, undefined)).toBe('compact')
+    expect(drawerSizeForView({
+      key: 'region:south',
+      mode: 'compact',
+      content: [],
+    }, undefined)).toBe('content')
   })
 
   it('uses the previous measured height only for an explicitly preserved transition', () => {
