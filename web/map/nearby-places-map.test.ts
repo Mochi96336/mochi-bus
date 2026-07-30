@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type L from 'leaflet'
 import type { NearbyPlace } from './map-api-client'
+import { NEARBY_ORIGIN_RENDERED_EVENT } from './nearby-map-events'
 import type { NearbyOrigin } from './nearby-places-view'
 
 const mocks = vi.hoisted(() => ({
-  bindTextTooltip: vi.fn((layer) => layer),
+  bindTextTooltip: vi.fn(<T>(layer: T): T => layer),
   stopPropagation: vi.fn(),
 }))
 
@@ -26,6 +27,7 @@ class FakeLayerGroup {
 
 class FakeMarker {
   private readonly listeners = new Map<string, (event: unknown) => void>()
+  readonly fired: Array<{ type: string; event: unknown; propagate: boolean }> = []
 
   constructor(
     readonly position: L.LatLngExpression,
@@ -43,8 +45,10 @@ class FakeMarker {
     return this
   }
 
-  fire(type: string, event: unknown): void {
+  fire(type: string, event: unknown, propagate = false): this {
+    this.fired.push({ type, event, propagate })
     this.listeners.get(type)?.(event)
+    return this
   }
 }
 
@@ -61,7 +65,7 @@ function place(index: number, distanceMeters: number): NearbyPlace {
 function createHarness(hoverCapable = true) {
   const layer = new FakeLayerGroup()
   const markers: FakeMarker[] = []
-  const createStopMarker = vi.fn((position, prominent, fillColor) => {
+  const createStopMarker = vi.fn((position: L.LatLngExpression, prominent?: boolean, fillColor?: string) => {
     const marker = new FakeMarker(position, prominent, fillColor)
     markers.push(marker)
     return marker as unknown as L.CircleMarker
@@ -83,7 +87,7 @@ beforeEach(() => {
 })
 
 describe('Nearby places map', () => {
-  it('clears the layer and renders the loading origin with the accent style', () => {
+  it('renders the loading origin and propagates its camera transition event', () => {
     const harness = createHarness()
 
     harness.mapSurface.renderLoadingOrigin(origin)
@@ -91,6 +95,11 @@ describe('Nearby places map', () => {
     expect(harness.layer.clearLayers).toHaveBeenCalledOnce()
     expect(harness.createStopMarker).toHaveBeenCalledWith([...origin], true, stopFillAccent)
     expect(harness.layer.markers).toEqual([harness.markers[0]])
+    expect(harness.markers[0].fired).toEqual([{
+      type: NEARBY_ORIGIN_RENDERED_EVENT,
+      event: { origin: [...origin] },
+      propagate: true,
+    }])
     expect(mocks.bindTextTooltip).not.toHaveBeenCalled()
   })
 
