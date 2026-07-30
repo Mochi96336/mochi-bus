@@ -17,6 +17,7 @@ vi.mock('./leaflet-tooltip', () => ({ bindTextTooltip: <T>(layer: T): T => layer
 
 import { createMapCameraController } from './camera-controller'
 import type { NearbyPlace } from './map-api-client'
+import { publishNearbyCameraCancel } from './nearby-map-events'
 import { createNearbyPlacesMap } from './nearby-places-map'
 
 type Rect = {
@@ -179,6 +180,27 @@ describe('nearby camera transition lifecycle', () => {
     order.length = 0
     nearby.renderPlaces([25, 121.5], [])
     nearby.renderPlaces([25, 121.5], [place()])
+
+    expect(order).toEqual([])
+    controller.dispose()
+  })
+
+  it('does not settle cached places after an active request fails', () => {
+    const order: string[] = []
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
+    const controller = createMapCameraController(map, mapElement, drawerElement)
+    const nearby = createNearbySurface()
+
+    mapElement.dispatchEvent(new Event('pointerdown'))
+    nearby.renderLoadingOrigin([25, 121.5])
+    order.length = 0
+
+    // Active request error cancellation happens before a Back/cache render. The map
+    // surface may publish a settle for its cached first place, but no transition owns it.
+    publishNearbyCameraCancel()
+    nearby.renderPlaces([24.5, 120.5], [place(24.501, 120.501)])
 
     expect(order).toEqual([])
     controller.dispose()
