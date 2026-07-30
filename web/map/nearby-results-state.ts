@@ -1,5 +1,4 @@
 import type { NearbyPlace } from './map-api-client'
-import { publishNearbyCameraCancel } from './nearby-map-events'
 import type { NearbyPlacesPresentation } from './nearby-places-controller'
 import type { NearbyOrigin } from './nearby-places-view'
 
@@ -35,10 +34,7 @@ export function createNearbyResultsState(options: NearbyResultsStateOptions): Ne
     if (pendingOrigin) return { origin: [...pendingOrigin], places: [] }
   }
 
-  function renderSnapshot(snapshot: NearbyResultsSnapshot, allowRequestSettle: boolean): void {
-    // Cached/back-navigation renders are not request completions. Retire any unfinished
-    // transition before the map surface republishes its nearest-place settle event.
-    if (!allowRequestSettle) publishNearbyCameraCancel()
+  function renderSnapshot(snapshot: NearbyResultsSnapshot): void {
     const { origin, places } = snapshot
     options.renderPlaces(origin, places)
     options.renderEndpoints()
@@ -62,7 +58,7 @@ export function createNearbyResultsState(options: NearbyResultsStateOptions): Ne
     store,
     storeAndRenderMap(presentation) {
       store(presentation)
-      if (committed) renderSnapshot(committed, true)
+      if (committed) renderSnapshot(committed)
     },
     replace(nextOrigin, nextPlaces) {
       committed = { origin: [...nextOrigin], places: [...nextPlaces] }
@@ -77,7 +73,7 @@ export function createNearbyResultsState(options: NearbyResultsStateOptions): Ne
       if (!snapshot) return
       if (!committed) committed = cloneSnapshot(snapshot)
       pendingOrigin = undefined
-      renderSnapshot(committed, false)
+      renderSnapshot(committed)
     },
   }
 }
