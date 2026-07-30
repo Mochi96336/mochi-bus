@@ -6,35 +6,35 @@
 }
 
 /* Drawer size is a navigation state, not a measurement of whichever async view rendered last. */
-#map-drawer[data-size="content"] {
+.map-drawer[data-size="content"] {
   height: auto;
 }
 
-#map-drawer[data-size="compact"] {
+.map-drawer[data-size="compact"] {
   height: var(--map-drawer-size-compact);
   max-height: var(--map-drawer-size-compact);
 }
 
-#map-drawer[data-size="standard"] {
+.map-drawer[data-size="standard"] {
   height: var(--map-drawer-size-standard);
   max-height: var(--map-drawer-size-standard);
 }
 
-#map-drawer[data-size="tall"] {
+.map-drawer[data-size="tall"] {
   height: var(--map-drawer-size-tall);
   max-height: var(--map-drawer-size-tall);
 }
 
-#map-drawer[data-size="expanded"] {
+.map-drawer[data-size="expanded"] {
   height: var(--map-drawer-size-expanded);
   max-height: var(--map-drawer-size-expanded);
 }
 
 @media (min-width: 641px) and (prefers-reduced-motion: no-preference) {
-  #map-drawer[data-size="compact"],
-  #map-drawer[data-size="standard"],
-  #map-drawer[data-size="tall"],
-  #map-drawer[data-size="expanded"] {
+  .map-drawer[data-size="compact"],
+  .map-drawer[data-size="standard"],
+  .map-drawer[data-size="tall"],
+  .map-drawer[data-size="expanded"] {
     transition: height 160ms ease, max-height 160ms ease;
   }
 }
