@@ -120,7 +120,6 @@ export function createPlaceRoutesController(
     requestGeneration: number,
   ): Promise<boolean> {
     const { requestId, signal } = options.beginRequest()
-    let routesPresented = false
 
     try {
       const arrivals = await options.loadRoutes(cityCode, place.placeId, signal)
@@ -140,30 +139,30 @@ export function createPlaceRoutesController(
         warning: arrivals.warning,
       }
       options.onRoutes(presentation)
-      routesPresented = true
 
-      const previews = await Promise.all(routes.slice(0, previewLimit).map(async (entry) => {
-        const variant = await options.loadVariant(
-          cityCode,
-          entry.route.routeName,
-          entry.route.variantKey,
-        )
-        return variant ? { ...entry, variant } : undefined
-      }))
+      const previewTasks = routes.slice(0, previewLimit).map(async (entry) => {
+        try {
+          const variant = await options.loadVariant(
+            cityCode,
+            entry.route.routeName,
+            entry.route.variantKey,
+          )
+          if (!variant || !isCurrent(requestGeneration, cityCode, requestId)) return
+          // Render each route as soon as its shape arrives instead of making the
+          // fastest previews wait for the slowest request in the batch.
+          options.renderPreview({ ...entry, variant })
+        } catch {
+          // Shape previews are auxiliary. One missing route geometry must not turn
+          // an already usable arrivals list into a page-level failure.
+        }
+      })
+      await Promise.all(previewTasks)
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
 
-      for (const preview of previews) {
-        if (preview) options.renderPreview(preview)
-      }
       options.onComplete(presentation)
       return true
     } catch (error) {
       if (!isCurrent(requestGeneration, cityCode, requestId)) return false
-
-      if (routesPresented) {
-        options.onError({ cityCode, place, error })
-        return false
-      }
 
       consecutiveFailures += 1
       const decision = decideRetry(error, consecutiveFailures)
