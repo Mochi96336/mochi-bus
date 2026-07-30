@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type L from 'leaflet'
 import type { NearbyPlace } from './map-api-client'
-import { subscribeNearbyCameraTransitions } from './nearby-map-events'
+import { subscribeNearbyCameraFocus } from './nearby-map-events'
 import type { NearbyOrigin } from './nearby-places-view'
 
 const mocks = vi.hoisted(() => ({
@@ -27,6 +27,8 @@ class FakeLayerGroup {
 
 class FakeMarker {
   private readonly listeners = new Map<string, (event: unknown) => void>()
+  radius = 10
+  style: L.PathOptions = {}
 
   constructor(
     readonly position: L.LatLngExpression,
@@ -41,6 +43,20 @@ class FakeMarker {
 
   on(type: string, listener: (event: unknown) => void): this {
     this.listeners.set(type, listener)
+    return this
+  }
+
+  getRadius(): number {
+    return this.radius
+  }
+
+  setRadius(radius: number): this {
+    this.radius = radius
+    return this
+  }
+
+  setStyle(style: L.PathOptions): this {
+    this.style = { ...this.style, ...style }
     return this
   }
 
@@ -84,29 +100,26 @@ beforeEach(() => {
 })
 
 describe('Nearby places map', () => {
-  it('renders the loading origin and explicitly begins the camera transition', () => {
+  it('renders the loading origin and requests one camera focus', () => {
     const harness = createHarness()
-    const begin = vi.fn()
-    const settle = vi.fn()
-    const unsubscribe = subscribeNearbyCameraTransitions({ begin, settle })
+    const focus = vi.fn()
+    const unsubscribe = subscribeNearbyCameraFocus(focus)
 
     harness.mapSurface.renderLoadingOrigin(origin)
 
     expect(harness.layer.clearLayers).toHaveBeenCalledOnce()
     expect(harness.createStopMarker).toHaveBeenCalledWith([...origin], true, stopFillAccent)
     expect(harness.layer.markers).toEqual([harness.markers[0]])
-    expect(begin).toHaveBeenCalledWith(origin)
-    expect(settle).not.toHaveBeenCalled()
+    expect(focus).toHaveBeenCalledWith(origin)
     expect(mocks.bindTextTooltip).not.toHaveBeenCalled()
     unsubscribe()
   })
 
-  it('renders markers and explicitly settles on the nearest place', () => {
+  it('gives only the nearest result a restrained visual emphasis without changing the camera target', () => {
     const harness = createHarness()
-    const places = [place(1, 120.4), place(2, 48.7)]
-    const begin = vi.fn()
-    const settle = vi.fn()
-    const unsubscribe = subscribeNearbyCameraTransitions({ begin, settle })
+    const places = [place(1, 48.7), place(2, 120.4)]
+    const focus = vi.fn()
+    const unsubscribe = subscribeNearbyCameraFocus(focus)
 
     harness.mapSurface.renderPlaces(origin, places)
 
@@ -114,21 +127,25 @@ describe('Nearby places map', () => {
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(1, [...origin], true, stopFillAccent)
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(2, [places[0].latitude, places[0].longitude], true)
     expect(harness.createStopMarker).toHaveBeenNthCalledWith(3, [places[1].latitude, places[1].longitude], true)
+    expect(harness.markers[1].radius).toBeCloseTo(11.2)
+    expect(harness.markers[1].style).toEqual({ weight: 3.2, opacity: .62 })
+    expect(harness.markers[2].radius).toBe(10)
+    expect(harness.markers[2].style).toEqual({})
     expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(1, harness.markers[0], '你點的位置')
-    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(2, harness.markers[1], 'Place 1 · 120 m')
-    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(3, harness.markers[2], 'Place 2 · 49 m')
-    expect(settle).toHaveBeenCalledWith([places[0].latitude, places[0].longitude])
+    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(2, harness.markers[1], '最近 · Place 1 · 49 m')
+    expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(3, harness.markers[2], 'Place 2 · 120 m')
+    expect(focus).not.toHaveBeenCalled()
     unsubscribe()
   })
 
-  it('does not settle when the nearby result is empty', () => {
+  it('renders an empty result without requesting another camera focus', () => {
     const harness = createHarness()
-    const settle = vi.fn()
-    const unsubscribe = subscribeNearbyCameraTransitions({ begin: vi.fn(), settle })
+    const focus = vi.fn()
+    const unsubscribe = subscribeNearbyCameraFocus(focus)
 
     harness.mapSurface.renderPlaces(origin, [])
 
-    expect(settle).not.toHaveBeenCalled()
+    expect(focus).not.toHaveBeenCalled()
     unsubscribe()
   })
 

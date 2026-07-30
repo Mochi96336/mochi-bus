@@ -1,5 +1,4 @@
 import type { NearbyPlace } from './map-api-client'
-import { publishNearbyCameraCancel } from './nearby-map-events'
 
 const DEFAULT_PLACE_LIMIT = 12
 
@@ -92,9 +91,6 @@ export function createNearbyPlacesController(
       return true
     } catch (error) {
       if (!isCurrent(requestGeneration, request.cityCode, requestId)) return false
-      // An active request owns the current Nearby camera transition. Failure is a
-      // terminal lifecycle event just like settle or an empty result.
-      publishNearbyCameraCancel()
       options.onError({ ...request, error })
       return false
     }
