@@ -70,6 +70,7 @@ function deferred<T>() {
 function createHarness(options: {
   loadRoutes?: (cityCode: string, placeId: string, signal?: AbortSignal) => Promise<PlaceArrivalsResponse>
   loadVariant?: (cityCode: string, routeName: string, variantKey: string) => Promise<RouteMapVariant | undefined>
+  renderPreview?: (preview: PlaceRoutePreview) => void
   favoriteRouteUids?: () => Iterable<string>
   previewLimit?: number
 } = {}) {
@@ -85,7 +86,8 @@ function createHarness(options: {
   const loadRoutes = vi.fn(options.loadRoutes ?? (async () => ({
     routes: [route('307', 120), route('605', 60)],
   })))
-  const loadVariant = vi.fn(options.loadVariant ?? (async (_city, routeName) => variant(routeName)))
+  const loadVariant = vi.fn(options.loadVariant ?? (async (_city: string, routeName: string) => variant(routeName)))
+  const renderPreview = options.renderPreview ?? ((preview: PlaceRoutePreview) => previews.push(preview))
   const controller = createPlaceRoutesController({
     currentCityCode: () => cityCode,
     beginRequest: () => {
@@ -101,7 +103,7 @@ function createHarness(options: {
     invalidateOtherPreviews: () => { invalidatedOtherPreviews += 1 },
     onStart: (request) => starts.push(request),
     onRoutes: (presentation) => presentations.push(presentation),
-    renderPreview: (preview) => previews.push(preview),
+    renderPreview,
     onComplete: (presentation) => completions.push(presentation),
     onError: (failure) => failures.push(failure),
     previewLimit: options.previewLimit,
@@ -134,7 +136,7 @@ describe('Place routes controller', () => {
       .toEqual([favorite, fastest, unavailable])
   })
 
-  it('loads sorted routes, bounded variants, previews, and completion in order', async () => {
+  it('loads sorted routes, bounded variants, previews, and one core completion', async () => {
     const routes = Array.from({ length: 10 }, (_, index) => route(`R${index}`, 600 - index * 10))
     const harness = createHarness({
       loadRoutes: async () => ({ routes, warning: 'tdx-rate-limit' }),
@@ -159,18 +161,84 @@ describe('Place routes controller', () => {
     expect(harness.failures).toEqual([])
   })
 
-  it('skips missing variants without blocking completion', async () => {
+  it('completes the core result before auxiliary shapes resolve', async () => {
+    const slow = deferred<RouteMapVariant | undefined>()
+    const fast = deferred<RouteMapVariant | undefined>()
     const harness = createHarness({
-      loadVariant: async (_city, routeName) => routeName === '307' ? undefined : variant(routeName),
+      loadRoutes: async () => ({ routes: [route('SLOW', 10), route('FAST', 20)] }),
+      loadVariant: async (_city, routeName) => routeName === 'SLOW' ? slow.promise : fast.promise,
+    })
+
+    const loading = harness.controller.open(place())
+    await vi.waitFor(() => expect(harness.loadVariant).toHaveBeenCalledTimes(2))
+    expect(harness.completions).toEqual(harness.presentations)
+
+    fast.resolve(variant('FAST'))
+    await vi.waitFor(() => expect(harness.previews.map((entry) => entry.variant.routeName)).toEqual(['FAST']))
+    expect(harness.completions).toHaveLength(1)
+
+    slow.resolve(variant('SLOW'))
+    await expect(loading).resolves.toBe(true)
+    expect(harness.previews.map((entry) => entry.variant.routeName)).toEqual(['FAST', 'SLOW'])
+    expect(harness.completions).toHaveLength(1)
+  })
+
+  it('skips missing or failed variants without blocking completion', async () => {
+    const harness = createHarness({
+      loadVariant: async (_city, routeName) => {
+        if (routeName === '307') throw new Error('shape unavailable')
+        return routeName === '605' ? variant(routeName) : undefined
+      },
     })
 
     await expect(harness.controller.open(place())).resolves.toBe(true)
 
     expect(harness.previews.map((entry) => entry.variant.routeName)).toEqual(['605'])
     expect(harness.completions).toHaveLength(1)
+    expect(harness.failures).toEqual([])
   })
 
-  it('rejects stale route completions after cancellation or a newer place starts', async () => {
+  it('reports renderer failures after preserving the usable core result', async () => {
+    const renderError = new Error('preview renderer failed')
+    const harness = createHarness({
+      renderPreview: () => { throw renderError },
+    })
+
+    await expect(harness.controller.open(place())).resolves.toBe(false)
+
+    expect(harness.presentations).toHaveLength(1)
+    expect(harness.completions).toEqual(harness.presentations)
+    expect(harness.failures).toEqual([{ cityCode: 'Taipei', place: place(), error: renderError }])
+    expect(harness.loadRoutes).toHaveBeenCalledOnce()
+  })
+
+  it('invalidates sibling shape tasks after the first renderer failure', async () => {
+    const failed = deferred<RouteMapVariant | undefined>()
+    const late = deferred<RouteMapVariant | undefined>()
+    const renderError = new Error('preview renderer failed')
+    const attempted: string[] = []
+    const harness = createHarness({
+      loadRoutes: async () => ({ routes: [route('FAIL', 10), route('LATE', 20)] }),
+      loadVariant: async (_city, routeName) => routeName === 'FAIL' ? failed.promise : late.promise,
+      renderPreview: (preview) => {
+        attempted.push(preview.variant.routeName)
+        if (preview.variant.routeName === 'FAIL') throw renderError
+      },
+    })
+
+    const loading = harness.controller.open(place())
+    await vi.waitFor(() => expect(harness.loadVariant).toHaveBeenCalledTimes(2))
+    failed.resolve(variant('FAIL'))
+    await expect(loading).resolves.toBe(false)
+    expect(harness.failures).toEqual([{ cityCode: 'Taipei', place: place(), error: renderError }])
+
+    late.resolve(variant('LATE'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(attempted).toEqual(['FAIL'])
+  })
+
+  it('rejects stale arrivals after cancellation or a newer place starts', async () => {
     const first = deferred<PlaceArrivalsResponse>()
     const harness = createHarness({
       loadRoutes: async (_city, placeId) => placeId === 'OLD'
@@ -185,43 +253,39 @@ describe('Place routes controller', () => {
     await expect(oldLoad).resolves.toBe(false)
 
     expect(harness.presentations.map((entry) => entry.place.placeId)).toEqual(['NEW'])
+    expect(harness.completions.map((entry) => entry.place.placeId)).toEqual(['NEW'])
     expect(harness.previews.map((entry) => entry.variant.routeName)).toEqual(['NEW'])
   })
 
-  it('suppresses preview completion after city change or request invalidation', async () => {
+  it('suppresses stale previews after city change or request invalidation without undoing core completion', async () => {
     const pendingVariant = deferred<RouteMapVariant | undefined>()
     const cityChanged = createHarness({ loadVariant: () => pendingVariant.promise })
     const loading = cityChanged.controller.open(place())
     await vi.waitFor(() => expect(cityChanged.presentations).toHaveLength(1))
+    expect(cityChanged.completions).toEqual(cityChanged.presentations)
     cityChanged.setCityCode('NewTaipei')
     pendingVariant.resolve(variant('307'))
     await expect(loading).resolves.toBe(false)
     expect(cityChanged.previews).toEqual([])
-    expect(cityChanged.completions).toEqual([])
+    expect(cityChanged.completions).toHaveLength(1)
 
     const staleVariant = deferred<RouteMapVariant | undefined>()
     const stale = createHarness({ loadVariant: () => staleVariant.promise })
     const staleLoad = stale.controller.open(place())
     await vi.waitFor(() => expect(stale.presentations).toHaveLength(1))
+    expect(stale.completions).toEqual(stale.presentations)
     stale.invalidateRequest()
     staleVariant.resolve(variant('307'))
     await expect(staleLoad).resolves.toBe(false)
     expect(stale.previews).toEqual([])
-    expect(stale.completions).toEqual([])
+    expect(stale.completions).toHaveLength(1)
   })
 
-  it('reports active route or preview failures but suppresses cancelled failures', async () => {
+  it('reports active arrivals failures but suppresses cancelled failures', async () => {
     const routeError = new Error('route failure')
     const activeRoute = createHarness({ loadRoutes: async () => { throw routeError } })
     await expect(activeRoute.controller.open(place())).resolves.toBe(false)
     expect(activeRoute.failures).toEqual([{ cityCode: 'Taipei', place: place(), error: routeError }])
-
-    const previewError = new Error('preview failure')
-    const activePreview = createHarness({ loadVariant: async () => { throw previewError } })
-    await expect(activePreview.controller.open(place())).resolves.toBe(false)
-    expect(activePreview.presentations).toHaveLength(1)
-    expect(activePreview.completions).toEqual([])
-    expect(activePreview.failures).toEqual([{ cityCode: 'Taipei', place: place(), error: previewError }])
 
     const pending = deferred<PlaceArrivalsResponse>()
     const cancelled = createHarness({ loadRoutes: () => pending.promise })

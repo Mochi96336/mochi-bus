@@ -1665,6 +1665,7 @@ async function openNearbyPlace(place: NearbyPlace) {
     mapView: 'place',
     mapParent: 'nearby',
   }, '', `/map?city=${encodeURIComponent(activeCity.code)}&place=${encodeURIComponent(place.placeId)}`)
+  camera.focusPoint([place.latitude, place.longitude], map.getZoom(), { animate: true })
   await placeRoutes.open(place)
 }
 
@@ -1728,7 +1729,6 @@ function directionFavoriteControl(place: NearbyPlace, route: PlaceRoute): HTMLBu
 
 function completePlaceRoutes({ cityCode, place }: PlaceRoutesPresentation): void {
   drawTripEndpoints()
-  camera.focusPoint([place.latitude, place.longitude], map.getZoom())
   const currentState = history.state && typeof history.state === 'object' ? history.state : {}
   history.replaceState({ ...currentState, mapView: 'place' }, '', `/map?city=${cityCode}&place=${encodeURIComponent(place.placeId)}`)
   setDocumentTitle(`${place.name} 到站時間`)

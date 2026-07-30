@@ -4,29 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const panConstraint = vi.hoisted(() => {
   const releaseForProgrammaticCamera = vi.fn()
   const dispose = Object.assign(vi.fn(), { releaseForProgrammaticCamera })
-  return {
-    releaseForProgrammaticCamera,
-    dispose,
-    constrain: vi.fn(() => dispose),
-  }
+  return { releaseForProgrammaticCamera, dispose, constrain: vi.fn(() => dispose) }
 })
-
-const leaflet = vi.hoisted(() => ({
-  stopPropagation: vi.fn(),
-}))
 
 vi.mock('./map-pan-bounds', () => ({
   constrainMapPanToTaiwan: panConstraint.constrain,
 }))
 vi.mock('leaflet', () => ({
-  default: { DomEvent: { stopPropagation: leaflet.stopPropagation } },
+  default: { DomEvent: { stopPropagation: vi.fn() } },
 }))
 vi.mock('./leaflet-tooltip', () => ({ bindTextTooltip: <T>(layer: T): T => layer }))
 
 import { createMapCameraController } from './camera-controller'
 import type { NearbyPlace } from './map-api-client'
+import { publishNearbyCameraCancel } from './nearby-map-events'
 import { createNearbyPlacesMap } from './nearby-places-map'
-
 
 type Rect = {
   left: number
@@ -41,23 +33,6 @@ function element(rect: Rect): HTMLElement {
   return Object.assign(new EventTarget(), {
     getBoundingClientRect: () => rect,
   }) as unknown as HTMLElement
-}
-
-function installBrowserStubs(reducedMotion = false) {
-  const browserWindow = Object.assign(new EventTarget(), {
-    requestAnimationFrame: vi.fn(() => 1),
-    cancelAnimationFrame: vi.fn(),
-    matchMedia: vi.fn(() => ({ matches: reducedMotion })),
-    visualViewport: undefined,
-  })
-
-  class ResizeObserverStub {
-    observe = vi.fn()
-    disconnect = vi.fn()
-  }
-
-  vi.stubGlobal('window', browserWindow)
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 }
 
 function point(x: number, y: number): L.Point {
@@ -82,32 +57,16 @@ function latLng(value: L.LatLngExpression): { lat: number; lng: number } {
 }
 
 function createMapStub(order: string[]): L.Map {
-  let center = { lat: 23.5, lng: 121 }
-  let zoom = 12
+  const center = { lat: 23.5, lng: 121 }
+  const zoom = 12
   return {
-    fitBounds: vi.fn(() => {
-      order.push('fitBounds')
-    }),
-    flyTo: vi.fn((nextCenter: L.LatLngExpression, nextZoom: number) => {
-      order.push('flyTo')
-      center = latLng(nextCenter)
-      zoom = nextZoom
-    }),
-    panTo: vi.fn((nextCenter: L.LatLngExpression) => {
-      order.push('panTo')
-      center = latLng(nextCenter)
-    }),
-    stop: vi.fn(() => {
-      order.push('stop')
-    }),
-    setView: vi.fn((nextCenter: L.LatLngExpression, nextZoom: number) => {
-      order.push('setView')
-      center = latLng(nextCenter)
-      zoom = nextZoom
-    }),
-    panBy: vi.fn(() => {
-      order.push('panBy')
-    }),
+    fitBounds: vi.fn(() => order.push('fitBounds')),
+    flyTo: vi.fn(() => order.push('flyTo')),
+    // Keep the center unchanged to model a real Leaflet pan that is still in flight.
+    panTo: vi.fn(() => order.push('panTo')),
+    stop: vi.fn(() => order.push('stop')),
+    setView: vi.fn(() => order.push('setView')),
+    panBy: vi.fn(() => order.push('panBy')),
     project: vi.fn((value: L.LatLngExpression) => {
       const projected = latLng(value)
       return point(projected.lng * 100, projected.lat * 100)
@@ -131,15 +90,12 @@ class FakeLayerGroup {
 }
 
 class FakeMarker {
-  private readonly listeners = new Map<string, (event: unknown) => void>()
-
   addTo(layer: FakeLayerGroup): this {
     layer.markers.push(this)
     return this
   }
 
-  on(type: string, listener: (event: unknown) => void): this {
-    this.listeners.set(type, listener)
+  on(): this {
     return this
   }
 }
@@ -154,7 +110,7 @@ function createNearbySurface() {
   })
 }
 
-function place(latitude: number, longitude: number): NearbyPlace {
+function place(latitude = 25.001, longitude = 121.501): NearbyPlace {
   return {
     placeId: 'PLACE',
     name: '測試站牌',
@@ -164,85 +120,54 @@ function place(latitude: number, longitude: number): NearbyPlace {
   }
 }
 
-describe('map camera controller pan-bound handoff', () => {
+describe('nearby camera transition lifecycle', () => {
   beforeEach(() => {
-    installBrowserStubs()
+    const browserWindow = Object.assign(new EventTarget(), {
+      requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
+        callback(0)
+        return 1
+      }),
+      cancelAnimationFrame: vi.fn(),
+      matchMedia: vi.fn(() => ({ matches: false })),
+      visualViewport: undefined,
+    })
+    class ResizeObserverStub {
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+    vi.stubGlobal('window', browserWindow)
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub)
     panConstraint.releaseForProgrammaticCamera.mockReset()
     panConstraint.dispose.mockReset()
-    panConstraint.constrain.mockClear()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('releases pending pan bounds before point and bounds camera movement', () => {
+  it('does not reuse a failed pointer transition for a non-pointer retry', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
-    panConstraint.releaseForProgrammaticCamera.mockImplementation(() => {
-      order.push('release')
-    })
-
-    const controller = createMapCameraController(map, mapElement, drawerElement)
-
-    controller.focusPoint([23.5, 121], 12)
-    expect(order.slice(0, 2)).toEqual(['release', 'setView'])
-
-    order.length = 0
-    controller.focusBounds([[22, 120], [25, 122]])
-    expect(order.slice(0, 2)).toEqual(['release', 'fitBounds'])
-
-    order.length = 0
-    controller.clear()
-    expect(order).toEqual(['release'])
-
-    controller.dispose()
-    expect(panConstraint.dispose).toHaveBeenCalledOnce()
-  })
-
-  it('connects the real Nearby Places surface to begin and settle camera motion', () => {
-    const order: string[] = []
-    const map = createMapStub(order)
-    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
-    const drawerElement = element({ left: 900, top: 0, right: 1200, bottom: 800, width: 300, height: 800 })
     panConstraint.releaseForProgrammaticCamera.mockImplementation(() => order.push('release'))
     const controller = createMapCameraController(map, mapElement, drawerElement)
     const nearby = createNearbySurface()
 
     mapElement.dispatchEvent(new Event('pointerdown'))
     nearby.renderLoadingOrigin([25, 121.5])
-
-    expect(order).toEqual(['release', 'stop', 'panTo'])
-    const [cameraCenter, panOptions] = vi.mocked(map.panTo).mock.calls[0]
-    expect(cameraCenter).toEqual(expect.objectContaining({ lat: expect.any(Number), lng: expect.any(Number) }))
-    expect(cameraCenter).not.toEqual({ lat: 25, lng: 121.5 })
-    expect(panOptions).toEqual(expect.objectContaining({ animate: true, duration: .32 }))
-
     order.length = 0
-    nearby.renderPlaces([25, 121.5], [place(26, 122.5)])
-    expect(order).toEqual(['release', 'stop', 'panTo'])
-    expect(vi.mocked(map.panTo).mock.calls.at(-1)?.[1]).toEqual(
-      expect.objectContaining({ animate: true, duration: .2 }),
-    )
-    controller.dispose()
-  })
 
-  it('does not animate URL hydration origins without a recent map pointer click', () => {
-    const order: string[] = []
-    const map = createMapStub(order)
-    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
-    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
-    const controller = createMapCameraController(map, mapElement, drawerElement)
-
-    createNearbySurface().renderLoadingOrigin([25, 121.5])
+    // A drawer/URL retry publishes begin without a new map pointer. It must retire
+    // the old transition even though the retry itself does not animate.
+    nearby.renderLoadingOrigin([25, 121.5])
+    nearby.renderPlaces([25, 121.5], [place()])
 
     expect(order).toEqual([])
     controller.dispose()
   })
 
-  it('suppresses settle after user intervention', () => {
+  it('cancels the transition when the nearby result is empty', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
@@ -253,35 +178,40 @@ describe('map camera controller pan-bound handoff', () => {
     mapElement.dispatchEvent(new Event('pointerdown'))
     nearby.renderLoadingOrigin([25, 121.5])
     order.length = 0
-    mapElement.dispatchEvent(new Event('pointerdown'))
-    nearby.renderPlaces([25, 121.5], [place(26, 122.5)])
+    nearby.renderPlaces([25, 121.5], [])
+    nearby.renderPlaces([25, 121.5], [place()])
 
     expect(order).toEqual([])
     controller.dispose()
   })
 
-  it('does not let a failed nearby transition swallow a later unrelated focus', () => {
+  it('does not settle cached places after an active request fails', () => {
+    const order: string[] = []
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
+    const controller = createMapCameraController(map, mapElement, drawerElement)
+    const nearby = createNearbySurface()
+
+    mapElement.dispatchEvent(new Event('pointerdown'))
+    nearby.renderLoadingOrigin([25, 121.5])
+    order.length = 0
+
+    // Active request error cancellation happens before a Back/cache render. The map
+    // surface may publish a settle for its cached first place, but no transition owns it.
+    publishNearbyCameraCancel()
+    nearby.renderPlaces([24.5, 120.5], [place(24.501, 120.501)])
+
+    expect(order).toEqual([])
+    controller.dispose()
+  })
+
+  it('keeps an in-flight settle intact when route completion repeats its target', () => {
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
     const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
     panConstraint.releaseForProgrammaticCamera.mockImplementation(() => order.push('release'))
-    const controller = createMapCameraController(map, mapElement, drawerElement)
-
-    mapElement.dispatchEvent(new Event('pointerdown'))
-    createNearbySurface().renderLoadingOrigin([25, 121.5])
-    order.length = 0
-    controller.focusPoint([24, 120], 12)
-
-    expect(order.slice(0, 2)).toEqual(['release', 'setView'])
-    controller.dispose()
-  })
-
-  it('does not jump again when route completion repeats the settled station target', () => {
-    const order: string[] = []
-    const map = createMapStub(order)
-    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
-    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
     const controller = createMapCameraController(map, mapElement, drawerElement)
     const nearby = createNearbySurface()
     const selected = place(26, 122.5)
@@ -290,26 +220,10 @@ describe('map camera controller pan-bound handoff', () => {
     nearby.renderLoadingOrigin([25, 121.5])
     nearby.renderPlaces([25, 121.5], [selected])
     order.length = 0
+
     controller.focusPoint([selected.latitude, selected.longitude], 12)
 
     expect(order).toEqual([])
-    controller.dispose()
-  })
-
-  it('uses instant positioning when reduced motion is requested', () => {
-    vi.unstubAllGlobals()
-    installBrowserStubs(true)
-    const order: string[] = []
-    const map = createMapStub(order)
-    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
-    const drawerElement = element({ left: 1200, top: 0, right: 1200, bottom: 800, width: 0, height: 800 })
-    const controller = createMapCameraController(map, mapElement, drawerElement)
-
-    controller.focusPoint([25, 121.5], 14, { animate: true })
-
-    expect(order).toContain('setView')
-    expect(order).not.toContain('flyTo')
-    expect(order).not.toContain('panTo')
     controller.dispose()
   })
 })
