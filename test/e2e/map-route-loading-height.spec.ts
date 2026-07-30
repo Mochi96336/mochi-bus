@@ -96,7 +96,7 @@ async function drawerGeometry(page: Page) {
   }))
 }
 
-test('keeps the compact route state usable across portrait and short landscape breakpoints', async ({ page }) => {
+test('keeps the compact route state usable across portrait and landscape boundaries', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let released = false
   let releaseRoute!: () => void
@@ -125,13 +125,21 @@ test('keeps the compact route state usable across portrait and short landscape b
     const at641 = await drawer.evaluate((element) => element.getBoundingClientRect().height)
     expect(Math.abs(at641 - at640)).toBeLessThanOrEqual(1)
 
+    await page.setViewportSize({ width: 844, height: 520 })
+    const at520 = await drawerGeometry(page)
+    await page.setViewportSize({ width: 844, height: 521 })
+    const at521 = await drawerGeometry(page)
+    expect(Math.abs(at521.height - at520.height)).toBeLessThanOrEqual(1)
+    expect(at521.height).toBeGreaterThanOrEqual(250)
+    expect(at521.scrollHeight - at521.clientHeight).toBeLessThanOrEqual(1)
+
     await page.setViewportSize({ width: 844, height: 390 })
     await expect(drawer.getByRole('heading', { name: '0右' })).toBeVisible()
     await expect(drawer.locator('.drawer-back')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
     const landscapeLoading = await drawerGeometry(page)
-    expect(landscapeLoading.height).toBeGreaterThanOrEqual(220)
+    expect(landscapeLoading.height).toBeGreaterThanOrEqual(250)
     expect(landscapeLoading.scrollHeight - landscapeLoading.clientHeight).toBeLessThanOrEqual(1)
 
     releaseRoute()
@@ -140,7 +148,7 @@ test('keeps the compact route state usable across portrait and short landscape b
     await expect(drawer.locator('.drawer-back')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
     const landscapeResult = await drawerGeometry(page)
-    expect(landscapeResult.height).toBeGreaterThanOrEqual(220)
+    expect(landscapeResult.height).toBeGreaterThanOrEqual(250)
     expect(landscapeResult.scrollHeight - landscapeResult.clientHeight).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 390, height: 844 })
