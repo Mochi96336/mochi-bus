@@ -73,7 +73,7 @@ export function createPlaceRoutesController(
 ): PlaceRoutesController {
   const previewLimit = options.previewLimit ?? DEFAULT_PREVIEW_LIMIT
   if (!Number.isInteger(previewLimit) || previewLimit <= 0) {
-    throw new Error('Nearby place preview limit must be a positive integer')
+    throw new Error('Place route preview limit must be a positive integer')
   }
 
   const decideRetry = options.retryDecision ?? placeRetryDecision
