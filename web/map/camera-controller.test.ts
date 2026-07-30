@@ -168,7 +168,7 @@ describe('map camera controller pan-bound handoff', () => {
 
     const observed = browser.observer()
     observed.callback([
-      { target: drawerElement } as ResizeObserverEntry,
+      { target: drawerElement } as unknown as ResizeObserverEntry,
     ], observed.instance)
     browser.runFrames()
     expect(map.fitBounds).toHaveBeenCalledTimes(1)
