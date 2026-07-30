@@ -30,15 +30,6 @@
   max-height: var(--map-drawer-size-expanded);
 }
 
-@media (min-width: 641px) and (prefers-reduced-motion: no-preference) {
-  .map-drawer[data-size="compact"],
-  .map-drawer[data-size="standard"],
-  .map-drawer[data-size="tall"],
-  .map-drawer[data-size="expanded"] {
-    transition: height 160ms ease, max-height 160ms ease;
-  }
-}
-
 @media (max-width: 640px) {
   :root {
     --map-drawer-size-standard: min(
