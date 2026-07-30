@@ -79,7 +79,7 @@ async function catalogueHeight(page: Page): Promise<number> {
   return drawer.evaluate((element) => element.getBoundingClientRect().height)
 }
 
-test('keeps the compact route state at the standard mobile sheet height while loading', async ({ page }) => {
+test('keeps the compact route state usable across portrait and short landscape breakpoints', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -101,10 +101,24 @@ test('keeps the compact route state at the standard mobile sheet height while lo
     expect(Math.abs(loading.height - beforeHeight)).toBeLessThanOrEqual(1)
     expect(loading.minHeight).toBe('')
 
+    await page.setViewportSize({ width: 640, height: 390 })
+    const at640 = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+    await page.setViewportSize({ width: 641, height: 390 })
+    const at641 = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+    expect(Math.abs(at641 - at640)).toBeLessThanOrEqual(1)
+
     await page.setViewportSize({ width: 844, height: 390 })
-    await expect.poll(() => drawer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(beforeHeight)
+    await expect(drawer.getByRole('heading', { name: '0右' })).toBeVisible()
+    await expect(drawer.locator('.drawer-back')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
+    const landscape = await drawer.evaluate((element) => ({
+      height: element.getBoundingClientRect().height,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }))
+    expect(landscape.height).toBeGreaterThanOrEqual(220)
+    expect(landscape.scrollHeight - landscape.clientHeight).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 390, height: 844 })
     await expect.poll(async () => {
