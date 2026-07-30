@@ -159,7 +159,12 @@ describe('map camera controller pan-bound handoff', () => {
       measureDrawerRectForSize,
     })
 
-    controller.prepareDrawerSizeTransition({ from: 'standard', to: 'compact', durationMs: 160 })
+    controller.prepareDrawerSizeTransition({
+      from: 'standard',
+      to: 'compact',
+      durationMs: 160,
+      camera: 'predict',
+    })
     controller.focusBounds([[22, 120], [25, 122]])
 
     expect(measureDrawerRectForSize).toHaveBeenCalledWith(drawerElement, 'compact')
@@ -190,6 +195,39 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
+  it('drops an old target while a preserved camera workspace resizes', () => {
+    const browser = installBrowserStubs()
+    const order: string[] = []
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 })
+    const controller = createMapCameraController(map, mapElement, drawerElement, {
+      measureDrawerRectForSize: () => ({ left: 780, top: 386, right: 1180, bottom: 782, width: 400, height: 396 }),
+    })
+
+    controller.focusBounds([[22, 120], [25, 122]])
+    controller.prepareDrawerSizeTransition({
+      from: 'compact',
+      to: 'standard',
+      durationMs: 160,
+      camera: 'preserve',
+    })
+
+    const observed = browser.observer()
+    observed.callback([
+      { target: drawerElement } as unknown as ResizeObserverEntry,
+    ], observed.instance)
+    browser.runFrames()
+    expect(map.stop).toHaveBeenCalledOnce()
+    expect(map.fitBounds).toHaveBeenCalledTimes(1)
+
+    drawerElement.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'height' }))
+    browser.runFrames()
+    expect(map.fitBounds).toHaveBeenCalledTimes(1)
+
+    controller.dispose()
+  })
+
   it('cancels the predicted camera target when the user manipulates the map', () => {
     const browser = installBrowserStubs()
     const order: string[] = []
@@ -201,7 +239,12 @@ describe('map camera controller pan-bound handoff', () => {
     })
 
     controller.focusBounds([[22, 120], [25, 122]])
-    controller.prepareDrawerSizeTransition({ from: 'standard', to: 'compact', durationMs: 160 })
+    controller.prepareDrawerSizeTransition({
+      from: 'standard',
+      to: 'compact',
+      durationMs: 160,
+      camera: 'predict',
+    })
     mapElement.dispatchEvent(new Event('pointerdown'))
     browser.runFrames()
 
