@@ -55,22 +55,32 @@
   }
 }
 
-/* A short landscape viewport can be wider than the mobile breakpoint. Collapse all fixed
-   states to one usable sheet height so 640 -> 641 px never drops compact content to ~140 px. */
-@media (max-height: 520px) and (min-aspect-ratio: 1 / 1) {
+/* Landscape uses continuous minimums rather than a hard height breakpoint. The formulas
+   preserve usable route content around 390 px tall, stay continuous across 640/641 px and
+   520/521 px, then naturally rejoin the regular vh-based desktop sizes. */
+@media (min-aspect-ratio: 1 / 1) {
   :root {
-    --map-drawer-short-top-clearance: max(66px, calc(env(safe-area-inset-top) + 48px));
-    --map-drawer-short-landscape-size: min(
-      66dvh,
-      calc(
-        100dvh
-        - var(--map-drawer-short-top-clearance)
-        - var(--map-drawer-mobile-bottom, 10px)
-      )
+    --map-drawer-landscape-top-clearance: max(66px, calc(env(safe-area-inset-top) + 48px));
+    --map-drawer-landscape-available-height: calc(
+      100dvh
+      - var(--map-drawer-landscape-top-clearance)
+      - var(--map-drawer-mobile-bottom, 10px)
     );
-    --map-drawer-size-compact: var(--map-drawer-short-landscape-size);
-    --map-drawer-size-standard: var(--map-drawer-short-landscape-size);
-    --map-drawer-size-tall: var(--map-drawer-short-landscape-size);
-    --map-drawer-size-expanded: var(--map-drawer-short-landscape-size);
+    --map-drawer-size-compact: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(260px, 36dvh, 300px)
+    );
+    --map-drawer-size-standard: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(300px, 44dvh, 420px)
+    );
+    --map-drawer-size-tall: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(340px, 56dvh, 560px)
+    );
+    --map-drawer-size-expanded: min(
+      var(--map-drawer-landscape-available-height),
+      clamp(380px, 64dvh, 680px)
+    );
   }
 }
