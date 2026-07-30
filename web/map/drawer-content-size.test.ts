@@ -32,8 +32,11 @@ function timetable(overrides: Partial<RouteTimetable> = {}): RouteTimetable {
   }
 }
 
-function denseHour(hour: string): string[] {
-  return Array.from({ length: 12 }, (_, index) => `${hour}:${String(index * 5).padStart(2, '0')}`)
+function denseHour(hour: string, count = 12): string[] {
+  return Array.from({ length: count }, (_, index) => {
+    const minute = Math.floor(index * 60 / count)
+    return `${hour}:${String(minute).padStart(2, '0')}`
+  })
 }
 
 describe('data-driven drawer sizes', () => {
@@ -77,6 +80,20 @@ describe('data-driven drawer sizes', () => {
         times: [...denseHour('06'), ...denseHour('07'), ...denseHour('08')],
       })],
     }))).toBe('standard')
+  })
+
+  it('promotes narrow-sheet dense hours when each hour needs a third chip row', () => {
+    expect(timetableDrawerSize(timetable({
+      services: [service({
+        times: [
+          ...denseHour('06', 13),
+          ...denseHour('07', 13),
+          ...denseHour('08', 13),
+          ...denseHour('09', 13),
+          ...denseHour('10', 13),
+        ],
+      })],
+    }))).toBe('expanded')
   })
 
   it('counts wrapped service tabs instead of assuming one tab row', () => {
