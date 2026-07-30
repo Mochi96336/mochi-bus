@@ -1,7 +1,7 @@
 import type { DrawerSize } from './drawer-view'
 import type { RouteTimetable, TimetableService } from './map-api-client'
 
-const MINUTE_CHIPS_PER_VISUAL_ROW = 7
+const MINUTE_CHIPS_PER_VISUAL_ROW = 6
 const SERVICE_TABS_PER_VISUAL_ROW = 4
 
 export function placeRoutesDrawerSize(routeCount: number): DrawerSize {
