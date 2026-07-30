@@ -196,7 +196,9 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
           operation: 'token',
           resource: 'token',
         })
-        const willRetry = attempt < TOKEN_FETCH_MAX_ATTEMPTS && isRetryableTokenStatus(response.status)
+        const willRetry = attempt < TOKEN_FETCH_MAX_ATTEMPTS
+          && isRetryableTokenStatus(response.status)
+          && !error.rateLimited
         logRequestFailure(isShared, attempt, error, willRetry)
         if (willRetry) {
           await sleep(retryDelayMs())
@@ -264,7 +266,7 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     credentialKey: string,
     isShared: boolean,
   ): Promise<string> => {
-    const existing = tokenFlights.get(credentialKey)
+    const existing = tokenFlights.get(key)
     if (existing) return existing
 
     dependencies.assertCircuitClosed(tokenCircuitKey(credentialKey))
