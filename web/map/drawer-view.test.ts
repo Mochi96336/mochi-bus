@@ -3,6 +3,7 @@ import {
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
+  drawerSizeTransitionDurationMs,
   shouldAnimateDrawerTransition,
   shouldPreserveDrawerHeight,
 } from './drawer-view'
@@ -73,6 +74,19 @@ describe('drawer view transitions', () => {
       header: [],
       content: [],
     }, 'tall')).toBe('standard')
+  })
+
+  it('reads the longest height-related CSS transition including delays', () => {
+    expect(drawerSizeTransitionDurationMs({
+      transitionProperty: 'opacity, height, max-height',
+      transitionDuration: '80ms, 0.16s, 120ms',
+      transitionDelay: '0s, 20ms',
+    })).toBe(180)
+    expect(drawerSizeTransitionDurationMs({
+      transitionProperty: 'opacity',
+      transitionDuration: '160ms',
+      transitionDelay: '0s',
+    })).toBe(0)
   })
 
   it('uses the previous measured height only for an explicitly preserved transition', () => {
