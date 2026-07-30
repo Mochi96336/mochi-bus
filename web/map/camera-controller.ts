@@ -1,7 +1,8 @@
 import type L from 'leaflet'
 import { calculateCameraPadding, cameraPanOffset, type CameraRect } from '../../src/domain/map/camera-padding'
 import { constrainMapPanToTaiwan } from './map-pan-bounds'
-import { NEARBY_ORIGIN_RENDERED_EVENT, type NearbyOriginRenderedEvent } from './nearby-map-events'
+import { subscribeNearbyCameraTransitions } from './nearby-map-events'
+
 
 type PointMotion = 'instant' | 'auto' | 'pan'
 
@@ -28,7 +29,6 @@ type PointFocusOptions = {
 }
 
 type NearbyTransition = {
-  cancelled: boolean
   expiresAt: number
 }
 
@@ -48,6 +48,7 @@ const DEFAULT_DEAD_ZONE_PX = 24
 const NEARBY_SETTLE_DEAD_ZONE_PX = 48
 const REFRESH_PAN_DURATION_SECONDS = .16
 const REFRESH_DEAD_ZONE_PX = 16
+const SAME_TARGET_TOLERANCE_PX = .5
 
 /**
  * Keeps one semantic camera target and projects it into the part of the map that
@@ -80,11 +81,14 @@ export function createMapCameraController(
     return map.unproject(map.project(point.center, point.zoom).add(offset), point.zoom)
   }
 
-  const currentDistanceTo = (center: L.LatLngExpression, zoom: number): number => {
-    const current = map.project(map.getCenter(), zoom)
-    const destination = map.project(center, zoom)
-    return current.distanceTo(destination)
-  }
+  const pointDistance = (
+    first: L.LatLngExpression,
+    second: L.LatLngExpression,
+    zoom: number,
+  ): number => map.project(first, zoom).distanceTo(map.project(second, zoom))
+
+  const currentDistanceTo = (center: L.LatLngExpression, zoom: number): number =>
+    pointDistance(map.getCenter(), center, zoom)
 
   const refreshOptionsFor = (options: PointFocusOptions): PointFocusOptions | undefined => {
     const motion = options.motion ?? (options.animate ? 'auto' : 'instant')
@@ -166,25 +170,22 @@ export function createMapCameraController(
 
   const releaseOnPointerDown = () => {
     lastPointerDownAt = Date.now()
-    if (nearbyTransition) nearbyTransition.cancelled = true
+    clearNearbyTransition()
     clearTarget()
   }
   const releaseOnOtherMapInteraction = () => {
     lastPointerDownAt = Number.NEGATIVE_INFINITY
-    if (nearbyTransition) nearbyTransition.cancelled = true
+    clearNearbyTransition()
     clearTarget()
   }
   mapElement.addEventListener('pointerdown', releaseOnPointerDown, { capture: true })
   mapElement.addEventListener('wheel', releaseOnOtherMapInteraction, { capture: true, passive: true })
   mapElement.addEventListener('keydown', releaseOnOtherMapInteraction, { capture: true })
 
-  const focusNearbyOrigin = (event: L.LeafletEvent) => {
-    const origin = (event as NearbyOriginRenderedEvent).origin
-    if (!origin || disposed || Date.now() - lastPointerDownAt > RECENT_POINTER_WINDOW_MS) return
-    nearbyTransition = {
-      cancelled: false,
-      expiresAt: Date.now() + NEARBY_SETTLE_WINDOW_MS,
-    }
+  const beginNearbyTransition = (origin: readonly [number, number]) => {
+    if (disposed || Date.now() - lastPointerDownAt > RECENT_POINTER_WINDOW_MS) return
+    lastPointerDownAt = Number.NEGATIVE_INFINITY
+    nearbyTransition = { expiresAt: Date.now() + NEARBY_SETTLE_WINDOW_MS }
     target = {
       kind: 'point',
       center: [...origin],
@@ -194,7 +195,27 @@ export function createMapCameraController(
     cancelScheduledApply()
     apply({ motion: 'pan' })
   }
-  map.on(NEARBY_ORIGIN_RENDERED_EVENT, focusNearbyOrigin)
+
+  const settleNearbyTransition = (position: readonly [number, number]) => {
+    const transition = nearbyTransition
+    clearNearbyTransition()
+    if (!transition || transition.expiresAt < Date.now()) return
+
+    const settleOptions = { motion: 'pan' as const, duration: .2, deadZonePx: NEARBY_SETTLE_DEAD_ZONE_PX }
+    target = {
+      kind: 'point',
+      center: [...position],
+      zoom: map.getZoom(),
+      refreshOptions: refreshOptionsFor(settleOptions),
+    }
+    cancelScheduledApply()
+    apply(settleOptions)
+  }
+
+  const unsubscribeNearbyTransitions = subscribeNearbyCameraTransitions({
+    begin: beginNearbyTransition,
+    settle: settleNearbyTransition,
+  })
 
   const resizeObserver = new ResizeObserver(() => refresh())
   resizeObserver.observe(mapElement)
@@ -209,15 +230,16 @@ export function createMapCameraController(
 
   return {
     focusPoint(center, zoom, options = {}) {
-      const transition = nearbyTransition
-      const sameZoom = Math.abs(map.getZoom() - zoom) < .001
-      if (transition) clearNearbyTransition()
-      if (transition && sameZoom) {
-        if (transition.cancelled || transition.expiresAt < Date.now()) return
-        const settleOptions = { motion: 'pan' as const, duration: .2, deadZonePx: NEARBY_SETTLE_DEAD_ZONE_PX }
-        target = { kind: 'point', center, zoom, refreshOptions: refreshOptionsFor(settleOptions) }
-        cancelScheduledApply()
-        apply(settleOptions)
+      clearNearbyTransition()
+      const previousTarget = target
+      const sameSemanticTarget = previousTarget?.kind === 'point'
+        && Math.abs(previousTarget.zoom - zoom) < .001
+        && pointDistance(previousTarget.center, center, zoom) <= SAME_TARGET_TOLERANCE_PX
+        && !options.animate
+        && !options.motion
+      if (sameSemanticTarget) {
+        target = { ...previousTarget, center, zoom }
+        refresh()
         return
       }
 
@@ -238,9 +260,9 @@ export function createMapCameraController(
       disposed = true
       clearTarget()
       clearNearbyTransition()
+      unsubscribeNearbyTransitions()
       taiwanPanConstraint()
       resizeObserver.disconnect()
-      map.off(NEARBY_ORIGIN_RENDERED_EVENT, focusNearbyOrigin)
       mapElement.removeEventListener('pointerdown', releaseOnPointerDown, { capture: true })
       mapElement.removeEventListener('wheel', releaseOnOtherMapInteraction, { capture: true })
       mapElement.removeEventListener('keydown', releaseOnOtherMapInteraction, { capture: true })
