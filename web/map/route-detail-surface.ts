@@ -304,6 +304,14 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     return timetableSummary
   }
 
+  function timetableDrawerKeys(cityCode: string, variantKey: string, stopUid: string | undefined) {
+    const sizeKey = `timetable:${cityCode}:${variantKey}`
+    return {
+      key: `${sizeKey}:${stopUid ?? ''}`,
+      sizeKey,
+    }
+  }
+
   function showTimetableLoading(
     cityCode: string,
     variant: RouteMapVariant,
@@ -311,7 +319,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     onBack: () => void,
   ): void {
     options.renderDrawer({
-      key: `timetable:${cityCode}:${variant.variantKey}:${stopUid ?? ''}`,
+      ...timetableDrawerKeys(cityCode, variant.variantKey, stopUid),
       mode: 'timetable',
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
@@ -330,7 +338,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     onRetry: () => void,
   ): void {
     options.renderDrawer({
-      key: `timetable:${cityCode}:${variant.variantKey}:${stopUid ?? ''}`,
+      ...timetableDrawerKeys(cityCode, variant.variantKey, stopUid),
       mode: 'timetable',
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
@@ -353,12 +361,17 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
 
   function showTimetable(view: TimetableViewOptions): { available: boolean } {
     const available = view.timetable.mode !== 'none' && view.timetable.services.length > 0
+    const drawerKeys = timetableDrawerKeys(
+      view.cityCode,
+      view.variant.variantKey,
+      view.timetable.selectedStop?.stopUid,
+    )
     if (!available) {
       const panel = document.createElement('div')
       panel.className = 'timetable-panel'
       panel.appendChild(options.paragraph('這個方向目前沒有公開的表定班次資料。'))
       options.renderDrawer({
-        key: `timetable:${view.cityCode}:${view.variant.variantKey}:${view.timetable.selectedStop?.stopUid ?? ''}`,
+        ...drawerKeys,
         mode: 'timetable',
         size: 'compact',
         header: [
@@ -372,7 +385,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
 
     const panel = createTimetablePanel(view.timetable, view.onSelectStop)
     options.renderDrawer({
-      key: `timetable:${view.cityCode}:${view.variant.variantKey}:${view.timetable.selectedStop?.stopUid ?? ''}`,
+      ...drawerKeys,
       mode: 'timetable',
       size: timetableDrawerSize(view.timetable),
       header: [
