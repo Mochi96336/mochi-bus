@@ -1,6 +1,7 @@
 import L from 'leaflet'
 import { bindTextTooltip } from './leaflet-tooltip'
 import type { NearbyPlace } from './map-api-client'
+import { NEARBY_ORIGIN_RENDERED_EVENT } from './nearby-map-events'
 import type { NearbyOrigin } from './nearby-places-view'
 import { stopFillAccent } from './theme'
 
@@ -35,7 +36,11 @@ export function createNearbyPlacesMap(options: NearbyPlacesMapOptions): NearbyPl
   return {
     renderLoadingOrigin(origin) {
       options.layer.clearLayers()
-      createOriginMarker(origin).addTo(options.layer)
+      const marker = createOriginMarker(origin).addTo(options.layer)
+      // Propagates through Leaflet's event parents to the map camera controller. The
+      // controller only animates when this follows a real pointer interaction, so URL
+      // hydration and retry renders keep their deterministic instant camera behavior.
+      marker.fire(NEARBY_ORIGIN_RENDERED_EVENT, { origin: [...origin] }, true)
     },
 
     renderPlaces(origin, places) {
