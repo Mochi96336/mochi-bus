@@ -1,6 +1,9 @@
 import type { DrawerSize } from './drawer-view'
 import type { RouteTimetable, TimetableService } from './map-api-client'
 
+const MINUTE_CHIPS_PER_VISUAL_ROW = 7
+const SERVICE_TABS_PER_VISUAL_ROW = 4
+
 export function placeRoutesDrawerSize(routeCount: number): DrawerSize {
   if (routeCount === 0) return 'compact'
   if (routeCount <= 7) return 'standard'
@@ -20,7 +23,9 @@ export function timetableDrawerSize(timetable: RouteTimetable): DrawerSize {
     && timetable.stops.filter((stop) => stop.hasTimes).length > 1
     ? 1
     : 0
-  const serviceTabRows = timetable.services.length > 1 ? 1 : 0
+  const serviceTabRows = timetable.services.length > 1
+    ? Math.ceil(timetable.services.length / SERVICE_TABS_PER_VISUAL_ROW)
+    : 0
   const persistentRows = 2 + timedStopSelectorRows + serviceTabRows
   const serviceRows = Math.max(0, ...timetable.services.map(timetableServiceRows))
   const visibleRows = persistentRows + serviceRows
@@ -32,6 +37,12 @@ export function timetableDrawerSize(timetable: RouteTimetable): DrawerSize {
 }
 
 function timetableServiceRows(service: TimetableService): number {
-  const hourRows = new Set(service.times.map((time) => time.split(':', 1)[0])).size
+  const minutesByHour = new Map<string, number>()
+  for (const time of service.times) {
+    const hour = time.split(':', 1)[0]
+    minutesByHour.set(hour, (minutesByHour.get(hour) ?? 0) + 1)
+  }
+  const hourRows = [...minutesByHour.values()]
+    .reduce((total, minuteCount) => total + Math.ceil(minuteCount / MINUTE_CHIPS_PER_VISUAL_ROW), 0)
   return hourRows + service.periods.length
 }
