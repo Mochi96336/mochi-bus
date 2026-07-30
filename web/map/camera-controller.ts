@@ -9,6 +9,7 @@ type PointTarget = {
   kind: 'point'
   center: L.LatLngExpression
   zoom: number
+  refreshOptions?: PointFocusOptions
 }
 
 type BoundsTarget = {
@@ -45,6 +46,8 @@ const DEFAULT_PAN_DURATION_SECONDS = .32
 const DEFAULT_FLY_DURATION_SECONDS = .48
 const DEFAULT_DEAD_ZONE_PX = 24
 const NEARBY_SETTLE_DEAD_ZONE_PX = 48
+const REFRESH_PAN_DURATION_SECONDS = .16
+const REFRESH_DEAD_ZONE_PX = 16
 
 /**
  * Keeps one semantic camera target and projects it into the part of the map that
@@ -83,7 +86,14 @@ export function createMapCameraController(
     return current.distanceTo(destination)
   }
 
-  const apply = (options: PointFocusOptions = {}) => {
+  const refreshOptionsFor = (options: PointFocusOptions): PointFocusOptions | undefined => {
+    const motion = options.motion ?? (options.animate ? 'auto' : 'instant')
+    return motion === 'instant'
+      ? undefined
+      : { motion: 'pan', duration: REFRESH_PAN_DURATION_SECONDS, deadZonePx: REFRESH_DEAD_ZONE_PX }
+  }
+
+  const apply = (options?: PointFocusOptions) => {
     frame = undefined
     if (disposed || !target) return
     taiwanPanConstraint.releaseForProgrammaticCamera()
@@ -98,25 +108,26 @@ export function createMapCameraController(
       return
     }
 
+    const pointOptions = options ?? target.refreshOptions ?? {}
     const motion = reducedMotion()
       ? 'instant'
-      : options.motion ?? (options.animate ? 'auto' : 'instant')
+      : pointOptions.motion ?? (pointOptions.animate ? 'auto' : 'instant')
     if (motion !== 'instant') {
       const cameraCenter = cameraCenterFor(target)
       const sameZoom = Math.abs(map.getZoom() - target.zoom) < .001
-      const deadZonePx = options.deadZonePx ?? DEFAULT_DEAD_ZONE_PX
+      const deadZonePx = pointOptions.deadZonePx ?? DEFAULT_DEAD_ZONE_PX
       if (sameZoom && currentDistanceTo(cameraCenter, target.zoom) <= deadZonePx) return
 
       map.stop()
       if (motion === 'pan' || sameZoom) {
         map.panTo(cameraCenter, {
           animate: true,
-          duration: options.duration ?? DEFAULT_PAN_DURATION_SECONDS,
+          duration: pointOptions.duration ?? DEFAULT_PAN_DURATION_SECONDS,
         })
       } else {
         map.flyTo(cameraCenter, target.zoom, {
           animate: true,
-          duration: options.duration ?? DEFAULT_FLY_DURATION_SECONDS,
+          duration: pointOptions.duration ?? DEFAULT_FLY_DURATION_SECONDS,
         })
       }
       return
@@ -174,7 +185,12 @@ export function createMapCameraController(
       cancelled: false,
       expiresAt: Date.now() + NEARBY_SETTLE_WINDOW_MS,
     }
-    target = { kind: 'point', center: [...origin], zoom: map.getZoom() }
+    target = {
+      kind: 'point',
+      center: [...origin],
+      zoom: map.getZoom(),
+      refreshOptions: { motion: 'pan', duration: REFRESH_PAN_DURATION_SECONDS, deadZonePx: REFRESH_DEAD_ZONE_PX },
+    }
     cancelScheduledApply()
     apply({ motion: 'pan' })
   }
@@ -194,17 +210,20 @@ export function createMapCameraController(
   return {
     focusPoint(center, zoom, options = {}) {
       const transition = nearbyTransition
-      const isNearbySettle = transition
-        && transition.expiresAt >= Date.now()
-        && Math.abs(map.getZoom() - zoom) < .001
+      const sameZoom = Math.abs(map.getZoom() - zoom) < .001
       if (transition) clearNearbyTransition()
-      if (isNearbySettle && transition.cancelled) return
+      if (transition && sameZoom) {
+        if (transition.cancelled || transition.expiresAt < Date.now()) return
+        const settleOptions = { motion: 'pan' as const, duration: .2, deadZonePx: NEARBY_SETTLE_DEAD_ZONE_PX }
+        target = { kind: 'point', center, zoom, refreshOptions: refreshOptionsFor(settleOptions) }
+        cancelScheduledApply()
+        apply(settleOptions)
+        return
+      }
 
-      target = { kind: 'point', center, zoom }
+      target = { kind: 'point', center, zoom, refreshOptions: refreshOptionsFor(options) }
       cancelScheduledApply()
-      apply(isNearbySettle
-        ? { motion: 'pan', duration: .2, deadZonePx: NEARBY_SETTLE_DEAD_ZONE_PX }
-        : options)
+      apply(options)
     },
     focusBounds(bounds, options = {}) {
       clearNearbyTransition()
