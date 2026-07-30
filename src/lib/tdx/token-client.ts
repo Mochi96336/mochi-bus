@@ -8,6 +8,9 @@ const TDX_TOKEN_ENDPOINT = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/
 const TDX_TOKEN_MAX_RESPONSE_BYTES = 16 * 1024
 const DEFAULT_MAX_TOKEN_CACHE_ENTRIES = 128
 const DEFAULT_MAX_TOKEN_SINGLEFLIGHT_ENTRIES = 128
+const TOKEN_FETCH_MAX_ATTEMPTS = 2
+const TOKEN_RETRY_BASE_DELAY_MS = 250
+const TOKEN_RETRY_JITTER_MS = 500
 
 export type TDXCredentialEnv = {
   TDX_CLIENT_ID: string
@@ -34,6 +37,14 @@ export type TDXTokenObservation = {
   credentialScope: 'shared' | 'byok'
 }
 
+export type TDXTokenRequestFailureObservation = TDXTokenObservation & {
+  attempt: number
+  maxAttempts: number
+  failureKind: TDXServiceError['failureKind']
+  status?: number
+  willRetry: boolean
+}
+
 export type TDXTokenClientDependencies = {
   requestTimeoutMs: number
   assertCircuitClosed: (key: string) => void
@@ -54,8 +65,11 @@ export type TDXTokenClientDependencies = {
     declaredBytes?: number
     sampled: boolean
   }) => void
+  logRequestFailure: (observation: TDXTokenRequestFailureObservation) => void
   fetcher?: typeof fetch
   now?: () => number
+  sleep?: (ms: number) => Promise<void>
+  random?: () => number
   maxTokenCacheEntries?: number
   maxTokenSingleflightEntries?: number
 }
@@ -72,6 +86,10 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
   const tokenCache = new Map<string, TokenCacheEntry>()
   const tokenFlights = new Map<string, Promise<string>>()
   const now = () => dependencies.now ? dependencies.now() : Date.now()
+  const sleep = (ms: number) => dependencies.sleep
+    ? dependencies.sleep(ms)
+    : new Promise<void>((resolve) => { setTimeout(resolve, ms) })
+  const random = () => dependencies.random ? dependencies.random() : Math.random()
   const maxTokenCacheEntries = dependencies.maxTokenCacheEntries ?? DEFAULT_MAX_TOKEN_CACHE_ENTRIES
   const maxTokenSingleflightEntries = dependencies.maxTokenSingleflightEntries
     ?? DEFAULT_MAX_TOKEN_SINGLEFLIGHT_ENTRIES
@@ -112,6 +130,29 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     return promise
   }
 
+  const retryDelayMs = (): number => {
+    const jitter = Math.max(0, Math.min(1, random()))
+    return TOKEN_RETRY_BASE_DELAY_MS + Math.floor(jitter * TOKEN_RETRY_JITTER_MS)
+  }
+
+  const logRequestFailure = (
+    isShared: boolean,
+    attempt: number,
+    error: TDXServiceError,
+    willRetry: boolean,
+  ): void => {
+    dependencies.logRequestFailure({
+      operation: 'token',
+      resource: 'token',
+      credentialScope: isShared ? 'shared' : 'byok',
+      attempt,
+      maxAttempts: TOKEN_FETCH_MAX_ATTEMPTS,
+      failureKind: error.failureKind,
+      status: error.status,
+      willRetry,
+    })
+  }
+
   const fetchTDXToken = async (
     clientId: string,
     clientSecret: string,
@@ -124,79 +165,96 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
       client_id: clientId,
       client_secret: clientSecret,
     })
-    let response: Response
-    try {
-      response = await (dependencies.fetcher ?? fetch)(TDX_TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal: AbortSignal.timeout(dependencies.requestTimeoutMs),
-      })
-    } catch (error) {
-      const serviceError = new TDXServiceError('TDX token request failed', undefined, {
-        cause: error,
-        failureKind: transportFailureClass(error),
-      })
-      dependencies.recordCircuitFailure(circuitKey, serviceError)
-      throw serviceError
-    }
 
-    if (!response.ok) {
-      const error = await dependencies.responseError('TDX token request failed', response, isShared, {
-        operation: 'token',
-        resource: 'token',
-      })
-      dependencies.recordCircuitFailure(circuitKey, error, response.headers.get('Retry-After'))
-      throw error
-    }
-    observeTDXResponseSuccess(isShared)
+    for (let attempt = 1; attempt <= TOKEN_FETCH_MAX_ATTEMPTS; attempt += 1) {
+      let response: Response
+      try {
+        response = await (dependencies.fetcher ?? fetch)(TDX_TOKEN_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+          signal: AbortSignal.timeout(dependencies.requestTimeoutMs),
+        })
+      } catch (error) {
+        const serviceError = new TDXServiceError('TDX token request failed', undefined, {
+          cause: error,
+          failureKind: transportFailureClass(error),
+        })
+        const willRetry = attempt < TOKEN_FETCH_MAX_ATTEMPTS
+        logRequestFailure(isShared, attempt, serviceError, willRetry)
+        if (willRetry) {
+          await sleep(retryDelayMs())
+          continue
+        }
+        dependencies.recordCircuitFailure(circuitKey, serviceError)
+        throw serviceError
+      }
 
-    let data: { access_token?: string; expires_in?: number }
-    try {
-      const parsed = await dependencies.readJsonResponse(response, TDX_TOKEN_MAX_RESPONSE_BYTES)
-      dependencies.logResponseSize({
-        operation: 'token',
-        resource: 'token',
-        credentialScope: isShared ? 'shared' : 'byok',
-        maxBytes: TDX_TOKEN_MAX_RESPONSE_BYTES,
-        receivedBytes: parsed.receivedBytes,
-        declaredBytes: parsed.declaredBytes,
-        sampled: false,
-      })
-      data = parsed.data as { access_token?: string; expires_in?: number }
-    } catch (error) {
-      const serviceError = dependencies.isPayloadTooLargeError(error)
-        ? error
-        : new TDXServiceError('TDX token response is invalid JSON', 502, {
-            cause: error,
-            failureKind: 'invalid_json',
-          })
-      if (dependencies.isPayloadTooLargeError(serviceError)) {
-        dependencies.logResponseTooLarge(serviceError, {
+      if (!response.ok) {
+        const error = await dependencies.responseError('TDX token request failed', response, isShared, {
+          operation: 'token',
+          resource: 'token',
+        })
+        const willRetry = attempt < TOKEN_FETCH_MAX_ATTEMPTS && isRetryableTokenStatus(response.status)
+        logRequestFailure(isShared, attempt, error, willRetry)
+        if (willRetry) {
+          await sleep(retryDelayMs())
+          continue
+        }
+        dependencies.recordCircuitFailure(circuitKey, error, response.headers.get('Retry-After'))
+        throw error
+      }
+      observeTDXResponseSuccess(isShared)
+
+      let data: { access_token?: string; expires_in?: number }
+      try {
+        const parsed = await dependencies.readJsonResponse(response, TDX_TOKEN_MAX_RESPONSE_BYTES)
+        dependencies.logResponseSize({
           operation: 'token',
           resource: 'token',
           credentialScope: isShared ? 'shared' : 'byok',
+          maxBytes: TDX_TOKEN_MAX_RESPONSE_BYTES,
+          receivedBytes: parsed.receivedBytes,
+          declaredBytes: parsed.declaredBytes,
+          sampled: false,
         })
+        data = parsed.data as { access_token?: string; expires_in?: number }
+      } catch (error) {
+        const serviceError = dependencies.isPayloadTooLargeError(error)
+          ? error
+          : new TDXServiceError('TDX token response is invalid JSON', 502, {
+              cause: error,
+              failureKind: 'invalid_json',
+            })
+        if (dependencies.isPayloadTooLargeError(serviceError)) {
+          dependencies.logResponseTooLarge(serviceError, {
+            operation: 'token',
+            resource: 'token',
+            credentialScope: isShared ? 'shared' : 'byok',
+          })
+        }
+        dependencies.recordCircuitFailure(circuitKey, serviceError)
+        throw serviceError
       }
-      dependencies.recordCircuitFailure(circuitKey, serviceError)
-      throw serviceError
-    }
 
-    if (!data.access_token) {
-      const error = new TDXServiceError('TDX token response is missing access_token', 502, {
-        failureKind: 'invalid_schema',
+      if (!data.access_token) {
+        const error = new TDXServiceError('TDX token response is missing access_token', 502, {
+          failureKind: 'invalid_schema',
+        })
+        dependencies.recordCircuitFailure(circuitKey, error)
+        throw error
+      }
+
+      dependencies.recordCircuitSuccess(circuitKey)
+      const expiresIn = Math.max(60, data.expires_in ?? 3600)
+      cacheToken(credentialKey, {
+        value: data.access_token,
+        expiresAt: now() + Math.max(30, expiresIn - 60) * 1000,
       })
-      dependencies.recordCircuitFailure(circuitKey, error)
-      throw error
+      return data.access_token
     }
 
-    dependencies.recordCircuitSuccess(circuitKey)
-    const expiresIn = Math.max(60, data.expires_in ?? 3600)
-    cacheToken(credentialKey, {
-      value: data.access_token,
-      expiresAt: now() + Math.max(30, expiresIn - 60) * 1000,
-    })
-    return data.access_token
+    throw new TDXServiceError('TDX token request failed', undefined, { failureKind: 'unknown' })
   }
 
   const tokenFor = async (
@@ -272,4 +330,5 @@ async function sha256Hex(value: string): Promise<string> {
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+const isRetryableTokenStatus = (status: number): boolean => status === 408 || status >= 500 && status <= 599
 const tokenCircuitKey = (credentialKey: string): string => `token/${credentialKey}`
