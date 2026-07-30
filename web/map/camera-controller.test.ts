@@ -216,7 +216,7 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
-  it('captures a preserved workspace on departure and restores it on return', () => {
+  it('captures a preserved workspace and reapplies it after the return transition settles', () => {
     installBrowserStubs()
     const order: string[] = []
     const savedCamera = { center: { lat: 25.0478, lng: 121.5319 }, zoom: 16 }
@@ -253,6 +253,11 @@ describe('map camera controller pan-bound handoff', () => {
       fromCamera: 'predict',
       toCamera: 'preserve',
     })
+    // A later async presenter may still try to apply its own fallback camera while the
+    // drawer is moving. The transition-end correction must restore the exact snapshot.
+    map.setView([24.2, 120.8], 12)
+    drawerElement.setRect({ left: 780, top: 386, right: 1180, bottom: 782, width: 400, height: 396 })
+    drawerElement.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'height' }))
 
     expect(map.setView).toHaveBeenLastCalledWith(
       [savedCamera.center.lat, savedCamera.center.lng],
