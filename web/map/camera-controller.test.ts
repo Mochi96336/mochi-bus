@@ -83,16 +83,31 @@ function installBrowserStubs() {
   }
 }
 
-function createMapStub(order: string[]): L.Map {
+function createMapStub(
+  order: string[],
+  initialCamera = { center: { lat: 23.5, lng: 121 }, zoom: 12 },
+): L.Map {
+  let center = { ...initialCamera.center }
+  let zoom = initialCamera.zoom
   return {
     fitBounds: vi.fn(() => {
       order.push('fitBounds')
     }),
-    flyTo: vi.fn(() => {
+    flyTo: vi.fn((nextCenter: L.LatLngExpression, nextZoom?: number) => {
       order.push('flyTo')
+      const value = Array.isArray(nextCenter)
+        ? { lat: Number(nextCenter[0]), lng: Number(nextCenter[1]) }
+        : nextCenter as L.LatLng
+      center = { lat: value.lat, lng: value.lng }
+      if (nextZoom !== undefined) zoom = nextZoom
     }),
-    setView: vi.fn(() => {
+    setView: vi.fn((nextCenter: L.LatLngExpression, nextZoom?: number) => {
       order.push('setView')
+      const value = Array.isArray(nextCenter)
+        ? { lat: Number(nextCenter[0]), lng: Number(nextCenter[1]) }
+        : nextCenter as L.LatLng
+      center = { lat: value.lat, lng: value.lng }
+      if (nextZoom !== undefined) zoom = nextZoom
     }),
     panBy: vi.fn(() => {
       order.push('panBy')
@@ -100,6 +115,8 @@ function createMapStub(order: string[]): L.Map {
     stop: vi.fn(() => {
       order.push('stop')
     }),
+    getCenter: vi.fn(() => ({ ...center } as L.LatLng)),
+    getZoom: vi.fn(() => zoom),
     project: vi.fn(() => ({
       add: () => ({ x: 0, y: 0 }),
     })),
@@ -164,6 +181,10 @@ describe('map camera controller pan-bound handoff', () => {
       to: 'compact',
       durationMs: 160,
       camera: 'predict',
+      fromView: 'catalogue:Tainan',
+      toView: 'route:Tainan:R1',
+      fromCamera: 'predict',
+      toCamera: 'predict',
     })
     controller.focusBounds([[22, 120], [25, 122]])
 
@@ -195,7 +216,55 @@ describe('map camera controller pan-bound handoff', () => {
     controller.dispose()
   })
 
-  it('drops an old target while a preserved camera workspace resizes', () => {
+  it('captures a preserved workspace on departure and restores it on return', () => {
+    installBrowserStubs()
+    const order: string[] = []
+    const savedCamera = { center: { lat: 25.0478, lng: 121.5319 }, zoom: 16 }
+    const map = createMapStub(order, savedCamera)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 780, top: 386, right: 1180, bottom: 782, width: 400, height: 396 })
+    const controller = createMapCameraController(map, mapElement, drawerElement, {
+      measureDrawerRectForSize: (_drawer, size) => size === 'compact'
+        ? { left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 }
+        : { left: 780, top: 386, right: 1180, bottom: 782, width: 400, height: 396 },
+    })
+
+    controller.prepareDrawerSizeTransition({
+      from: 'standard',
+      to: 'compact',
+      durationMs: 160,
+      camera: 'preserve',
+      fromView: 'trip-results:A:B',
+      toView: 'route:Taipei:B',
+      fromCamera: 'preserve',
+      toCamera: 'predict',
+    })
+    map.setView([23.1, 120.2], 11)
+    drawerElement.setRect({ left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 })
+    drawerElement.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'height' }))
+
+    controller.prepareDrawerSizeTransition({
+      from: 'compact',
+      to: 'standard',
+      durationMs: 160,
+      camera: 'preserve',
+      fromView: 'route:Taipei:B',
+      toView: 'trip-results:A:B',
+      fromCamera: 'predict',
+      toCamera: 'preserve',
+    })
+
+    expect(map.setView).toHaveBeenLastCalledWith(
+      [savedCamera.center.lat, savedCamera.center.lng],
+      savedCamera.zoom,
+      { animate: false },
+    )
+    expect(map.getCenter()).toEqual(savedCamera.center)
+    expect(map.getZoom()).toBe(savedCamera.zoom)
+    controller.dispose()
+  })
+
+  it('drops an old target while a preserved camera workspace resizes without a snapshot', () => {
     const browser = installBrowserStubs()
     const order: string[] = []
     const map = createMapStub(order)
@@ -211,6 +280,10 @@ describe('map camera controller pan-bound handoff', () => {
       to: 'standard',
       durationMs: 160,
       camera: 'preserve',
+      fromView: 'route:Tainan:R1',
+      toView: 'trip-results:A:B',
+      fromCamera: 'predict',
+      toCamera: 'preserve',
     })
 
     const observed = browser.observer()
@@ -244,6 +317,10 @@ describe('map camera controller pan-bound handoff', () => {
       to: 'compact',
       durationMs: 160,
       camera: 'predict',
+      fromView: 'catalogue:Tainan',
+      toView: 'route:Tainan:R1',
+      fromCamera: 'predict',
+      toCamera: 'predict',
     })
     mapElement.dispatchEvent(new Event('pointerdown'))
     browser.runFrames()
