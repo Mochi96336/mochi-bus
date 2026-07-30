@@ -313,7 +313,6 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `timetable:${cityCode}:${variant.variantKey}:${stopUid ?? ''}`,
       mode: 'timetable',
-      size: 'standard',
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
         options.heading(variant.routeName, `時刻 · ${variant.label}`),
@@ -333,7 +332,6 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       key: `timetable:${cityCode}:${variant.variantKey}:${stopUid ?? ''}`,
       mode: 'timetable',
-      size: 'compact',
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
         options.heading(variant.routeName, message),
