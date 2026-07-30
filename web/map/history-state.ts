@@ -1,3 +1,9 @@
+import {
+  readNearbyAutoPreviewOrigin,
+  withoutNearbyAutoPreviewOrigin,
+  type NearbyAutoPreviewOrigin,
+} from './nearby-auto-preview-history'
+
 export type MapView = 'overview' | 'region' | 'catalogue' | 'route' | 'nearby' | 'place' | 'trip-select' | 'trip-results'
 
 const mapViews = new Set<MapView>([
@@ -94,11 +100,20 @@ export function planMapHistoryPush(
   if (!nextView) return { mode: 'push', state: nextState }
 
   const next = historyRecord(nextState)
+  const autoPreview = planNearbyAutoPreviewPlacePush(
+    currentState,
+    currentUrl,
+    next,
+    currentView,
+    nextView,
+  )
+  if (autoPreview) return autoPreview
+
   if (!isMapDetailView(nextView)) {
-    return { mode: 'push', state: withoutMapDetailTrail(next) }
+    return { mode: 'push', state: withoutMapTransientState(next) }
   }
   if (!currentView || !isMapDetailView(currentView)) {
-    return { mode: 'push', state: withoutMapDetailTrail(next) }
+    return { mode: 'push', state: withoutMapTransientState(next) }
   }
 
   const existingTrail = readMapDetailTrail(currentState)
@@ -107,7 +122,7 @@ export function planMapHistoryPush(
     : appendMapDetailTrail(existingTrail, {
       view: currentView,
       url: currentUrl,
-      state: withoutMapDetailTrail(historyRecord(currentState)),
+      state: withoutMapTransientState(historyRecord(currentState)),
     })
 
   return {
@@ -183,17 +198,94 @@ function isMapDetailView(view: MapView): view is MapDetailView {
   return mapDetailViews.has(view)
 }
 
+function planNearbyAutoPreviewPlacePush(
+  currentState: unknown,
+  currentUrl: string,
+  next: Record<string, unknown>,
+  currentView: MapView | undefined,
+  nextView: MapView,
+): MapHistoryPushPlan | undefined {
+  const origin = readNearbyAutoPreviewOrigin(currentState)
+  // Route-stop auto-preview intentionally returns straight to the route. Only map-origin
+  // auto-preview needs a hidden Nearby step between the current surface and the place.
+  if (!origin || nextView !== 'place' || currentView === 'route') return
+
+  const current = historyRecord(currentState)
+  const existingTrail = readMapDetailTrail(currentState)
+  const currentParent = readMapView({ mapView: current.mapParent })
+  const previousNearby = [...existingTrail].reverse().find((entry) => entry.view === 'nearby')
+  const previousNearbyParent = readMapView({ mapView: previousNearby?.state.mapParent })
+  const nearbyParent = nearbyParentForAutoPreview(currentView, currentParent, previousNearbyParent)
+
+  // Selecting a new map point from an auto-previewed place replaces the previous Nearby
+  // waypoint instead of nesting old searches indefinitely.
+  const replacesPreviousNearby = currentView === 'place'
+    && currentParent === 'nearby'
+    && existingTrail.at(-1)?.view === 'nearby'
+  const baseTrail = replacesPreviousNearby ? existingTrail.slice(0, -1) : existingTrail
+  const nearbyState = withoutMapTransientState({
+    ...current,
+    mapView: 'nearby',
+    mapParent: nearbyParent,
+  })
+  const trail = appendMapDetailTrail(baseTrail, {
+    view: 'nearby',
+    url: nearbyAutoPreviewUrl(currentUrl, origin),
+    state: nearbyState,
+  })
+
+  return {
+    mode: currentView && isMapDetailView(currentView) ? 'replace' : 'push',
+    state: withMapDetailTrail({
+      ...next,
+      mapView: 'place',
+      mapParent: 'nearby',
+    }, trail),
+  }
+}
+
+function nearbyParentForAutoPreview(
+  currentView: MapView | undefined,
+  currentParent: MapView | undefined,
+  previousNearbyParent: MapView | undefined,
+): MapView {
+  if (currentView === 'place') {
+    if (currentParent === 'nearby') return previousNearbyParent ?? 'catalogue'
+    if (currentParent && currentParent !== 'overview' && currentParent !== 'region' && currentParent !== 'place') {
+      return currentParent
+    }
+    return 'catalogue'
+  }
+  if (currentView === 'nearby') return currentParent ?? 'catalogue'
+  if (!currentView || currentView === 'overview' || currentView === 'region') return 'catalogue'
+  return currentView
+}
+
+function nearbyAutoPreviewUrl(currentUrl: string, origin: NearbyAutoPreviewOrigin): string {
+  const source = new URL(currentUrl, 'https://mochi.invalid')
+  const params = new URLSearchParams()
+  const city = source.searchParams.get('city')
+  if (city) params.set('city', city)
+  params.set('lat', origin[0].toFixed(5))
+  params.set('lon', origin[1].toFixed(5))
+  return `/map?${params}`
+}
+
 function withoutMapDetailTrail(state: Record<string, unknown>): Record<string, unknown> {
   const next = { ...state }
   delete next[MAP_DETAIL_TRAIL_KEY]
   return next
 }
 
+function withoutMapTransientState(state: Record<string, unknown>): Record<string, unknown> {
+  return withoutNearbyAutoPreviewOrigin(withoutMapDetailTrail(state))
+}
+
 function withMapDetailTrail(
   state: Record<string, unknown>,
   trail: readonly MapDetailTrailEntry[],
 ): Record<string, unknown> {
-  const next = withoutMapDetailTrail(state)
+  const next = withoutMapTransientState(state)
   if (trail.length) next[MAP_DETAIL_TRAIL_KEY] = trail
   return next
 }
@@ -250,6 +342,8 @@ function installMapHistoryCompression() {
   }
   managedHistory.replaceState = (data: unknown, unused: string, url?: string | URL | null) => {
     const nextView = readMapView(data)
+    // Non-detail replacements clear the compressed trail, but keep a just-recorded
+    // auto-preview origin until the immediately following place push consumes it.
     const nextState = nextView && !isMapDetailView(nextView)
       ? withoutMapDetailTrail(historyRecord(data))
       : data
