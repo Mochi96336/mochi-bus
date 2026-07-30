@@ -9,6 +9,7 @@ const DRAWER_SIZE_MEMORY_LIMIT = 32
 export type DrawerView =
   | {
       key: string
+      sizeKey?: string
       mode: 'compact'
       size?: DrawerSize
       preserveMobileHeight?: boolean
@@ -17,6 +18,7 @@ export type DrawerView =
     }
   | {
       key: string
+      sizeKey?: string
       mode: DrawerScrollableMode
       size?: DrawerSize
       preserveMobileHeight?: boolean
@@ -51,7 +53,8 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
 
   const render = (view: DrawerView): DrawerViewSession => {
     const previousViewKey = currentViewKey
-    const nextSize = drawerSizeForView(view, sizesByViewKey.get(view.key))
+    const sizeKey = drawerSizeMemoryKey(view)
+    const nextSize = drawerSizeForView(view, sizesByViewKey.get(sizeKey))
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
       view.key,
@@ -65,7 +68,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
     currentViewKey = view.key
-    rememberDrawerSize(sizesByViewKey, view.key, nextSize)
+    rememberDrawerSize(sizesByViewKey, sizeKey, nextSize)
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
@@ -138,6 +141,17 @@ export function drawerScrollTopForTransition(
   previousScrollTop: number,
 ): number {
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
+}
+
+export function drawerSizeMemoryKey(view: DrawerView): string {
+  if (view.sizeKey) return view.sizeKey
+  if (view.mode !== 'timetable') return view.key
+
+  // Timetable stops are separate content identities so their scroll position resets, but they
+  // share one route-level size workspace. Removing only the final stop segment preserves variant
+  // keys that contain their own colon, such as `CHI-7211:0`.
+  const stopSeparator = view.key.lastIndexOf(':')
+  return stopSeparator > 'timetable:'.length ? view.key.slice(0, stopSeparator) : view.key
 }
 
 export function drawerSizeForView(
