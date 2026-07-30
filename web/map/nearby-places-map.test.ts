@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type L from 'leaflet'
 import type { NearbyPlace } from './map-api-client'
-import { NEARBY_ORIGIN_RENDERED_EVENT } from './nearby-map-events'
+import { subscribeNearbyCameraTransitions } from './nearby-map-events'
 import type { NearbyOrigin } from './nearby-places-view'
 
 const mocks = vi.hoisted(() => ({
@@ -27,7 +27,6 @@ class FakeLayerGroup {
 
 class FakeMarker {
   private readonly listeners = new Map<string, (event: unknown) => void>()
-  readonly fired: Array<{ type: string; event: unknown; propagate: boolean }> = []
 
   constructor(
     readonly position: L.LatLngExpression,
@@ -45,10 +44,8 @@ class FakeMarker {
     return this
   }
 
-  fire(type: string, event: unknown, propagate = false): this {
-    this.fired.push({ type, event, propagate })
+  fire(type: string, event: unknown): void {
     this.listeners.get(type)?.(event)
-    return this
   }
 }
 
@@ -87,25 +84,29 @@ beforeEach(() => {
 })
 
 describe('Nearby places map', () => {
-  it('renders the loading origin and propagates its camera transition event', () => {
+  it('renders the loading origin and explicitly begins the camera transition', () => {
     const harness = createHarness()
+    const begin = vi.fn()
+    const settle = vi.fn()
+    const unsubscribe = subscribeNearbyCameraTransitions({ begin, settle })
 
     harness.mapSurface.renderLoadingOrigin(origin)
 
     expect(harness.layer.clearLayers).toHaveBeenCalledOnce()
     expect(harness.createStopMarker).toHaveBeenCalledWith([...origin], true, stopFillAccent)
     expect(harness.layer.markers).toEqual([harness.markers[0]])
-    expect(harness.markers[0].fired).toEqual([{
-      type: NEARBY_ORIGIN_RENDERED_EVENT,
-      event: { origin: [...origin] },
-      propagate: true,
-    }])
+    expect(begin).toHaveBeenCalledWith(origin)
+    expect(settle).not.toHaveBeenCalled()
     expect(mocks.bindTextTooltip).not.toHaveBeenCalled()
+    unsubscribe()
   })
 
-  it('renders origin and place markers with rounded hover labels', () => {
+  it('renders markers and explicitly settles on the nearest place', () => {
     const harness = createHarness()
     const places = [place(1, 120.4), place(2, 48.7)]
+    const begin = vi.fn()
+    const settle = vi.fn()
+    const unsubscribe = subscribeNearbyCameraTransitions({ begin, settle })
 
     harness.mapSurface.renderPlaces(origin, places)
 
@@ -116,6 +117,19 @@ describe('Nearby places map', () => {
     expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(1, harness.markers[0], '你點的位置')
     expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(2, harness.markers[1], 'Place 1 · 120 m')
     expect(mocks.bindTextTooltip).toHaveBeenNthCalledWith(3, harness.markers[2], 'Place 2 · 49 m')
+    expect(settle).toHaveBeenCalledWith([places[0].latitude, places[0].longitude])
+    unsubscribe()
+  })
+
+  it('does not settle when the nearby result is empty', () => {
+    const harness = createHarness()
+    const settle = vi.fn()
+    const unsubscribe = subscribeNearbyCameraTransitions({ begin: vi.fn(), settle })
+
+    harness.mapSurface.renderPlaces(origin, [])
+
+    expect(settle).not.toHaveBeenCalled()
+    unsubscribe()
   })
 
   it('stops map propagation and delegates the selected place', () => {
