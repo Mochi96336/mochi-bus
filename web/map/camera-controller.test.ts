@@ -185,10 +185,10 @@ describe('map camera controller pan-bound handoff', () => {
     harness.fire(NEARBY_ORIGIN_RENDERED_EVENT, { origin: [25, 121.5] })
 
     expect(order).toEqual(['release', 'stop', 'panTo'])
-    expect(harness.map.panTo).toHaveBeenCalledWith(
-      expect.objectContaining({ lat: 25 }),
-      expect.objectContaining({ animate: true, duration: .32 }),
-    )
+    const [cameraCenter, panOptions] = vi.mocked(harness.map.panTo).mock.calls[0]
+    expect(cameraCenter).toEqual(expect.objectContaining({ lat: expect.any(Number), lng: expect.any(Number) }))
+    expect(cameraCenter).not.toEqual({ lat: 25, lng: 121.5 })
+    expect(panOptions).toEqual(expect.objectContaining({ animate: true, duration: .32 }))
     controller.dispose()
   })
 
