@@ -51,12 +51,7 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
 
   const render = (view: DrawerView): DrawerViewSession => {
     const previousViewKey = currentViewKey
-    const nextSize = drawerSizeForTransition(
-      view.size,
-      view.mode,
-      Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
-      sizesByViewKey.get(view.key),
-    )
+    const nextSize = drawerSizeForView(view, sizesByViewKey.get(view.key))
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
       view.key,
@@ -143,6 +138,22 @@ export function drawerScrollTopForTransition(
   previousScrollTop: number,
 ): number {
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
+}
+
+export function drawerSizeForView(
+  view: DrawerView,
+  rememberedSize: DrawerSize | undefined,
+): DrawerSize {
+  // Catalogue loading, failure, and the final route list are one stable workspace.
+  // Compact here describes the temporary content structure, not a smaller navigation state.
+  const workspaceSize = view.size
+    ?? (view.key.startsWith('catalogue:') ? 'standard' : undefined)
+  return drawerSizeForTransition(
+    workspaceSize,
+    view.mode,
+    Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
+    rememberedSize,
+  )
 }
 
 export function drawerSizeForTransition(
