@@ -185,13 +185,13 @@ afterEach(() => {
 })
 
 describe('Place routes view', () => {
-  it('renders the three-row loading skeleton at the neutral standard size', () => {
+  it('renders the three-row loading skeleton without overriding a remembered workspace size', () => {
     const harness = createHarness()
     harness.view.renderLoading({ cityCode: 'Taipei', place: place() })
 
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('place:Taipei:PLACE')
-    expect(drawer.size).toBe('standard')
+    expect(drawer.size).toBeUndefined()
     const loading = drawer.content[0] as unknown as FakeElement
     expect(loading.classList.contains('map-loading-list')).toBe(true)
     expect(loading.children).toHaveLength(3)
@@ -248,7 +248,7 @@ describe('Place routes view', () => {
     expect(scrollable(harness.rendered()).size).toBe('tall')
   })
 
-  it('renders an error compactly with credential recovery and returns the status message', () => {
+  it('renders an error without replacing the remembered workspace size', () => {
     const harness = createHarness()
     const error = new Error('credential')
 
@@ -256,7 +256,7 @@ describe('Place routes view', () => {
 
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('place:Taipei:PLACE')
-    expect(drawer.size).toBe('compact')
+    expect(drawer.size).toBeUndefined()
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
     expect(harness.onDispose).not.toHaveBeenCalled()
