@@ -26,26 +26,61 @@ type Rect = {
   height: number
 }
 
-function element(rect: Rect): HTMLElement {
+type MutableElement = HTMLElement & {
+  setRect(rect: Rect): void
+}
+
+function element(initialRect: Rect): MutableElement {
+  let rect = initialRect
   return Object.assign(new EventTarget(), {
     getBoundingClientRect: () => rect,
-  }) as unknown as HTMLElement
+    setRect(nextRect: Rect) {
+      rect = nextRect
+    },
+  }) as unknown as MutableElement
 }
 
 function installBrowserStubs() {
+  let nextFrame = 1
+  const frames = new Map<number, FrameRequestCallback>()
+  const observers: Array<{ callback: ResizeObserverCallback; instance: ResizeObserver }> = []
   const browserWindow = Object.assign(new EventTarget(), {
-    requestAnimationFrame: vi.fn(() => 1),
-    cancelAnimationFrame: vi.fn(),
+    requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
+      const id = nextFrame++
+      frames.set(id, callback)
+      return id
+    }),
+    cancelAnimationFrame: vi.fn((id: number) => {
+      frames.delete(id)
+    }),
     visualViewport: undefined,
   })
 
-  class ResizeObserverStub {
-    observe = vi.fn()
-    disconnect = vi.fn()
+  class ResizeObserverStub implements ResizeObserver {
+    readonly observe = vi.fn()
+    readonly unobserve = vi.fn()
+    readonly disconnect = vi.fn()
+
+    constructor(callback: ResizeObserverCallback) {
+      observers.push({ callback, instance: this })
+    }
   }
 
   vi.stubGlobal('window', browserWindow)
   vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+
+  return {
+    observer() {
+      const observer = observers[0]
+      if (!observer) throw new Error('ResizeObserver was not created')
+      return observer
+    },
+    runFrames() {
+      const pending = [...frames.entries()]
+      frames.clear()
+      pending.forEach(([, callback]) => callback(0))
+    },
+  }
 }
 
 function createMapStub(order: string[]): L.Map {
@@ -72,7 +107,6 @@ function createMapStub(order: string[]): L.Map {
 
 describe('map camera controller pan-bound handoff', () => {
   beforeEach(() => {
-    installBrowserStubs()
     panConstraint.releaseForProgrammaticCamera.mockReset()
     panConstraint.dispose.mockReset()
     panConstraint.constrain.mockClear()
@@ -83,6 +117,7 @@ describe('map camera controller pan-bound handoff', () => {
   })
 
   it('releases pending pan bounds before point and bounds camera movement', () => {
+    installBrowserStubs()
     const order: string[] = []
     const map = createMapStub(order)
     const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
@@ -106,5 +141,67 @@ describe('map camera controller pan-bound handoff', () => {
 
     controller.dispose()
     expect(panConstraint.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('uses the predicted final drawer rect and ignores intermediate drawer resize frames', () => {
+    const browser = installBrowserStubs()
+    const order: string[] = []
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const currentDrawerRect = { left: 780, top: 404, right: 1180, bottom: 782, width: 400, height: 378 }
+    const finalDrawerRect = { left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 }
+    const drawerElement = element(currentDrawerRect)
+    const measureDrawerRectForSize = vi.fn(() => finalDrawerRect)
+    const controller = createMapCameraController(map, mapElement, drawerElement, {
+      measureDrawerRectForSize,
+    })
+
+    controller.prepareDrawerSizeTransition({ from: 'standard', to: 'compact', durationMs: 160 })
+    controller.focusBounds([[22, 120], [25, 122]])
+
+    expect(measureDrawerRectForSize).toHaveBeenCalledWith(drawerElement, 'compact')
+    expect(map.fitBounds).toHaveBeenCalledTimes(1)
+    expect(map.fitBounds).toHaveBeenLastCalledWith(
+      [[22, 120], [25, 122]],
+      expect.objectContaining({ animate: true, duration: .16 }),
+    )
+
+    const observed = browser.observer()
+    observed.callback([
+      { target: drawerElement } as ResizeObserverEntry,
+    ], observed.instance)
+    browser.runFrames()
+    expect(map.fitBounds).toHaveBeenCalledTimes(1)
+
+    drawerElement.setRect(finalDrawerRect)
+    drawerElement.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'height' }))
+    browser.runFrames()
+
+    expect(map.fitBounds).toHaveBeenCalledTimes(2)
+    expect(map.fitBounds).toHaveBeenLastCalledWith(
+      [[22, 120], [25, 122]],
+      expect.objectContaining({ animate: false }),
+    )
+
+    controller.dispose()
+  })
+
+  it('cancels the predicted camera target when the user manipulates the map', () => {
+    const browser = installBrowserStubs()
+    const order: string[] = []
+    const map = createMapStub(order)
+    const mapElement = element({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 })
+    const drawerElement = element({ left: 780, top: 404, right: 1180, bottom: 782, width: 400, height: 378 })
+    const controller = createMapCameraController(map, mapElement, drawerElement, {
+      measureDrawerRectForSize: () => ({ left: 780, top: 482, right: 1180, bottom: 782, width: 400, height: 300 }),
+    })
+
+    controller.focusBounds([[22, 120], [25, 122]])
+    controller.prepareDrawerSizeTransition({ from: 'standard', to: 'compact', durationMs: 160 })
+    mapElement.dispatchEvent(new Event('pointerdown'))
+    browser.runFrames()
+
+    expect(map.fitBounds).toHaveBeenCalledTimes(1)
+    controller.dispose()
   })
 })
