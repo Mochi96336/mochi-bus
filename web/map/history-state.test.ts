@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { NEARBY_AUTO_PREVIEW_ORIGIN_KEY } from './nearby-auto-preview-history'
 import {
   canonicalMapHistoryState,
   mapViewFromUrl,
@@ -101,91 +100,35 @@ describe('map history state', () => {
     expect((place.state as { mapDetailTrail: unknown[] }).mapDetailTrail).toHaveLength(2)
   })
 
-  it('adds a hidden nearby step when map auto-preview opens a place from the catalogue', () => {
-    const catalogue = {
-      mapView: 'catalogue',
-      mapParent: 'region',
-      routeCatalogue: { scrollTop: 240 },
-      [NEARBY_AUTO_PREVIEW_ORIGIN_KEY]: [25.033, 121.565],
-    }
-    const place = planMapHistoryPush(catalogue, '/map?city=Taipei', {
-      ...catalogue,
-      mapView: 'place',
-      mapParent: 'catalogue',
-    })
 
-    expect(place).toEqual({
-      mode: 'push',
-      state: {
-        mapView: 'place',
-        mapParent: 'nearby',
-        routeCatalogue: { scrollTop: 240 },
-        mapDetailTrail: [{
-          view: 'nearby',
-          url: '/map?city=Taipei&lat=25.03300&lon=121.56500',
-          state: {
-            mapView: 'nearby',
-            mapParent: 'catalogue',
-            routeCatalogue: { scrollTop: 240 },
-          },
-        }],
-      },
-    })
-    expect(planMapHistoryBack(place.state)).toEqual({
-      url: '/map?city=Taipei&lat=25.03300&lon=121.56500',
-      state: {
-        mapView: 'nearby',
-        mapParent: 'catalogue',
-        routeCatalogue: { scrollTop: 240 },
-      },
-    })
+it('replaces the previous nearby waypoint when a place starts a new nearby search', () => {
+  const current = {
+    mapView: 'place',
+    mapParent: 'nearby',
+    mapDetailTrail: [{
+      view: 'nearby',
+      url: '/map?city=Taipei&lat=25.00000&lon=121.50000',
+      state: { mapView: 'nearby', mapParent: 'catalogue' },
+    }],
+  }
+  const nearby = planMapHistoryPush(current, '/map?city=Taipei&place=P1', {
+    ...current,
+    mapView: 'nearby',
+    mapParent: 'place',
+  })
+  expect(nearby).toEqual({
+    mode: 'replace',
+    state: { mapView: 'nearby', mapParent: 'catalogue' },
   })
 
-  it('keeps route-stop auto-preview returning directly to the route', () => {
-    const route = {
-      mapView: 'route',
-      mapParent: 'catalogue',
-      [NEARBY_AUTO_PREVIEW_ORIGIN_KEY]: [25.033, 121.565],
-    }
-    const place = planMapHistoryPush(route, '/map?city=Taipei&route=307', {
-      ...route,
-      mapView: 'place',
-      mapParent: 'route',
-    })
-
-    expect(place).toEqual({
-      mode: 'replace',
-      state: {
-        mapView: 'place',
-        mapParent: 'route',
-        mapDetailTrail: [{
-          view: 'route',
-          url: '/map?city=Taipei&route=307',
-          state: { mapView: 'route', mapParent: 'catalogue' },
-        }],
-      },
-    })
+  const nextPlace = planMapHistoryPush(nearby.state, '/map?city=Taipei&lat=25.03300&lon=121.56500', {
+    ...nearby.state as Record<string, unknown>,
+    mapView: 'place',
+    mapParent: 'nearby',
   })
-
-  it('replaces the previous hidden nearby step when selecting another map point', () => {
-    const current = {
-      mapView: 'place',
-      mapParent: 'nearby',
-      mapDetailTrail: [{
-        view: 'nearby',
-        url: '/map?city=Taipei&lat=25.00000&lon=121.50000',
-        state: { mapView: 'nearby', mapParent: 'catalogue' },
-      }],
-      [NEARBY_AUTO_PREVIEW_ORIGIN_KEY]: [25.033, 121.565],
-    }
-    const next = planMapHistoryPush(current, '/map?city=Taipei&place=P1', {
-      ...current,
-      mapView: 'place',
-      mapParent: 'place',
-    })
-
-    expect(next.mode).toBe('replace')
-    expect(next.state).toEqual({
+  expect(nextPlace).toEqual({
+    mode: 'replace',
+    state: {
       mapView: 'place',
       mapParent: 'nearby',
       mapDetailTrail: [{
@@ -193,10 +136,11 @@ describe('map history state', () => {
         url: '/map?city=Taipei&lat=25.03300&lon=121.56500',
         state: { mapView: 'nearby', mapParent: 'catalogue' },
       }],
-    })
+    },
   })
+})
 
-  it('does not grow the detail trail when replacing the same kind of detail', () => {
+it('does not grow the detail trail when replacing the same kind of detail', () => {
     const current = {
       mapView: 'nearby',
       mapParent: 'route',
