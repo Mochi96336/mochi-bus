@@ -17,6 +17,7 @@ import { createNearbyPlacesController, type NearbyPreviewSource } from './nearby
 import { createNearbyPlacesMap } from './nearby-places-map'
 import { createNearbyResultsState } from './nearby-results-state'
 import { createNearbyPlacesView, nearbyPlacesFailureMessage } from './nearby-places-view'
+import { createLoadingHandoff } from '../lib/loading-gate'
 import { createPreviewStopDotManager, createSelectablePreviewLineRenderer } from './preview-map-primitives'
 import { createNavRequestCoordinator } from '../../src/domain/map/nav-request'
 import { captureMapCamera, restoreMapCamera, type MapCameraState } from '../../src/domain/map/journey-camera'
@@ -280,24 +281,28 @@ const nearbyPlacesView = createNearbyPlacesView({
   createTripModeButton: tripModeButton,
   onOpenPlace: (place) => void openNearbyPlace(place),
 })
+// Skeleton 的時機交給 gate,但 origin marker 與狀態列一律立即出現:延遲窗內畫面
+// 必須已經有「收到了」的證據。自動預覽不停在清單上,那條路徑沒有 skeleton,直接 abort。
+const nearbyLoading = createLoadingHandoff(nearbyPlacesView.renderLoading)
 const nearbyPlaces = createNearbyPlacesController({
   currentCityCode: () => activeCity?.code,
   beginRequest: beginNavRequest,
   isStaleRequest: isStaleNav,
   loadNearby: mapApi.nearby,
   onStart: ({ cityCode, origin, previewSource }) => {
-    if (!previewSource) {
-      nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
+    if (previewSource) nearbyLoading.abort()
+    else {
+      nearbyLoading.start({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
       nearbyResults.setOrigin(origin)
     }
     nearbyPlacesMap.renderLoadingOrigin(origin)
     setStatus('正在找這附近的站牌…')
   },
-  onPlaces: (presentation) => {
+  onPlaces: (presentation) => nearbyLoading.settle(() => {
     if (presentation.previewSource) enterNearbyView(presentation.origin[0], presentation.origin[1])
     nearbyResults.store(presentation)
     renderNearbyPlaces()
-  },
+  }),
   onAutoPreview: async (place, presentation) => {
     nearbyResults.storeAndRenderMap(presentation)
     if (presentation.previewSource === 'map') {
@@ -307,15 +312,17 @@ const nearbyPlaces = createNearbyPlacesController({
   },
   onError: ({ cityCode, origin, previewSource, error }) => {
     if (previewSource) {
+      nearbyLoading.abort()
       setStatus(nearbyPlacesFailureMessage(error), true)
       return
     }
-    setStatus(nearbyPlacesView.renderError({
+    nearbyLoading.settle(() => setStatus(nearbyPlacesView.renderError({
       cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
-      onRetry: () => void findNearbyPlaces(origin[0], origin[1], previewSource, 'replace'),
-    }), true)
+      onRetry: () => findNearbyPlaces(origin[0], origin[1], previewSource, 'replace'),
+    }), true))
   },
 })
+const placeRoutesLoading = createLoadingHandoff(placeRoutesView.renderLoading)
 const placeRoutes = createPlaceRoutesController({
   currentCityCode: () => activeCity?.code,
   beginRequest: beginNavRequest,
@@ -333,19 +340,20 @@ const placeRoutes = createPlaceRoutesController({
   invalidateOtherPreviews: () => journeyPreview.cancel(),
   onStart: (start) => {
     routeDetail.close()
-    placeRoutesView.renderLoading(start)
+    placeRoutesLoading.start(start)
     setStatus(`正在讀取 ${start.place.name} 的路線…`)
   },
-  onRoutes: placeRoutesView.renderRoutes,
+  onRoutes: (presentation) => placeRoutesLoading.settle(() => placeRoutesView.renderRoutes(presentation)),
   renderPreview: renderPlaceRoutePreview,
   onComplete: completePlaceRoutes,
-  onError: (failure) => setStatus(placeRoutesView.renderError(failure), true),
+  onError: (failure) => placeRoutesLoading.settle(() => setStatus(placeRoutesView.renderError(failure), true)),
 })
-cancelPlaceRoutes = () => placeRoutes.cancel()
+// Gate 的計時器要跟著這一輪請求一起作廢,否則尾端 render 會落在已經換掉的畫面上。
+cancelPlaceRoutes = () => { placeRoutesLoading.abort(); placeRoutes.cancel() }
 
 function invalidatePreviewRequests(): void {
   journeyPreview.cancel()
-  placeRoutes.cancel()
+  cancelPlaceRoutes()
 }
 
 function clearPreviewLayer(): void {
@@ -1490,6 +1498,7 @@ async function findNearbyPlaces(
 function renderNearbyPlaces() {
   const result = nearbyResults.current()
   if (!activeCity || !result) return
+  nearbyLoading.abort()
   nearbyPlaces.invalidate()
   cancelNavRequest()
   nearbyResults.renderMap()

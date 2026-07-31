@@ -448,11 +448,17 @@ Gate 的計時器 **必須由 controller 的 `generation` 擁有，不能掛在 
 
 第一階段**只做這兩處**。路線完整資料、時刻表、城市路線目錄留待實測後再評估。
 
-### 7.5 順帶修正：place-routes 的 size 跳動
+### 7.5 place-routes 的 size：維持現狀，不動
 
-[place-routes-view.ts:49](../web/map/place-routes-view.ts#L49) 的 `renderLoading` **沒有指定 `size`**，而 `renderRoutes` 使用 `placeRoutesDrawerSize(routes.length)`（[:108](../web/map/place-routes-view.ts#L108)）。首次造訪某站牌時，loading 會落在 `drawerSizeForTransition` 的 fallback `'standard'`，settled 則可能是 `'compact'`（0 條）或 `'tall'`（8 條以上）。
+初版計畫要求 `renderLoading` 補上顯式 `size: 'standard'`。**這是錯的，實作時已撤回。**
 
-處理：`renderLoading` 補上顯式 `size: 'standard'`，與 nearby 一致（[nearby-places-view.ts:57](../web/map/nearby-places-view.ts#L57)）。`standard → tall` 的成長保留（往下長比往上縮不刺眼）；`standard → compact` 的空結果情形因 gate 存在，多數會在 120ms 內直接呈現空狀態而不經過 skeleton。
+[place-routes-view.test.ts:188](../web/map/place-routes-view.test.ts#L188) 明確斷言 `renderLoading` 的 `size` 必須是 `undefined`：
+
+> renders the three-row loading skeleton without overriding a remembered workspace size
+
+`renderError`（[:251](../web/map/place-routes-view.test.ts#L251)）同樣如此。這是刻意設計 —— 留空才能讓 `drawerSizeForTransition` 的 size memory 生效：重訪一個 12 條路線的站牌時，loading 會沿用上次的 `tall`，而不是先跳 `standard` 再跳 `tall`。寫死 `'standard'` 反而會製造它想避免的跳動。
+
+僅在**首次造訪**且結果為 0 條或 8 條以上時，才會有 `standard → compact/tall` 的一次變化。Gate 反而縮小了這個窗口：多數空結果會在 120ms 內直接呈現，根本不經過 skeleton。
 
 ### 7.6 Skeleton 視覺：採靜態（方案 A）
 
@@ -614,7 +620,7 @@ export type SettledLiveRegion = {
 - 120ms 內完成不顯示 skeleton
 - skeleton 顯示後不短於 300ms
 - 快速切換 view 時舊 skeleton 與舊 render 都不落在新畫面
-- place-routes loading → settled 無非預期高度跳動
+- place-routes loading → settled 沿用 size memory，不被 loading 覆寫（§7.5）
 - reduced-motion 與一般模式的 skeleton 視覺一致
 
 ### 12.5 迴歸（全部 PR）

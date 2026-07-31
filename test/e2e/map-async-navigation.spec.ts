@@ -253,3 +253,64 @@ test('late shared-trip hydration cannot replace the catalogue reached with Back'
   await expect(page).toHaveURL('/map?city=Tainan')
   await expect(page.locator('#map-drawer').getByRole('heading', { name: '臺南' })).toBeVisible()
 })
+
+const nearbyPlace = {
+  placeId: 'P1', name: '臺南火車站', latitude: 22.99, longitude: 120.21, distanceMeters: 20,
+}
+
+// 記錄 skeleton 進出畫面的時間點。因為要證明的其中一件事是「它從未出現」,
+// 只在事後查詢 DOM 是不夠的,必須全程觀察。
+async function watchSkeleton(page: Page) {
+  await page.addInitScript(() => {
+    const marks = { appearedAt: 0, clearedAt: 0 }
+    ;(window as unknown as { __skeleton: typeof marks }).__skeleton = marks
+    const attach = () => {
+      const drawer = document.getElementById('map-drawer')
+      if (!drawer) return requestAnimationFrame(attach)
+      new MutationObserver(() => {
+        const present = Boolean(drawer.querySelector('.map-loading-list'))
+        if (present && !marks.appearedAt) marks.appearedAt = performance.now()
+        if (!present && marks.appearedAt && !marks.clearedAt) marks.clearedAt = performance.now()
+      }).observe(drawer, { childList: true, subtree: true })
+    }
+    attach()
+  })
+}
+
+const skeletonMarks = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __skeleton: { appearedAt: number; clearedAt: number } }).__skeleton)
+
+test('a nearby lookup that resolves inside the delay window never flashes a skeleton', async ({ page }) => {
+  await mockBaseMap(page)
+  await watchSkeleton(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places: [nearbyPlace] } }))
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  expect((await skeletonMarks(page)).appearedAt).toBe(0)
+})
+
+test('a slow nearby lookup shows a skeleton and holds it past the minimum', async ({ page }) => {
+  await mockBaseMap(page)
+  await watchSkeleton(page)
+  const nearbyResponse = deferred()
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, async (route) => {
+    await nearbyResponse.promise
+    await safelyFulfill(route, { places: [nearbyPlace] })
+  })
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.locator('.map-loading-list')).toBeVisible()
+  nearbyResponse.release()
+
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  const marks = await skeletonMarks(page)
+  expect(marks.appearedAt).toBeGreaterThan(0)
+  // 出現又立刻消失比從頭到尾不出現更像故障;留 50ms 給計時器抖動。
+  expect(marks.clearedAt - marks.appearedAt).toBeGreaterThanOrEqual(250)
+})

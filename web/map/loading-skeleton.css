@@ -20,21 +20,22 @@
   z-index: 1;
 }
 
+/* Skeleton 是靜態的。無限 shimmer 在 prefers-reduced-motion 下本來就整段
+   display:none,等於同時維護兩套視覺;而地圖頁本身已經有大量動態,
+   讀取中的清單不需要再加一層循環動畫。留下這層淡色高光作為靜態材質。 */
 .map-drawer .map-loading-row::after {
   content: "";
   position: absolute;
   z-index: 2;
   inset: 0;
-  transform: translateX(-115%);
   background: linear-gradient(
     100deg,
     transparent 22%,
     var(--skeleton-highlight) 48%,
     transparent 74%
   );
-  opacity: .52;
+  opacity: .34;
   pointer-events: none;
-  animation: drawer-loading-shimmer 1.35s ease-in-out infinite;
 }
 
 .map-drawer .skeleton-line {
@@ -146,25 +147,8 @@
   --skeleton-meta-width: 36%;
 }
 
-.map-drawer .map-loading-row:nth-child(2)::after {
-  animation-delay: -.3s;
-}
-
 .map-drawer .map-loading-row:nth-child(3) {
   --skeleton-title-width: 38%;
   --skeleton-meta-width: 49%;
 }
 
-.map-drawer .map-loading-row:nth-child(3)::after {
-  animation-delay: -.6s;
-}
-
-@keyframes drawer-loading-shimmer {
-  to { transform: translateX(115%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .map-drawer .map-loading-row::after {
-    display: none;
-  }
-}
