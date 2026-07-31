@@ -28,7 +28,7 @@ describe('Nearby results state', () => {
     expect(renderEndpoints).toHaveBeenCalledOnce()
   })
 
-  it('stores and renders auto-preview results in one explicit operation', () => {
+  it('stores and renders preview results in one explicit operation', () => {
     const renderPlaces = vi.fn()
     const renderEndpoints = vi.fn()
     const state = createNearbyResultsState({ renderPlaces, renderEndpoints })
