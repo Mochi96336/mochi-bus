@@ -33,6 +33,7 @@ import { isTdxTokenRejectedError } from '../tdx/api-client'
 import { splitRouteDisplayName } from '../lib/route-display'
 import { createMapCameraController } from './camera-controller'
 import { createDrawerRenderer, type DrawerView } from './drawer-view'
+import { createMapStatus } from './map-status'
 import {
   buttonGrid,
   degradedNotice,
@@ -108,6 +109,7 @@ const drawer = requiredElement('map-drawer')
 const drawerRenderer = createDrawerRenderer(drawer)
 const renderDrawer = (view: DrawerView) => drawerRenderer.render(view)
 const statusNode = requiredElement('map-status')
+const mapStatus = createMapStatus(statusNode, requiredElement('map-announcer'))
 const mapFeatureDiscovery = createMapFeatureDiscovery(browserStorage())
 const networkButton = document.createElement('button')
 networkButton.className = 'network-toggle map-feature-button'
@@ -346,7 +348,7 @@ const placeRoutes = createPlaceRoutesController({
   onRoutes: (presentation) => placeRoutesLoading.settle(() => placeRoutesView.renderRoutes(presentation)),
   renderPreview: renderPlaceRoutePreview,
   onComplete: completePlaceRoutes,
-  onError: (failure) => placeRoutesLoading.settle(() => setStatus(placeRoutesView.renderError(failure), true)),
+  onError: (failure) => placeRoutesLoading.settle(() => mapStatus.show(placeRoutesView.renderError(failure), true)),
 })
 // Gate 的計時器要跟著這一輪請求一起作廢,否則尾端 render 會落在已經換掉的畫面上。
 cancelPlaceRoutes = () => { placeRoutesLoading.abort(); placeRoutes.cancel() }
@@ -1430,7 +1432,7 @@ function renderVehiclePositions(response: VehiclePositionsResponse) {
   drawer.querySelector('.vehicle-degraded-notice')?.remove()
   if (response.warning) {
     const message = tdxWarningMessages[response.warning]
-    setStatus(message, true)
+    mapStatus.show(message, true)
     const notice = degradedNotice({ message, onRetry: () => vehicleRefresh.refresh(), collapsible: true })
     notice.classList.add('vehicle-degraded-notice')
     drawer.appendChild(notice)
@@ -1444,7 +1446,7 @@ function renderVehicleRefreshError(error: unknown) {
   const message = credentialRejected
     ? 'TDX 授權已失效；路線仍可使用，請到設定更新授權。'
     : '暫時無法更新車輛位置；路線與站牌仍可使用。'
-  setStatus(message, true)
+  mapStatus.show(message, true)
   drawer.querySelector('.vehicle-degraded-notice')?.remove()
   const notice = degradedNotice({ message, onRetry: () => vehicleRefresh.refresh(), credentialRecovery: credentialRejected, collapsible: true })
   notice.classList.add('vehicle-degraded-notice')
@@ -1744,17 +1746,11 @@ function completePlaceRoutes({ cityCode, place }: PlaceRoutesPresentation): void
 }
 
 function setStatus(text: string, error = false) {
-  statusNode.textContent = text
-  statusNode.classList.remove('dismissed')
-  statusNode.classList.toggle('error', error)
-  statusNode.removeAttribute('aria-hidden')
+  mapStatus.set(text, error)
 }
 
 function clearStatus() {
-  statusNode.textContent = ''
-  statusNode.classList.add('dismissed')
-  statusNode.classList.remove('error')
-  statusNode.setAttribute('aria-hidden', 'true')
+  mapStatus.clear()
 }
 
 // 跟著畫面更新分頁標題:多分頁與瀏覽紀錄裡才認得出「哪一條路線、哪一站」。

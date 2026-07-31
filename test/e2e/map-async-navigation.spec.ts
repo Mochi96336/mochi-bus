@@ -314,3 +314,40 @@ test('a slow nearby lookup shows a skeleton and holds it past the minimum', asyn
   // 出現又立刻消失比從頭到尾不出現更像故障;留 50ms 給計時器抖動。
   expect(marks.clearedAt - marks.appearedAt).toBeGreaterThanOrEqual(250)
 })
+
+// 連續導覽會一句蓋一句地寫狀態。可見的 toast 必須跟上每一步(gate 的延遲窗
+// 靠它填補),但朗讀要等最後一個狀態穩定下來,否則螢幕閱讀器一直被打斷。
+test('shows a status immediately but waits for it to settle before announcing', async ({ page }) => {
+  await page.clock.install()
+  await mockBaseMap(page)
+  const nearbyResponse = deferred()
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, async (route) => {
+    await nearbyResponse.promise
+    await safelyFulfill(route, { places: [nearbyPlace] })
+  })
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+  const status = page.locator('#map-status')
+  const announcer = page.locator('#map-announcer')
+
+  // 看得見的部分立刻更新,朗讀還在穩定窗裡等著。
+  await expect(status).toHaveText('正在找這附近的站牌…')
+  await expect(announcer).toBeEmpty()
+
+  await page.clock.runFor(600)
+  await expect(announcer).toHaveText('正在找這附近的站牌…')
+
+  nearbyResponse.release()
+})
+
+test('announces a failure at once instead of waiting out the settle window', async ({ page }) => {
+  await page.clock.install()
+  await mockBaseMap(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ status: 500, json: {} }))
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+
+  // 時鐘凍結,穩定窗永遠不會到期——錯誤仍然必須馬上被唸出來。
+  await expect(page.locator('#map-announcer')).not.toBeEmpty()
+  await expect(page.locator('#map-status')).toHaveClass(/error/)
+})

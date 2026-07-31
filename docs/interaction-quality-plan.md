@@ -585,7 +585,16 @@ function isKeyboardActivation(event: MouseEvent): boolean {
 
 依賴 PR 0。在容器級 `aria-live` 移除前，本 PR 無法生效。
 
-### 10.1 `settled-live-region.ts`
+### 10.1 顯示與宣告必須拆成兩個節點
+
+實作時撞到的第一個問題：`#map-status` 同時是**可見的 toast** 和 **live region**，但兩者的時序要求相反。
+
+- 可見文字必須**立即**更新 —— loading gate 的 0–120ms 延遲窗內，它是畫面上唯一「已經收到了」的證據（§12.4）。
+- 宣告必須**延後合併** —— 否則連續導覽會把螢幕閱讀器一句句打斷。
+
+同一個節點上只能二選一。因此 `#map-status` 卸下 `aria-live`，新增 `#map-announcer`（visually-hidden、`role="status"`）專責朗讀。`createMapStatus` 同時持有兩者。
+
+### 10.2 `settled-live-region.ts`
 
 ```ts
 export type SettledLiveRegion = {
@@ -593,15 +602,22 @@ export type SettledLiveRegion = {
   announce(message: string): void
   /** 立即朗讀，用於錯誤 */
   announceNow(message: string): void
+  clear(): void
   dispose(): void
 }
 ```
 
-穩定窗採 **600ms**（初版建議 500–700ms 區間的中值）。
+穩定窗採 **600ms**。相同訊息重寫會被跳過 —— 把同一句話再寫一次仍是 DOM 變動，部分螢幕閱讀器會照唸不誤。
 
-### 10.2 ETA 交接共用
+### 10.3 同一句話不得被兩個 live region各唸一次
 
-[eta-row-view.ts:66](../web/eta/eta-row-view.ts#L66) 的中性交接推廣至完整路線頁與站牌所有路線。維持中性 `opacity` + 小幅位移 + 等寬占位。
+三處 call site 的 `setStatus` 與 drawer 內的降級通知帶著相同訊息（車輛降級 ×2、place routes `renderError`）。通知的 `role="status"` 已經宣告過，狀態列改用 `mapStatus.show()`：只顯示，不朗讀。
+
+### 10.4 ETA 交接
+
+[route/main.ts](../web/route/main.ts) 的 `updateStopEta` 原本每 20 秒無條件重寫 `textContent`，而所選站牌是 `aria-live` + `aria-atomic` 節點 —— 等於每 20 秒把同一句再唸一遍。加上「值沒變就不寫」，與首頁 [eta-row-view.ts:62](../web/eta/eta-row-view.ts#L62) 的 signature 檢查是同一條規則。
+
+**視覺交接（crossfade）暫不推廣。** 首頁的實作依賴 `.bus-eta` 的 `display: grid` 讓新舊兩個 `.eta-copy` 疊在同一格淡入淡出；`.route-eta` 是單一 inline 節點，要共用得改 SSR 標記與 CSS。那是視覺加分項，與本階段「不重播、不誤導」的目標無關，留待需要時另案處理。
 
 **不做紅綠漲跌**：ETA 由 8 分變 5 分只是時間前進，沒有好壞語意；金融隱喻會誤導。此點 design-system.md 已載明。
 

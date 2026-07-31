@@ -238,11 +238,15 @@ describe('live region contract', () => {
     return [...html.matchAll(liveRegionPattern)].map((match) => match[0])
   }
 
-  it('keeps the map drawer out of live regions and announces through #map-status', () => {
+  // 可見的狀態列必須立即更新(loading gate 的延遲窗靠它填補),宣告卻要延後合併,
+  // 兩者無法共用同一個 aria-live 節點。
+  it('separates the visible map status from the node that announces it', () => {
     const html = renderMapPage({ heading: '台北市公車地圖' })
 
     expect(html).toContain('<aside id="map-drawer" class="map-drawer"></aside>')
-    expect(html).toContain('<div id="map-status" class="map-status" aria-live="polite">')
+    expect(html).toContain('<div id="map-status" class="map-status">')
+    expect(html).not.toContain('class="map-status" aria-live')
+    expect(html).toContain('<div id="map-announcer" class="visually-hidden" role="status" aria-live="polite">')
     expect(liveRegions(html)).toHaveLength(1)
   })
 

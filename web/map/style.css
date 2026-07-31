@@ -44,7 +44,7 @@ button, input { font: inherit; }
 button { cursor: pointer; }
 
 #map { background: #d8d4ca; }
-.map-page-title {
+.map-page-title, .visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
