@@ -139,6 +139,35 @@ describe('map history state', () => {
     })
   })
 
+  it('keeps a route parent when its place starts a new nearby search', () => {
+    const current = {
+      mapView: 'place',
+      mapParent: 'route',
+      mapDetailTrail: [{
+        view: 'route',
+        url: '/map?city=Taipei&route=307',
+        state: { mapView: 'route', mapParent: 'catalogue' },
+      }],
+    }
+    const nearby = planMapHistoryPush(current, '/map?city=Taipei&place=P1', {
+      ...current,
+      mapView: 'nearby',
+      mapParent: 'place',
+    })
+    expect(nearby).toEqual({
+      mode: 'replace',
+      state: {
+        mapView: 'nearby',
+        mapParent: 'route',
+        mapDetailTrail: [{
+          view: 'route',
+          url: '/map?city=Taipei&route=307',
+          state: { mapView: 'route', mapParent: 'catalogue' },
+        }],
+      },
+    })
+  })
+
   it('does not grow the detail trail when replacing the same kind of detail', () => {
     const current = {
       mapView: 'nearby',
