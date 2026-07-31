@@ -10,10 +10,10 @@ function variant() {
   return {
     variantKey: 'TNN-15:0', routeName: '15', routeUid: 'TNN-15', direction: 0,
     label: '奇美醫院 → 大成路口', subRouteUid: 'TNN-15', subRouteName: '15', updatedAt: null,
-    shape: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[120.2, 22.99], [120.24, 23.02]] } },
+    shape: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[120.211, 22.997], [120.213, 22.999]] } },
     stops: { type: 'FeatureCollection', features: [
-      { type: 'Feature', properties: { stopUid: 'S1', stopName: '奇美醫院', sequence: 1 }, geometry: { type: 'Point', coordinates: [120.2, 22.99] } },
-      { type: 'Feature', properties: { stopUid: 'S2', stopName: '大成路口', sequence: 2 }, geometry: { type: 'Point', coordinates: [120.24, 23.02] } },
+      { type: 'Feature', properties: { stopUid: 'S1', stopName: '奇美醫院', sequence: 1 }, geometry: { type: 'Point', coordinates: [120.211, 22.997] } },
+      { type: 'Feature', properties: { stopUid: 'S2', stopName: '大成路口', sequence: 2 }, geometry: { type: 'Point', coordinates: [120.213, 22.999] } },
     ] },
   }
 }
@@ -74,6 +74,7 @@ test('catalogue map preview keeps the zoom gate and replaces an older nearby way
   await clickBlankMap(page)
   await expect(page.locator('#map-status')).toContainText('放大後再選站牌')
   expect(nearbyRequests).toBe(0)
+  await page.waitForTimeout(500)
 
   await clickBlankMap(page)
   await expect.poll(() => nearbyRequests).toBe(1)
@@ -113,10 +114,14 @@ test('blank map selection from a route returns through Nearby and then the route
   await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
 })
 
-test('route-stop selection returns directly to the route', async ({ page }) => {
+test('route-stop preview stays direct, then a map pick replaces the place with Nearby', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockCommon(page)
-  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places } }))
+  let nearbyRequests = 0
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => {
+    nearbyRequests += 1
+    return route.fulfill({ json: { places: nearbyRequests === 1 ? [places[0]] : [places[1]] } })
+  })
 
   await page.goto('/map?city=Tainan&route=15&variant=TNN-15%3A0')
   const drawer = page.locator('#map-drawer')
@@ -126,6 +131,12 @@ test('route-stop selection returns directly to the route', async ({ page }) => {
 
   await expect(drawer.getByRole('heading', { name: places[0].name })).toBeVisible()
   await expect(drawer.getByRole('button', { name: '← 返回路線', exact: true })).toBeVisible()
-  await drawer.getByRole('button', { name: '← 返回路線', exact: true }).click()
-  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+
+  await clickBlankMap(page)
+  await expect.poll(() => nearbyRequests).toBe(2)
+  await expect(drawer.getByRole('heading', { name: places[1].name })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: '← 附近站牌', exact: true })).toBeVisible()
+  await drawer.getByRole('button', { name: '← 附近站牌', exact: true }).click()
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: '← 返回路線', exact: true })).toBeVisible()
 })
