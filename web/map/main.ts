@@ -13,7 +13,7 @@ import {
   type PlaceRoutesPresentation,
 } from './place-routes-controller'
 import { createPlaceRoutesView } from './place-routes-view'
-import { createNearbyPlacesController } from './nearby-places-controller'
+import { createNearbyPlacesController, type NearbyPreviewSource } from './nearby-places-controller'
 import { createNearbyPlacesMap } from './nearby-places-map'
 import { createNearbyResultsState } from './nearby-results-state'
 import { createNearbyPlacesView, nearbyPlacesFailureMessage } from './nearby-places-view'
@@ -285,8 +285,8 @@ const nearbyPlaces = createNearbyPlacesController({
   beginRequest: beginNavRequest,
   isStaleRequest: isStaleNav,
   loadNearby: mapApi.nearby,
-  onStart: ({ cityCode, origin, autoPreview }) => {
-    if (!autoPreview) {
+  onStart: ({ cityCode, origin, previewSource }) => {
+    if (!previewSource) {
       nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
       nearbyResults.setOrigin(origin)
     }
@@ -294,22 +294,25 @@ const nearbyPlaces = createNearbyPlacesController({
     setStatus('正在找這附近的站牌…')
   },
   onPlaces: (presentation) => {
-    if (presentation.autoPreview) enterNearbyView(presentation.origin[0], presentation.origin[1])
+    if (presentation.previewSource) enterNearbyView(presentation.origin[0], presentation.origin[1])
     nearbyResults.store(presentation)
     renderNearbyPlaces()
   },
   onAutoPreview: async (place, presentation) => {
     nearbyResults.storeAndRenderMap(presentation)
+    if (presentation.previewSource === 'map') {
+      enterNearbyView(presentation.origin[0], presentation.origin[1])
+    }
     await openAutoPreviewPlace(place)
   },
-  onError: ({ cityCode, origin, autoPreview, error }) => {
-    if (autoPreview) {
+  onError: ({ cityCode, origin, previewSource, error }) => {
+    if (previewSource) {
       setStatus(nearbyPlacesFailureMessage(error), true)
       return
     }
     setStatus(nearbyPlacesView.renderError({
       cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
-      onRetry: () => void findNearbyPlaces(origin[0], origin[1], autoPreview, 'replace'),
+      onRetry: () => void findNearbyPlaces(origin[0], origin[1], previewSource, 'replace'),
     }), true)
   },
 })
@@ -443,7 +446,7 @@ const routeDetail = createRouteDetailController({
   hasTripResults,
   returnToTripResults,
   returnToRoutePicker,
-  onStopSelect: (latitude, longitude) => void findNearbyPlaces(latitude, longitude, true),
+  onStopSelect: (latitude, longitude) => void findNearbyPlaces(latitude, longitude, 'route-stop'),
   writePickerLocation: (cityCode, routeName, stopUid) => {
     history.replaceState(
       history.state,
@@ -618,7 +621,7 @@ async function hydrateMapLocation() {
         const longitude = Number(longitudeParam)
         if (latitudeParam !== null && longitudeParam !== null && Number.isFinite(latitude) && Number.isFinite(longitude)) {
           camera.focusPoint([latitude, longitude], 15)
-          await findNearbyPlaces(latitude, longitude, false, 'replace')
+          await findNearbyPlaces(latitude, longitude, undefined, 'replace')
           return
         }
 
@@ -670,14 +673,14 @@ map.on('click', (event) => {
     return
   }
   if (pick?.kind === 'place') {
-    void findNearbyPlaces(pick.place.latitude, pick.place.longitude, true)
+    void findNearbyPlaces(pick.place.latitude, pick.place.longitude, 'map')
     return
   }
   if (pick?.kind === 'route') {
     openChildRoute(pick.route.routeName, pick.route.variantKey, routeColor(pick.route.routeName))
     return
   }
-  if (map.getZoom() >= 14) void findNearbyPlaces(event.latlng.lat, event.latlng.lng, true)
+  if (map.getZoom() >= 14) void findNearbyPlaces(event.latlng.lat, event.latlng.lng, 'map')
   else {
     camera.focusPoint(event.latlng, 14, { animate: true })
     setStatus('放大後再選站牌，避免誤選太遠的位置')
@@ -1469,12 +1472,12 @@ function enterNearbyView(
 async function findNearbyPlaces(
   latitude: number,
   longitude: number,
-  autoPreview = false,
+  previewSource: NearbyPreviewSource | undefined = undefined,
   historyMode: 'push' | 'replace' = 'push',
 ) {
   if (!activeCity) return
   if (historyMode === 'push') cancelLocationHydration()
-  if (!autoPreview) enterNearbyView(latitude, longitude, historyMode)
+  if (!previewSource) enterNearbyView(latitude, longitude, historyMode)
   cityNetwork.hide()
   // 只有「選點進行中」需要中止規劃;已有行程結果就保留,
   // 點站牌不再把整趟規劃清掉,附近站牌視圖會給「返回行程候選」的退路。
@@ -1484,7 +1487,7 @@ async function findNearbyPlaces(
     cityCode: activeCity.code,
     origin: [latitude, longitude],
     radiusMeters: map.getZoom() >= 15 ? 300 : 500,
-    autoPreview,
+    previewSource,
   })
 }
 

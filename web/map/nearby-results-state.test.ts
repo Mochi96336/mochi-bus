@@ -6,7 +6,7 @@ const presentation: NearbyPlacesPresentation = {
   cityCode: 'Tainan',
   origin: [22.997, 120.212],
   radiusMeters: 500,
-  autoPreview: true,
+  previewSource: 'map',
   places: [
     { placeId: 'P1', name: '臺南火車站', latitude: 22.997, longitude: 120.212, distanceMeters: 76 },
     { placeId: 'P2', name: '成功大學', latitude: 22.999, longitude: 120.216, distanceMeters: 180 },
@@ -28,7 +28,7 @@ describe('Nearby results state', () => {
     expect(renderEndpoints).toHaveBeenCalledOnce()
   })
 
-  it('stores and renders auto-preview results in one explicit operation', () => {
+  it('stores and renders preview results in one explicit operation', () => {
     const renderPlaces = vi.fn()
     const renderEndpoints = vi.fn()
     const state = createNearbyResultsState({ renderPlaces, renderEndpoints })

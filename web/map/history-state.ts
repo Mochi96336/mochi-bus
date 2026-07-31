@@ -102,6 +102,23 @@ export function planMapHistoryPush(
   }
 
   const existingTrail = readMapDetailTrail(currentState)
+  const currentParent = readMapView({ mapView: historyRecord(currentState).mapParent })
+  // A fresh map pick replaces the current place surface. The old place must never become
+  // another drawer Back step; preserve its meaningful parent and, for place ← nearby,
+  // replace the previous Nearby waypoint instead of nesting searches indefinitely.
+  if (currentView === 'place' && nextView === 'nearby') {
+    const previousNearby = currentParent === 'nearby' ? existingTrail.at(-1) : undefined
+    const replacesPreviousNearby = previousNearby?.view === 'nearby'
+    const parent = replacesPreviousNearby
+      ? readMapView({ mapView: previousNearby.state.mapParent }) ?? 'catalogue'
+      : currentParent && currentParent !== 'place' ? currentParent : 'catalogue'
+    const trail = replacesPreviousNearby ? existingTrail.slice(0, -1) : existingTrail
+    return {
+      mode: 'replace',
+      state: withMapDetailTrail({ ...next, mapParent: parent }, trail),
+    }
+  }
+
   const trail = currentView === nextView
     ? existingTrail
     : appendMapDetailTrail(existingTrail, {

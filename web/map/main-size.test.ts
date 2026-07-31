@@ -194,7 +194,9 @@ describe('map main architecture boundary', () => {
   it('delegates Nearby Places loading and request lifecycle to the Nearby places controller', () => {
     expect(mainSource).toContain('createNearbyPlacesController')
     expect(mainSource).toContain('await nearbyPlaces.load({')
-    expect(mainSource).toContain("onRetry: () => void findNearbyPlaces(origin[0], origin[1], autoPreview, 'replace')")
+    expect(mainSource).toContain("onRetry: () => void findNearbyPlaces(origin[0], origin[1], previewSource, 'replace')")
+    expect(mainSource).toContain("findNearbyPlaces(latitude, longitude, 'route-stop')")
+    expect(mainSource).toContain("findNearbyPlaces(event.latlng.lat, event.latlng.lng, 'map')")
     expect(mainSource).toContain('nearbyPlaces.invalidate()')
     expect(mainSource).not.toContain('nearbyPlaces.retry()')
     expect(nearbyPlacesSource).not.toContain('lastRequest')

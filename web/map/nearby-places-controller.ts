@@ -2,11 +2,13 @@ import type { NearbyPlace } from './map-api-client'
 
 const DEFAULT_PLACE_LIMIT = 12
 
+export type NearbyPreviewSource = 'map' | 'route-stop'
+
 export type NearbyPlacesRequest = {
   cityCode: string
   origin: readonly [latitude: number, longitude: number]
   radiusMeters: number
-  autoPreview: boolean
+  previewSource?: NearbyPreviewSource
 }
 
 export type NearbyPlacesPresentation = NearbyPlacesRequest & {
@@ -80,7 +82,7 @@ export function createNearbyPlacesController(
         places: loaded.slice(0, placeLimit),
       }
       const firstPlace = presentation.places[0]
-      if (request.autoPreview && firstPlace) {
+      if (request.previewSource && firstPlace) {
         // The result list would exist for only one frame before the first place opens. Rendering it
         // expands the drawer and immediately collapses it into the next loading view, so bypass that
         // transient presentation and continue directly from nearby loading to place loading.
