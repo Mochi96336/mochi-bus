@@ -275,6 +275,8 @@ const designRefinementStyles = `
 .visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .eta-footer-actions{display:flex;align-items:center;gap:8px}
 .eta-footer-actions>.footer-action,.eta-footer-actions>.primary{display:inline-flex;min-height:var(--control-height-md);align-items:center;justify-content:center;padding:10px 16px;line-height:1.2}
+/* 重新整理/更新中/已更新/更新失敗 最長四個全形字;鎖住寬度,狀態切換才不會讓 footer 位移。 */
+#refresh{min-width:calc(4em + 32px)}
 .footer-action{border:1px solid var(--line);border-radius:999px;color:inherit;font-weight:750;text-decoration:none}
 .about-panel{margin-top:14px;padding-top:13px;border-top:1px solid var(--line-soft)}
 .about-panel p{color:var(--text-muted);font-size:13px;line-height:1.65}

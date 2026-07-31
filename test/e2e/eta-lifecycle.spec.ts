@@ -74,3 +74,49 @@ test('visibility resume refreshes once and coalesces repeated visible events', a
   await page.getByRole('button', { name: '重新整理' }).click()
   await expect.poll(() => arrivalsCalls).toBe(3)
 })
+
+const localBoard = {
+  ...board,
+  id: 'local-board',
+  placeId: undefined,
+  buses: [{ ...board.buses[0], directionLabel: '往板橋' }],
+}
+
+// 迴歸:refreshBoard 曾經用 refreshButton.disabled 當互斥鎖卻沒有 try/finally,
+// 收尾階段(reconcile / persist / Intl 格式化)任何一處拋例外就讓按鈕永久 disabled,
+// 之後每一輪定時器都在入口早退——首頁 ETA 從此不再更新,只能重整整頁才能恢復。
+// 這裡用無效的 dataTime 讓 Intl.DateTimeFormat.format 丟 RangeError 重現該收尾例外。
+test('a failing refresh surfaces the error and still runs the next scheduled round', async ({ page }) => {
+  await page.clock.install()
+  await page.addInitScript((savedBoard) => {
+    localStorage.setItem('mochi.bus.boards.v2', JSON.stringify([savedBoard]))
+    localStorage.setItem('mochi.bus.activeBoard.v2', savedBoard.id)
+  }, localBoard)
+
+  let etaCalls = 0
+  await page.route('**/api/v1/eta*', async (route) => {
+    etaCalls += 1
+    await route.fulfill({ json: {
+      label: '5 分', estimateSeconds: 300, source: 'realtime',
+      dataTime: 'not-a-date', fetchedAt: 'not-a-date', stale: false,
+    } })
+  })
+
+  await page.goto('/')
+  await expect.poll(() => etaCalls).toBe(1)
+
+  const refresh = page.getByRole('button', { name: '更新失敗' })
+  // 自動更新是 quiet,但 quiet 只抑制成功回饋:失敗仍要看得見,
+  // 否則卡死只是換成「靜默失敗」。
+  await expect(refresh).toBeVisible()
+  await expect(refresh).toBeEnabled()
+  await expect(page.locator('#refresh-status')).toHaveText('更新失敗')
+
+  await page.clock.runFor(1_200)
+  await expect(page.getByRole('button', { name: '重新整理' })).toBeEnabled()
+  await expect(page.locator('#refresh-status')).toBeEmpty()
+
+  // 真正的迴歸斷言:下一輪定時器仍然跑得起來。
+  await page.clock.runFor(30_000)
+  await expect.poll(() => etaCalls).toBe(2)
+})

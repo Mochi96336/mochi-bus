@@ -636,11 +636,7 @@ async function hydrateMapLocation() {
 function renderBootstrapError() {
   const message = '目前無法載入縣市資料，請檢查網路後再試一次。'
   setStatus('地圖初始化失敗，請稍後再試。', true)
-  const retry = retryButton(() => {
-    retry.disabled = true
-    retry.textContent = '重試中…'
-    void initialise()
-  })
+  const retry = retryButton(() => initialise())
   renderDrawer({
     key: 'initialization-error',
     mode: 'map-list',
@@ -911,7 +907,7 @@ async function chooseCity(city: MapCity) {
       content: [
         drawerBack('返回區域', returnToRegion),
         heading(city.name, '目前無法載入這個縣市的路線。'),
-        retryButton(() => void chooseCity(city)),
+        retryButton(() => chooseCity(city)),
       ],
     })
     camera.focusPoint(city.center, 11)

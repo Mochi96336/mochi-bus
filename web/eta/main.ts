@@ -6,6 +6,7 @@ import {
   type FavoriteBoard,
   type FavoriteBus,
 } from '../boards/store'
+import { createAsyncAction } from '../lib/async-action-state'
 import { isTdxTokenRejectedError, requestMochiJson } from '../tdx/api-client'
 import type { EtaSource } from '../../src/domain/eta-presentation'
 import { createEtaRow, updateEtaRow, type EtaRowViewModel } from './eta-row-view'
@@ -108,6 +109,7 @@ const titleNode = requiredElement<HTMLHeadingElement>('#board-title')
 const noticeNode = requiredElement<HTMLParagraphElement>('#notice')
 const updatedNode = requiredElement<HTMLSpanElement>('#updated')
 const refreshButton = requiredElement<HTMLButtonElement>('#refresh')
+const refreshStatusNode = requiredElement<HTMLSpanElement>('#refresh-status')
 const onboardNode = requiredElement<HTMLDivElement>('#onboard')
 const onboardSignNode = requiredElement<HTMLDivElement>('#onboard-sign')
 const mapLink = document.querySelector<HTMLAnchorElement>('.top-actions a')
@@ -158,7 +160,6 @@ function reconcileRows(responses: RefreshResponse[]): void {
     return row
   })
   listNode.replaceChildren(...rows)
-  listNode.removeAttribute('aria-busy')
 }
 
 async function fillDirectionLabel(bus: FavoriteBus): Promise<void> {
@@ -288,11 +289,9 @@ function clearRefreshNotice(): void {
   noticeNode.replaceChildren()
 }
 
+// 互斥、按鈕文字、aria-busy 與宣告都由 refreshAction 負責:這個函式本身
+// 只描述「刷新一次看板」要做的事,不再自己管狀態(見下方 refreshAction)。
 async function refreshBoard(): Promise<void> {
-  // 定時器與 visibilitychange 可能同時觸發,更新中就別再疊一輪。
-  if (refreshButton.disabled) return
-  refreshButton.disabled = true
-  refreshButton.textContent = '更新中'
   const placeLoad = await loadPlaceArrivals()
   const placeArrivals = placeLoad.routes
   const credentialError = isTdxTokenRejectedError(placeLoad.error) ? placeLoad.error : undefined
@@ -347,8 +346,25 @@ async function refreshBoard(): Promise<void> {
   else if (fresh.some((item) => item.source === 'schedule')) showRefreshNotice('部分依時刻表推估，實際到站可能略有出入')
   else clearRefreshNotice()
   updatedNode.textContent = fresh[0] ? '資料 ' + new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(fresh[0].dataTime || fresh[0].fetchedAt || Date.now())) : '暫時無法更新'
-  refreshButton.disabled = false
-  refreshButton.textContent = '重新整理'
+}
+
+// 舊版用 refreshButton.disabled 當互斥鎖,但 refreshBoard 沒有 try/finally:
+// reconcileRows、persistHomeBoard 或 Intl 格式化任何一處拋例外,按鈕就永久 disabled,
+// 之後每一輪定時器與 visibilitychange 都在入口早退——首頁 ETA 從此不再更新,
+// 只能重新整理整頁才能恢復。改由 createAsyncAction 保證 pending 一定會結束。
+//
+// aria-busy 掛在 #bus-list 而非按鈕:按鈕在 pending 期間是 disabled,
+// 已經被移出 AT 的互動模型,真正在變動的是清單。
+const refreshAction = createAsyncAction({
+  button: refreshButton,
+  labels: { idle: '重新整理', pending: '更新中', success: '已更新', error: '更新失敗' },
+  announce: (message) => { refreshStatusNode.textContent = message },
+  busyTarget: listNode,
+})
+
+// quiet:自動更新不播成功回饋。失敗仍會呈現,否則 renderer bug 會每 30 秒靜默失敗。
+function refreshQuietly(): void {
+  void refreshAction.run(refreshBoard, { quiet: true })
 }
 
 if (useLocalBoard) {
@@ -376,12 +392,11 @@ if (useLocalBoard) {
   }
   if (currentBoard.id !== initialBoard.id || currentBoard.buses.length > 1 || firstBus?.stopUid !== initialBoard.buses[0].stopUid || firstBus?.routeName !== initialBoard.buses[0].routeName || firstBus?.direction !== initialBoard.buses[0].direction) {
     listNode.replaceChildren(...currentBoard.buses.map((bus) => makeRow(bus)))
-    listNode.removeAttribute('aria-busy')
-    void refreshBoard()
-  } else void refreshBoard()
+  }
+  refreshQuietly()
 }
-refreshButton.addEventListener('click', () => { void refreshBoard() })
-setInterval(() => { if (!document.hidden) void refreshBoard() }, 30_000)
+refreshButton.addEventListener('click', () => { void refreshAction.run(refreshBoard) })
+setInterval(() => { if (!document.hidden) refreshQuietly() }, 30_000)
 // 通勤時是「從口袋掏出來瞄一眼」:切回前景那一刻就要是最新的,不能等下一輪定時器。
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshBoard() })
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshQuietly() })
 if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js')

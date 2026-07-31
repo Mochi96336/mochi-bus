@@ -240,7 +240,7 @@ export function createAsyncAction(options: AsyncActionOptions): AsyncAction
 | `phase === 'pending'` 時再次 `run` | 回傳 `{ status: 'skipped' }`，**不執行 task** |
 | task 拋例外 | 進 `error`，回傳 `{ status: 'rejected', reason }`。**`reason` 原封不動交給呼叫端** |
 | success / error 停留期間再次 `run` | 取消倒數，直接進 `pending` |
-| `quiet: true` | 不改 label、不宣告 success。**錯誤照常呈現** |
+| `quiet: true` | 不宣告 success、settle 直接回 idle。**pending label 照常顯示**(按鈕確實是 disabled,狀態要一致);**錯誤照常呈現** |
 | 未提供 `labels.success` / `labels.error` | pending-only 模式，settle 立即回 `idle`，不排倒數 |
 | 寫入 DOM 前 | 檢查 `button.isConnected`，已 detached 則跳過（見 §6.5c） |
 | `dispose()` 之後 `run` | 回傳 `{ status: 'skipped' }`，不碰 DOM |

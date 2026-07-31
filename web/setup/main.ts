@@ -17,6 +17,7 @@ import {
 import { requestMochiJson } from '../tdx/api-client'
 import { clearTdxAccessTokenCache, verifyTdxCredentials } from '../tdx/client'
 import { attachScrollFade } from '../lib/scroll-fade'
+import { createAsyncAction } from '../lib/async-action-state'
 
 type RouteItem = {
   routeName: string
@@ -605,6 +606,14 @@ function renderTdx(overrideMessage?: string) {
   setTdxFieldValidity([])
 }
 
+// 按鈕不跟著改文字:#tdx-message 已經是 aria-live,而且兩個輸入框都用
+// aria-describedby 指著它,狀態文字有一個表面就夠了。這裡取的是
+// createAsyncAction 的 pending 互斥與「pending 一定會結束」保證。
+const tdxSaveAction = createAsyncAction({
+  button: tdxSave,
+  labels: { idle: '儲存並測試', pending: '儲存並測試' },
+})
+
 tdxSave.onclick = async () => {
   const current = getTdxAuthState().auth
   const clientId = tdxId.value.trim()
@@ -618,20 +627,25 @@ tdxSave.onclick = async () => {
     showTdxError('Client Secret 不能空白', [tdxSecret])
     return
   }
-  tdxSave.disabled = true
   tdxMessage.textContent = '正在跟 TDX 打聲招呼…'
   tdxMessage.classList.remove('form-message-error')
   setTdxFieldValidity([])
-  try {
+  const persistence = tdxRemember.checked ? 'device' : 'session'
+  const result = await tdxSaveAction.run(async () => {
     await verifyTdxCredentials({ clientId, clientSecret })
-    const persistence = tdxRemember.checked ? 'device' : 'session'
     setTdxAuth({ clientId, clientSecret }, persistence)
-    tdxSecret.value = ''
-    renderTdx(persistence === 'device' ? '憑證有效，已記住於此裝置。' : '憑證有效，只保留在此分頁；關閉分頁後即移除。')
-  } catch (error) {
-    showTdxError(error instanceof Error && error.message ? error.message : '驗證失敗，稍後再試', [tdxId, tdxSecret])
+  })
+  if (result.status === 'skipped') return
+  if (result.status === 'rejected') {
+    // 錯誤訊息要用原本的 reason 產生,所以 run 必須把它原樣交回,不能吞成 undefined。
+    const { reason } = result
+    showTdxError(reason instanceof Error && reason.message ? reason.message : '驗證失敗，稍後再試', [tdxId, tdxSecret])
+    return
   }
-  tdxSave.disabled = false
+  // renderTdx 留在 action 外:它是渲染,不是驗證。渲染爆掉是真的程式錯誤,
+  // 不該被偽裝成「憑證驗證失敗」而讓使用者去查一組其實正確的憑證。
+  tdxSecret.value = ''
+  renderTdx(persistence === 'device' ? '憑證有效，已記住於此裝置。' : '憑證有效，只保留在此分頁；關閉分頁後即移除。')
 }
 
 tdxRemove.onclick = () => {
