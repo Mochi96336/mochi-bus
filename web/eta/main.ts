@@ -265,7 +265,14 @@ async function loadPlaceArrivals(): Promise<PlaceArrivalsLoad> {
   }
 }
 
+// #notice 是專屬 live region(見 src/ui.ts)。30 秒自動刷新每輪都清空再寫回同一句話,
+// 會讓螢幕閱讀器每 30 秒重播一次相同的降級提示,因此內容沒變就不碰 DOM。
+let renderedNotice: string | undefined = noticeNode.textContent?.trim() || undefined
+
 function showRefreshNotice(message: string, includeSetup = false): void {
+  const signature = `${includeSetup ? 'setup:' : ''}${message}`
+  if (signature === renderedNotice) return
+  renderedNotice = signature
   noticeNode.replaceChildren(document.createTextNode(message))
   if (!includeSetup) return
   noticeNode.appendChild(document.createTextNode(' '))
@@ -275,12 +282,17 @@ function showRefreshNotice(message: string, includeSetup = false): void {
   noticeNode.appendChild(setup)
 }
 
+function clearRefreshNotice(): void {
+  if (renderedNotice === undefined) return
+  renderedNotice = undefined
+  noticeNode.replaceChildren()
+}
+
 async function refreshBoard(): Promise<void> {
   // 定時器與 visibilitychange 可能同時觸發,更新中就別再疊一輪。
   if (refreshButton.disabled) return
   refreshButton.disabled = true
   refreshButton.textContent = '更新中'
-  noticeNode.replaceChildren()
   const placeLoad = await loadPlaceArrivals()
   const placeArrivals = placeLoad.routes
   const credentialError = isTdxTokenRejectedError(placeLoad.error) ? placeLoad.error : undefined
@@ -333,6 +345,7 @@ async function refreshBoard(): Promise<void> {
   else if (tdxWarning) showRefreshNotice(tdxWarningMessages[tdxWarning] ?? 'TDX 即時資料目前無法更新。', true)
   else if (fresh.some((item) => item.stale)) showRefreshNotice('部分資料有些延遲，以現場站牌為準')
   else if (fresh.some((item) => item.source === 'schedule')) showRefreshNotice('部分依時刻表推估，實際到站可能略有出入')
+  else clearRefreshNotice()
   updatedNode.textContent = fresh[0] ? '資料 ' + new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(fresh[0].dataTime || fresh[0].fetchedAt || Date.now())) : '暫時無法更新'
   refreshButton.disabled = false
   refreshButton.textContent = '重新整理'

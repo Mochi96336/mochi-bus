@@ -56,7 +56,10 @@ export function renderMapPage(meta: MapPageMeta = {}): string {
       <a class="quiet-button map-home" href="/">首頁</a>
     </header>
     <div id="map-status" class="map-status" aria-live="polite">${escapeHTML(statusText)}</div>
-    <aside id="map-drawer" class="map-drawer" aria-live="polite"></aside>
+    <!-- Drawer 不是 live region:每次換 view 都會 replaceChildren 整個抽屜,
+         容器級 aria-live 會朗讀整份內容,也讓內部的 role="status" 變成巢狀。
+         導覽宣告一律經 #map-status。 -->
+    <aside id="map-drawer" class="map-drawer"></aside>
   </div>
   <script id="map-bootstrap" type="application/json">${safeJSON({ cities: mapCities })}</script>
   <script type="module" src="/assets/map.js"></script>
