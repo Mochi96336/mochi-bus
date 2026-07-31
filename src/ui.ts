@@ -130,7 +130,7 @@ export function renderSetupPage(cities: ReadonlyArray<readonly [string, string]>
         <p class="glossary-tip">所以它不只想回答「我要怎麼去那裡」，也想回答「這座城市的公車是怎麼運作的」。地圖是主角，不是搜尋框；點站牌是探索，不只是查 ETA。</p>
         <p class="glossary-tip">它也不急著追蹤你現在在哪。地圖只用粗略位置猜縣市，首頁則回到你存下的常用站牌；重點是看懂路網，而不是把每一步都導航完。</p>
         <p class="glossary-thanks">公車資料來自交通部 TDX，底圖是 OpenStreetMap 貢獻者的作品，由 Cloudflare Workers 送到你手上。謝謝他們。</p>
-        <p class="glossary-thanks">Mochi Bus 採 Apache-2.0 授權開源，歡迎到 <a href="https://github.com/a20030824/mochi-bus" target="_blank" rel="noopener">GitHub</a> 提出 Issue、Pull Request 或 Fork。</p>
+        <p class="glossary-thanks">Mochi Bus 採 Apache-2.0 授權開源，歡迎到 <a href="https://github.com/Mochi96336/mochi-bus" target="_blank" rel="noopener">GitHub</a> 提出 Issue、Pull Request 或 Fork。</p>
       </details>
     </section>
     <section class="panel picker-panel" id="picker-panel" hidden>
