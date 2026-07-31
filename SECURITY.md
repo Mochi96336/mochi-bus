@@ -10,7 +10,7 @@ Mochi Bus 是一個人維護的開源專案（Apache-2.0），沒有專職資安
 
 **請不要**用公開 GitHub Issue 回報安全漏洞。改用 GitHub 的私密回報管道：
 
-[Report a vulnerability](https://github.com/a20030824/mochi-bus/security/advisories/new)（repo 的 Security 分頁 → Advisories → Report a vulnerability）
+[Report a vulnerability](https://github.com/Mochi96336/mochi-bus/security/advisories/new)（repo 的 Security 分頁 → Advisories → Report a vulnerability）
 
 回報時盡量附上：
 
