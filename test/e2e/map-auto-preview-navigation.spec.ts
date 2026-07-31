@@ -139,4 +139,6 @@ test('route-stop preview stays direct, then a map pick replaces the place with N
   await drawer.getByRole('button', { name: '← 附近站牌', exact: true }).click()
   await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
   await expect(drawer.getByRole('button', { name: '← 返回路線', exact: true })).toBeVisible()
+  await drawer.getByRole('button', { name: '← 返回路線', exact: true }).click()
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
 })
