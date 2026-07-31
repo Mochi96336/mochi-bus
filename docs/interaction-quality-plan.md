@@ -494,9 +494,13 @@ E2E：
 現況已完成開啟聚焦、關閉還原、Escape 關閉。**僅需補兩項：**
 
 1. `showPicker()`（[setup/main.ts:208](../web/setup/main.ts#L208)）時對主要內容區設 `inert`，`hidePicker()`（[:229](../web/setup/main.ts#L229)）時移除
-2. 步驟切換時（`routePicker` / `directionStep` / `suggestionStep` 三者的 `hidden` 互斥，見 [:243](../web/setup/main.ts#L243)、[:256](../web/setup/main.ts#L256)、[:436](../web/setup/main.ts#L436)）確認焦點不會停留在剛被 `hidden` 的節點上 —— 若當前 `document.activeElement` 位於被隱藏的步驟內，將焦點移到新步驟的第一個控制
+2. 步驟切換時（`routePicker` / `directionStep` / `suggestionStep` 三者的 `hidden` 互斥）確認焦點不會停留在剛被 `hidden` 的節點上 —— 若當前 `document.activeElement` 位於被隱藏的步驟內，將焦點移到新步驟的第一個控制
 
-`inert` 生效後 Tab 自然不會離開 Picker，**不需要手寫 focus trap**。
+`inert` 生效後 Tab 不會落在背景的任何控制上，**不需要手寫 focus trap**。
+
+注意 `inert` 不等於 focus trap：Tab 走到文件尾端仍會經過 `body` 再繞回來。要斷言的是「焦點永遠不落在背景控制上」，不是「焦點永遠在 Picker 內」。
+
+步驟焦點只處理**同步**的三個切換（`backToRoutes`、`backToStops`、`chooseRoute` → 方向步驟）。建議步驟（`loadSuggestions`）的控制要等 fetch 回來才存在，中途搶焦點會干擾使用者；該路徑接受焦點暫時落到 `body`，靠 `inert` 保證下一次 Tab 仍回到 Picker 內。
 
 ### 8.2 地圖 Drawer
 
@@ -510,9 +514,13 @@ function isKeyboardActivation(event: MouseEvent): boolean {
 }
 ```
 
-搭配 `:focus-visible` 狀態交叉驗證。地圖點擊（Leaflet 事件）與觸控一律視為非鍵盤，不搶焦點。
+實作為 `createKeyboardActivationTracker`（[drawer-view.ts](../web/map/drawer-view.ts)）：document 上的 capture 監聽，`click` 記錄 `detail === 0`，`pointerdown` 清旗標。地圖點擊（Leaflet 事件）與觸控一律視為非鍵盤。
 
-焦點轉移的排程必須註冊到 `DrawerViewSession.onDispose`，避免 view 已替換後才執行。
+**旗標是一次性的。** 每次 `render()` 都消耗掉，否則一次鍵盤操作留下的 `true` 會被後面某個非鍵盤觸發的 render（popstate、URL hydration、ETA 刷新）撿去用而錯誤地搶走焦點。
+
+焦點**同步**在 `render()` 內轉移，不排計時器，因此沒有需要註冊到 `DrawerViewSession.onDispose` 的東西。
+
+轉移目標是**第一個可聚焦控制**（通常是返回鍵），不是標題：標題在 DOM 上排在返回鍵之後，聚焦標題會讓返回鍵只剩 Shift+Tab 才到得了。Drawer 不是 modal，往前的 Tab 序必須保持完整。
 
 ### 8.3 測試
 

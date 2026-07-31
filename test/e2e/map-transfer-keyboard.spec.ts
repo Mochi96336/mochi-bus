@@ -146,3 +146,62 @@ test('transfer cards isolate keyboard selection from inner route actions', async
   await expect.poll(() => routeCalls.length).toBe(15)
   await expect(page.locator('.transfer-plan').nth(0)).toHaveClass(/selected/)
 })
+
+const overviewCity = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
+
+function overviewVariant(routeName: string) {
+  return {
+    variantKey: `TNN-${routeName}:0`, routeName, routeUid: `TNN-${routeName}`, direction: 0 as const,
+    label: '奇美醫院 → 大成路口', subRouteName: routeName, updatedAt: null,
+    shape: { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: [[120.2, 22.99], [120.24, 23.02]] } },
+    stops: { type: 'FeatureCollection' as const, features: [
+      { type: 'Feature' as const, properties: { stopUid: 'S1', stopName: '奇美醫院', sequence: 1 }, geometry: { type: 'Point' as const, coordinates: [120.2, 22.99] as [number, number] } },
+    ] },
+  }
+}
+
+async function mockCatalogue(page: import('./fixtures').Page) {
+  await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
+  await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [overviewCity] } }))
+  await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({
+    json: { routes: [{ routeName: '15', category: '數字' }] },
+  }))
+  await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => route.fulfill({
+    json: { variants: [overviewVariant('15')] },
+  }))
+  await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({ json: { timetable: { mode: 'none', services: [] } } }))
+  await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
+}
+
+const activeElementInDrawer = (page: import('./fixtures').Page) => page.evaluate(() => {
+  const active = document.activeElement
+  return Boolean(active && document.getElementById('map-drawer')?.contains(active))
+})
+
+test('a keyboard-opened drawer view moves focus into the new content', async ({ page }) => {
+  await mockCatalogue(page)
+  await page.goto('/map?city=Tainan')
+
+  const drawer = page.locator('#map-drawer')
+  const routeButton = drawer.getByRole('button', { name: '15', exact: true })
+  await routeButton.focus()
+  await page.keyboard.press('Enter')
+
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+  expect(await activeElementInDrawer(page)).toBe(true)
+})
+
+test('a pointer-opened drawer view leaves focus where the user put it', async ({ page }) => {
+  await mockCatalogue(page)
+  await page.goto('/map?city=Tainan')
+
+  const drawer = page.locator('#map-drawer')
+  const search = drawer.getByRole('textbox', { name: '篩選路線，或搜尋站牌名稱' })
+  await search.focus()
+  // 滑鼠與觸控不搶焦點:手機上搶焦點會叫出虛擬鍵盤,也會打斷地圖操作。
+  await drawer.getByRole('button', { name: '15', exact: true }).click()
+
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+  await expect(search).toHaveCount(0)
+  expect(await activeElementInDrawer(page)).toBe(false)
+})
