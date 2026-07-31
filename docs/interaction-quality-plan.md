@@ -522,6 +522,20 @@ function isKeyboardActivation(event: MouseEvent): boolean {
 
 轉移目標是**第一個可聚焦控制**（通常是返回鍵），不是標題：標題在 DOM 上排在返回鍵之後，聚焦標題會讓返回鍵只剩 Shift+Tab 才到得了。Drawer 不是 modal，往前的 Tab 序必須保持完整。
 
+#### 焦點修復（實作時才發現的第二個條件）
+
+只做「鍵盤才轉移」會漏掉一種情況：loading 與 settled **共用 view key**，settled 的 `replaceChildren()` 會把剛剛被聚焦的節點拔掉，而同 key 的第二次 render 不會再轉移焦點（`animateContent` 為 false，旗標也已消耗）。結果焦點掉回 `body`。
+
+因此第二個條件：**render 前焦點在 drawer 內、render 後不在了 → 接回第一個可聚焦控制。**
+
+這是修復，不是搶奪 —— 焦點本來就在 drawer 裡，是我們自己的 `replaceChildren()` 弄丟的。焦點原本在 drawer 之外時一律不碰。
+
+#### 測試的正確命題
+
+「滑鼠操作不搶焦點」不能用「點 drawer 內的按鈕」來驗證：**瀏覽器本來就會把焦點移到被點的按鈕上**，焦點在 drawer 外撐不過任何一次 drawer 內點擊。
+
+有意義的命題只在導覽**不是由 drawer 內控制發起**時成立 —— 地圖點擊正是那條路徑，也正是手機上搶焦點會叫出虛擬鍵盤的那條。斷言為：地圖點擊開啟新 view 後，焦點不得被拉進 drawer。（焦點離開原本的外部元素是正常的，點地圖會聚焦地圖容器。）
+
 ### 8.3 測試
 
 - `test/e2e/map-transfer-keyboard.spec.ts`（既有）擴充：鍵盤開啟 place view 後焦點落在標題；滑鼠開啟時焦點不動
@@ -537,18 +551,33 @@ function isKeyboardActivation(event: MouseEvent): boolean {
 
 **第一版只做 `open` / `folded` 兩態，不做 `dismissed`。** 等出現第二個真正需要永久關閉的通知再擴充。
 
-### 9.2 政策
+### 9.2 政策：由 call site 的結構決定，不列舉通知種類
 
-| 通知 | 可折疊 |
-|---|---|
-| TDX 暫時忙線 / 憑證失效 | 是 |
-| 部分資料稍早 | 是 |
-| 依時刻表推估 | 是 |
-| 地圖初始化失敗 / 完全無資料 | 否（無替代路徑，折疊等於隱藏唯一出口） |
+實作時發現不需要一張「哪一種通知可折疊」的表 —— 五個 call site 自己就分成乾淨的兩類：
 
-「部分資料稍早」**不允許永久關閉**：design-system.md 明訂 stale 必須保留可見文字，允許永久關閉等同允許使用者關掉正確性提示。
+| call site | 通知旁邊還有可用內容嗎 | 可折疊 |
+|---|---|---|
+| [place-routes-view.ts](../web/map/place-routes-view.ts) `renderRoutes` 的 warning | 有（整份路線清單） | 是 |
+| [trip-results-view.ts](../web/map/trip-results-view.ts) `warningContent` | 有（整份行程結果） | 是 |
+| [main.ts](../web/map/main.ts) 車輛降級 ×2 | 有（路線與站牌仍可用） | 是 |
+| [place-routes-view.ts](../web/map/place-routes-view.ts) `renderError` | 沒有，通知就是內容 | 否 |
+| [trip-results-view.ts](../web/map/trip-results-view.ts) 「查詢失敗了」 | 沒有，通知就是內容 | 否 |
 
-折疊狀態存在記憶體，**不寫入 localStorage** —— 問題仍成立時重新載入應重新展開。
+> **規則：通知旁邊還有可用內容時才可折疊。通知本身就是整個畫面的內容時不行 —— 那時候折疊等於把唯一的出口藏起來。**
+
+這條規則是結構性的、在每個 call site 當場可判斷，比列舉通知種類更耐得住新增功能。
+
+### 9.3 折疊不得隱藏問題敘述
+
+實作為 `<details>`：`<summary>` 承載訊息，折疊只收起處理動作。訊息永遠看得見。
+
+`role="status"` 掛在**訊息節點**而不是整張通知。掛在容器上會有兩個問題：展開折疊讓按鈕文字進出 live region 而被重新朗讀；而且朗讀內容會變成把按鈕唸一遍。要宣告的是問題本身。
+
+### 9.4 折疊狀態
+
+存在記憶體，**不寫入 localStorage** —— 問題仍成立時重新載入應重新展開。
+
+以訊息內容為鍵。理由是車輛定位每 20 秒重畫一次通知：不記住的話，使用者折疊完二十秒後又會彈開。
 
 ---
 

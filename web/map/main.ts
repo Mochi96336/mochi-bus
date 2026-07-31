@@ -1431,7 +1431,7 @@ function renderVehiclePositions(response: VehiclePositionsResponse) {
   if (response.warning) {
     const message = tdxWarningMessages[response.warning]
     setStatus(message, true)
-    const notice = degradedNotice(message, () => void vehicleRefresh.refresh())
+    const notice = degradedNotice({ message, onRetry: () => vehicleRefresh.refresh(), collapsible: true })
     notice.classList.add('vehicle-degraded-notice')
     drawer.appendChild(notice)
   }
@@ -1446,7 +1446,7 @@ function renderVehicleRefreshError(error: unknown) {
     : '暫時無法更新車輛位置；路線與站牌仍可使用。'
   setStatus(message, true)
   drawer.querySelector('.vehicle-degraded-notice')?.remove()
-  const notice = degradedNotice(message, () => void vehicleRefresh.refresh(), credentialRejected)
+  const notice = degradedNotice({ message, onRetry: () => vehicleRefresh.refresh(), credentialRecovery: credentialRejected, collapsible: true })
   notice.classList.add('vehicle-degraded-notice')
   drawer.appendChild(notice)
 }

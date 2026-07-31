@@ -1,15 +1,27 @@
 import { createAsyncAction } from '../lib/async-action-state'
 
-export function degradedNotice(
-  message: string,
-  onRetry: () => void,
-  credentialRecovery = false,
-): HTMLElement {
+export type DegradedNoticeOptions = {
+  message: string
+  onRetry: () => void | Promise<void>
+  credentialRecovery?: boolean
+  /**
+   * 只有當通知旁邊還有可用內容時才可折疊。通知本身就是整個畫面的內容時不行——
+   * 那時候折疊等於把唯一的出口藏起來。
+   */
+  collapsible?: boolean
+}
+
+// 折疊狀態記在記憶體,不進 localStorage:問題仍然成立時,重新載入應該重新展開。
+// 以訊息為鍵,是因為車輛定位每 20 秒重畫一次通知——不記住的話,使用者折疊完
+// 二十秒後又會彈開。
+const foldedNotices = new Set<string>()
+
+export function degradedNotice(options: DegradedNoticeOptions): HTMLElement {
+  const { message, onRetry, credentialRecovery, collapsible } = options
   const notice = document.createElement('section')
   notice.className = 'degraded-notice'
   if (credentialRecovery) notice.classList.add('credential-recovery')
-  notice.setAttribute('role', 'status')
-  notice.appendChild(paragraph(message))
+
   const actions = document.createElement('div')
   actions.className = 'degraded-actions'
   actions.appendChild(retryButton(onRetry))
@@ -18,8 +30,46 @@ export function degradedNotice(
   setup.href = '/setup'
   setup.textContent = '檢查 TDX 設定'
   actions.appendChild(setup)
-  notice.appendChild(actions)
+
+  if (!collapsible) {
+    notice.appendChild(liveMessage(paragraph(message)))
+    notice.appendChild(actions)
+    return notice
+  }
+
+  // 折疊只收起處理動作,問題敘述一直留在 summary 上:使用者可以把仍然成立的
+  // 問題縮小,不能讓它看起來不再存在。
+  const fold = document.createElement('details')
+  fold.className = 'degraded-fold'
+  fold.open = !foldedNotices.has(message)
+  const summary = document.createElement('summary')
+  const copy = document.createElement('span')
+  copy.textContent = message
+  summary.appendChild(liveMessage(copy))
+  fold.appendChild(summary)
+  fold.appendChild(actions)
+  fold.addEventListener('toggle', () => {
+    if (fold.open) foldedNotices.delete(message)
+    else foldedNotices.add(message)
+  })
+  notice.appendChild(fold)
   return notice
+}
+
+// role="status" 掛在訊息節點而不是整張通知:掛在容器上時,展開折疊會讓
+// 按鈕文字進出 live region 而被重新朗讀,而且朗讀內容會變成把按鈕唸一遍。
+// 要宣告的是問題本身。
+function liveMessage(node: HTMLElement): HTMLElement {
+  node.setAttribute('role', 'status')
+  return node
+}
+
+export function isNoticeFolded(message: string): boolean {
+  return foldedNotices.has(message)
+}
+
+export function resetFoldedNotices(): void {
+  foldedNotices.clear()
 }
 
 export function heading(title: string, description: string): HTMLElement {

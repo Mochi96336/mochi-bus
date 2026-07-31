@@ -191,17 +191,40 @@ test('a keyboard-opened drawer view moves focus into the new content', async ({ 
   expect(await activeElementInDrawer(page)).toBe(true)
 })
 
-test('a pointer-opened drawer view leaves focus where the user put it', async ({ page }) => {
+// 點按鈕本來就會讓瀏覽器把焦點移到那顆按鈕上,所以「焦點留在 drawer 外」只在
+// 導覽不是由 drawer 內控制發起時才有意義——地圖點擊正是那個情形,也正是手機上
+// 搶焦點會叫出虛擬鍵盤、打斷地圖操作的那條路徑。
+test('a map click opens a view without pulling focus into the drawer', async ({ page }) => {
+  await mockCatalogue(page)
+  const place = { placeId: 'P1', name: '奇美醫院', latitude: 22.99, longitude: 120.21, distanceMeters: 20 }
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places: [place] } }))
+  await page.route('**/api/v1/map/place/*/arrivals*', (route) => route.fulfill({ json: { routes: [] } }))
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+
+  await page.locator('#map-brand').focus()
+  await page.locator('#map').click({ position: { x: 200, y: 200 } })
+
+  await expect(drawer.getByRole('heading', { name: '奇美醫院' })).toBeVisible()
+  // 點地圖會把焦點交給地圖容器,那是瀏覽器的正常行為;要保證的是 drawer
+  // 不會反過來把焦點搶進去。
+  expect(await activeElementInDrawer(page)).toBe(false)
+})
+
+// loading 與 settled 共用 view key,settled 的 replaceChildren 會把剛聚焦的節點
+// 拔掉。焦點本來就在 drawer 裡時要接回來,不能讓它掉到 body。
+test('repairs focus the drawer itself orphaned during a re-render', async ({ page }) => {
   await mockCatalogue(page)
   await page.goto('/map?city=Tainan')
 
   const drawer = page.locator('#map-drawer')
   const search = drawer.getByRole('textbox', { name: '篩選路線，或搜尋站牌名稱' })
   await search.focus()
-  // 滑鼠與觸控不搶焦點:手機上搶焦點會叫出虛擬鍵盤,也會打斷地圖操作。
   await drawer.getByRole('button', { name: '15', exact: true }).click()
 
   await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
   await expect(search).toHaveCount(0)
-  expect(await activeElementInDrawer(page)).toBe(false)
+  expect(await activeElementInDrawer(page)).toBe(true)
 })

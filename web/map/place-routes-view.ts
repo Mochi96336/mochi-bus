@@ -6,6 +6,7 @@ import type {
   PlaceRoutesPresentation,
   PlaceRouteStart,
 } from './place-routes-controller'
+import type { DegradedNoticeOptions } from './drawer-primitives'
 import type { DrawerSize, DrawerView, DrawerViewSession } from './drawer-view'
 import { placeRoutesDrawerSize } from './drawer-content-size'
 import { createPlaceRouteLoadingList } from './loading-skeleton'
@@ -14,7 +15,7 @@ type PlaceRoutesViewOptions = {
   renderDrawer: (view: DrawerView) => DrawerViewSession
   createBackButton: (label: string, onClick: () => void) => HTMLButtonElement
   createHeading: (title: string, description: string) => HTMLElement
-  createDegradedNotice: (message: string, onRetry: () => void, credentialRecovery?: boolean) => HTMLElement
+  createDegradedNotice: (options: DegradedNoticeOptions) => HTMLElement
   backLabel: () => string
   onBack: () => void
   onRetry: (place: NearbyPlace) => void
@@ -100,8 +101,13 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
           `${place.distanceMeters > 0 ? `${Math.round(place.distanceMeters)} 公尺 · ` : ''}${routes.length} 個行車方向`,
         ),
         content: [
+          // 路線清單本身可用,降級提示可以折疊。
           ...(warning
-            ? [options.createDegradedNotice(tdxWarningMessages[warning], retry(place))]
+            ? [options.createDegradedNotice({
+              message: tdxWarningMessages[warning],
+              onRetry: retry(place),
+              collapsible: true,
+            })]
             : []),
           list,
         ],
@@ -114,11 +120,12 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
         header: drawerHeader(place, message),
-        content: [options.createDegradedNotice(
+        // 這裡通知就是整個畫面的內容,折疊等於把唯一的出口藏起來。
+        content: [options.createDegradedNotice({
           message,
-          retry(place),
-          options.isCredentialRecovery(error),
-        )],
+          onRetry: retry(place),
+          credentialRecovery: options.isCredentialRecovery(error),
+        })],
       })
       return message
     },

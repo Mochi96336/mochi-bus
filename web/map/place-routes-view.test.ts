@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tdxWarningMessages } from '../../src/domain/tdx-warning'
 import type { DrawerView, DrawerViewSession } from './drawer-view'
+import type { DegradedNoticeOptions } from './drawer-primitives'
 import type { NearbyPlace, PlaceRoute } from './map-api-client'
 import type { PlaceRoutesPresentation } from './place-routes-controller'
 import source from './place-routes-view.ts?raw'
@@ -121,11 +122,12 @@ function createHarness() {
   const createFavoriteControl = vi.fn(() => element('button') as unknown as HTMLButtonElement)
   const releasePreservedHeight = vi.fn()
   const onDispose = vi.fn()
-  const createDegradedNotice = vi.fn((_message: string, retry: () => void, credentialRecovery = false) => {
+  const createDegradedNotice = vi.fn((options: DegradedNoticeOptions) => {
     const notice = element('section')
     notice.className = 'degraded-notice'
-    notice.setAttribute('credential-recovery', String(credentialRecovery))
-    notice.addEventListener('click', retry)
+    notice.setAttribute('credential-recovery', String(options.credentialRecovery ?? false))
+    notice.setAttribute('collapsible', String(options.collapsible ?? false))
+    notice.addEventListener('click', () => void options.onRetry())
     return notice as unknown as HTMLElement
   })
   const view = createPlaceRoutesView({
@@ -217,10 +219,12 @@ describe('Place routes view', () => {
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
     expect(harness.onDispose).not.toHaveBeenCalled()
-    expect(harness.createDegradedNotice).toHaveBeenCalledWith(
-      tdxWarningMessages['tdx-rate-limit'],
-      expect.any(Function),
-    )
+    // 路線清單仍然可用,所以這則降級提示可折疊。
+    expect(harness.createDegradedNotice).toHaveBeenCalledWith({
+      message: tdxWarningMessages['tdx-rate-limit'],
+      onRetry: expect.any(Function),
+      collapsible: true,
+    })
     const list = drawer.content.at(-1) as unknown as FakeElement
     const row = findByClass(list, 'place-route-row')
     expect(row?.styles.get('--route-color')).toBe('#123456')
@@ -231,8 +235,7 @@ describe('Place routes view', () => {
     expect(harness.onOpenRoute).toHaveBeenCalledWith('307', '307:0', '#123456', 'STOP')
     expect(harness.createFavoriteControl).toHaveBeenCalledWith(place(), staleRoute)
 
-    const warningRetry = harness.createDegradedNotice.mock.calls[0][1]
-    warningRetry()
+    harness.createDegradedNotice.mock.calls[0][0].onRetry()
     expect(harness.onRetry).toHaveBeenCalledWith(place())
   })
 
@@ -260,8 +263,13 @@ describe('Place routes view', () => {
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
     expect(harness.onDispose).not.toHaveBeenCalled()
-    expect(harness.createDegradedNotice).toHaveBeenCalledWith('credential', expect.any(Function), true)
-    harness.createDegradedNotice.mock.calls[0][1]()
+    // 通知就是整個畫面的內容,不可折疊。
+    expect(harness.createDegradedNotice).toHaveBeenCalledWith({
+      message: 'credential',
+      onRetry: expect.any(Function),
+      credentialRecovery: true,
+    })
+    harness.createDegradedNotice.mock.calls[0][0].onRetry()
     expect(harness.onRetry).toHaveBeenCalledWith(place())
   })
 

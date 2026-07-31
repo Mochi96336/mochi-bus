@@ -80,6 +80,7 @@ export function createDrawerRenderer(
     // 每次 render 都消耗掉旗標,否則一次鍵盤操作留下的 true 會被後面某個
     // 非鍵盤觸發的 render(popstate、URL hydration、ETA 刷新)撿去用。
     const keyboardEntry = isKeyboardActivation()
+    const hadFocusInside = drawer.contains(document.activeElement)
     currentViewKey = view.key
     rememberDrawerSize(sizesByViewKey, sizeKey, nextSize)
 
@@ -120,9 +121,15 @@ export function createDrawerRenderer(
       cleanups.push(attachScrollFade(scrollRegion))
     }
 
-    // 只有鍵盤導覽才轉移焦點。滑鼠與地圖點擊不搶焦點——手機上搶焦點會叫出
+    // 只有鍵盤導覽才主動轉移焦點。滑鼠與地圖點擊不搶焦點——手機上搶焦點會叫出
     // 虛擬鍵盤,也會打斷正在進行的地圖操作。Drawer 不是 modal,不設 focus trap。
-    if (animateContent && keyboardEntry) focusDrawerEntry(drawer)
+    //
+    // 第二個條件是修復,不是搶奪:焦點本來就在 drawer 裡,是剛才的
+    // replaceChildren 把那個節點拔掉的。loading 與 settled 共用 view key,
+    // 所以這種情況很常見——不接回來的話焦點會掉到 body,下一次 Tab 就從
+    // 整頁最上面重來。焦點原本在 drawer 之外時一律不碰。
+    const orphanedFocus = hadFocusInside && !drawer.contains(document.activeElement)
+    if ((animateContent && keyboardEntry) || orphanedFocus) focusDrawerEntry(drawer)
 
     const disposeView = () => {
       if (!active) return
