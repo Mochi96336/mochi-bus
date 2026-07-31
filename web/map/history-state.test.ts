@@ -100,47 +100,46 @@ describe('map history state', () => {
     expect((place.state as { mapDetailTrail: unknown[] }).mapDetailTrail).toHaveLength(2)
   })
 
-
-it('replaces the previous nearby waypoint when a place starts a new nearby search', () => {
-  const current = {
-    mapView: 'place',
-    mapParent: 'nearby',
-    mapDetailTrail: [{
-      view: 'nearby',
-      url: '/map?city=Taipei&lat=25.00000&lon=121.50000',
-      state: { mapView: 'nearby', mapParent: 'catalogue' },
-    }],
-  }
-  const nearby = planMapHistoryPush(current, '/map?city=Taipei&place=P1', {
-    ...current,
-    mapView: 'nearby',
-    mapParent: 'place',
-  })
-  expect(nearby).toEqual({
-    mode: 'replace',
-    state: { mapView: 'nearby', mapParent: 'catalogue' },
-  })
-
-  const nextPlace = planMapHistoryPush(nearby.state, '/map?city=Taipei&lat=25.03300&lon=121.56500', {
-    ...nearby.state as Record<string, unknown>,
-    mapView: 'place',
-    mapParent: 'nearby',
-  })
-  expect(nextPlace).toEqual({
-    mode: 'replace',
-    state: {
+  it('replaces the previous nearby waypoint when a place starts a new nearby search', () => {
+    const current = {
       mapView: 'place',
       mapParent: 'nearby',
       mapDetailTrail: [{
         view: 'nearby',
-        url: '/map?city=Taipei&lat=25.03300&lon=121.56500',
+        url: '/map?city=Taipei&lat=25.00000&lon=121.50000',
         state: { mapView: 'nearby', mapParent: 'catalogue' },
       }],
-    },
-  })
-})
+    }
+    const nearby = planMapHistoryPush(current, '/map?city=Taipei&place=P1', {
+      ...current,
+      mapView: 'nearby',
+      mapParent: 'place',
+    })
+    expect(nearby).toEqual({
+      mode: 'replace',
+      state: { mapView: 'nearby', mapParent: 'catalogue' },
+    })
 
-it('does not grow the detail trail when replacing the same kind of detail', () => {
+    const nextPlace = planMapHistoryPush(nearby.state, '/map?city=Taipei&lat=25.03300&lon=121.56500', {
+      ...nearby.state as Record<string, unknown>,
+      mapView: 'place',
+      mapParent: 'nearby',
+    })
+    expect(nextPlace).toEqual({
+      mode: 'replace',
+      state: {
+        mapView: 'place',
+        mapParent: 'nearby',
+        mapDetailTrail: [{
+          view: 'nearby',
+          url: '/map?city=Taipei&lat=25.03300&lon=121.56500',
+          state: { mapView: 'nearby', mapParent: 'catalogue' },
+        }],
+      },
+    })
+  })
+
+  it('does not grow the detail trail when replacing the same kind of detail', () => {
     const current = {
       mapView: 'nearby',
       mapParent: 'route',
