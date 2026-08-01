@@ -1,4 +1,4 @@
-import { operationEnabledCities } from '../instance/operations-plan.mjs'
+import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 
 export const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
 export const SNAPSHOT_SCHEDULE_HOUR = 3
@@ -15,6 +15,11 @@ export const SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY = Object.freeze([
   Object.freeze(['Taichung']),
   Object.freeze(['Kaohsiung', 'YunlinCounty']),
 ])
+
+const OPERATIONS_PLAN = loadOperationsPlan()
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+const SUPPORTED_CITY_WEEKDAY = new Map(SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY.flatMap((cities, weekday) =>
+  cities.map((city) => [city, weekday])))
 
 export function scopeSnapshotSchedule(schedule, enabledCities) {
   if (!Array.isArray(schedule) || schedule.length !== 7) {
@@ -36,24 +41,40 @@ export function scopeSnapshotSchedule(schedule, enabledCities) {
     Object.freeze(cities.filter((city) => enabledCitySet.has(city)))))
 }
 
-export const SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY = scopeSnapshotSchedule(
-  SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
-  operationEnabledCities(),
-)
-
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
-const CITY_WEEKDAY = new Map(SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY.flatMap((cities, weekday) =>
-  cities.map((city) => [city, weekday])))
-
-export function scheduledCitiesForTaipeiDate(scheduleDate) {
-  const date = validDateOnly(scheduleDate)
-  return SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY[new Date(`${date}T00:00:00.000Z`).getUTCDay()]
+export function enabledSnapshotCitiesInScheduleOrder(enabledCities) {
+  return Object.freeze(scopeSnapshotSchedule(
+    SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
+    enabledCities,
+  ).flat())
 }
 
-export function scheduledSnapshotWindow(city, scheduleDate) {
-  assertScheduledCity(city)
+export function snapshotCitiesByTaipeiWeekday(plan = OPERATIONS_PLAN) {
+  const weekly = scopeSnapshotSchedule(
+    SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
+    plan.enabledCities,
+  )
+  if (plan.snapshotSchedule === 'taipei-weekly-sharded') return weekly
+  if (plan.snapshotSchedule === 'manual') {
+    return Object.freeze(Array.from({ length: 7 }, () => Object.freeze([])))
+  }
+  if (plan.snapshotSchedule === 'daily') {
+    const cities = enabledSnapshotCitiesInScheduleOrder(plan.enabledCities)
+    return Object.freeze(Array.from({ length: 7 }, () => Object.freeze([...cities])))
+  }
+  throw new Error(`Unsupported snapshot schedule mode: ${plan.snapshotSchedule}`)
+}
+
+export const SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY = snapshotCitiesByTaipeiWeekday()
+
+export function scheduledCitiesForTaipeiDate(scheduleDate, plan = OPERATIONS_PLAN) {
   const date = validDateOnly(scheduleDate)
-  if (!scheduledCitiesForTaipeiDate(date).includes(city)) throw new Error('City is not scheduled for this date')
+  return snapshotCitiesByTaipeiWeekday(plan)[new Date(`${date}T00:00:00.000Z`).getUTCDay()]
+}
+
+export function scheduledSnapshotWindow(city, scheduleDate, plan = OPERATIONS_PLAN) {
+  assertScheduledCity(city, plan)
+  const date = validDateOnly(scheduleDate)
+  if (!scheduledCitiesForTaipeiDate(date, plan).includes(city)) throw new Error('City is not scheduled for this date')
   return Object.freeze({
     windowId: `v1:${city}:${date}:0317`,
     scheduledAt: taipeiLocalTimeAsUtc(date, SNAPSHOT_SCHEDULE_HOUR, SNAPSHOT_SCHEDULE_MINUTE).toISOString(),
@@ -61,12 +82,18 @@ export function scheduledSnapshotWindow(city, scheduleDate) {
   })
 }
 
-export function latestScheduledTaipeiDate(city, now = new Date()) {
-  assertScheduledCity(city)
+export function latestScheduledTaipeiDate(city, now = new Date(), plan = OPERATIONS_PLAN) {
+  assertScheduledCity(city, plan)
   const local = new Date(validDate(now).getTime() + TAIPEI_OFFSET_MS)
   const beforeSlot = local.getUTCHours() < SNAPSHOT_SCHEDULE_HOUR
     || (local.getUTCHours() === SNAPSHOT_SCHEDULE_HOUR && local.getUTCMinutes() < SNAPSHOT_SCHEDULE_MINUTE)
-  let daysBack = (local.getUTCDay() - CITY_WEEKDAY.get(city) + 7) % 7
+
+  if (plan.snapshotSchedule === 'daily') {
+    if (beforeSlot) local.setUTCDate(local.getUTCDate() - 1)
+    return utcDateParts(local)
+  }
+
+  let daysBack = (local.getUTCDay() - SUPPORTED_CITY_WEEKDAY.get(city) + 7) % 7
   if (daysBack === 0 && beforeSlot) daysBack = 7
   local.setUTCDate(local.getUTCDate() - daysBack)
   return utcDateParts(local)
@@ -90,8 +117,10 @@ export function taipeiLocalTimeAsUtc(date, hour, minute) {
   return new Date(Date.UTC(year, month - 1, day, hour, minute) - TAIPEI_OFFSET_MS)
 }
 
-export function assertScheduledCity(city) {
-  if (!CITY_WEEKDAY.has(city)) throw new Error('Snapshot city is not enabled for scheduled operations')
+export function assertScheduledCity(city, plan = OPERATIONS_PLAN) {
+  if (plan.snapshotSchedule === 'manual') throw new Error('Scheduled snapshot operations are disabled for this instance')
+  if (!plan.enabledCities.includes(city)) throw new Error('Snapshot city is not enabled for scheduled operations')
+  if (!SUPPORTED_CITY_WEEKDAY.has(city)) throw new Error('Unsupported snapshot city')
 }
 
 export function validDateOnly(value) {
