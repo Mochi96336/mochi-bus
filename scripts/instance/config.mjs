@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
-import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 
 export const INSTANCE_SCHEMA_VERSION = 1
 export const DEFAULT_PRODUCTION_CONFIG = 'instances/mochi-production.json'
@@ -172,7 +172,7 @@ export function validateInstanceConfig(value, { source = 'instance config' } = {
       stringMatching(r2.bucketName, CLOUDFLARE_NAME, `${source}.cloudflare.r2.bucketName`, errors)
     }
 
-    const rateLimits = expectObject(cloudflare.rateLimits, `${source}.cloudflare.rateLimits`, errors)
+    const rateLimits = expectObject(root.cloudflare.rateLimits, `${source}.cloudflare.rateLimits`, errors)
     if (rateLimits) {
       rejectUnknownKeys(
         rateLimits,
@@ -293,7 +293,7 @@ export function compileInstanceConfig(config) {
     main: 'src/index.ts',
     compatibility_date: '2026-07-03',
     workers_dev: validated.cloudflare.workersDev,
-    assets: { directory: './public' },
+    assets: { directory: 'public' },
     observability: { enabled: true, logs: { invocation_logs: false } },
     version_metadata: { binding: 'CF_VERSION_METADATA' },
     ...(rateLimits.length > 0 ? { ratelimits: rateLimits } : {}),
@@ -333,6 +333,7 @@ export async function writeCompiledInstance(
   assertSafeOutputDirectory(target, workingDirectory)
   const parent = dirname(target)
   const temporary = `${target}.tmp-${process.pid}-${Date.now()}`
+  const wrangler = rebaseWranglerConfig(compiled.wrangler, target, workingDirectory)
   await mkdir(parent, { recursive: true })
   await rm(temporary, { recursive: true, force: true })
   await mkdir(temporary, { recursive: true })
@@ -340,7 +341,7 @@ export async function writeCompiledInstance(
   try {
     await Promise.all([
       writeJson(join(temporary, 'instance-runtime.json'), compiled.runtime),
-      writeJson(join(temporary, 'wrangler.instance.jsonc'), compiled.wrangler),
+      writeJson(join(temporary, 'wrangler.instance.jsonc'), wrangler),
       writeJson(join(temporary, 'operations-plan.json'), compiled.operations),
     ])
     await rm(target, { recursive: true, force: true })
@@ -358,6 +359,22 @@ export async function writeCompiledInstance(
       join(target, 'operations-plan.json'),
     ]),
   })
+}
+
+export function rebaseWranglerConfig(wrangler, outputDirectory, workingDirectory = process.cwd()) {
+  const configDirectory = resolve(outputDirectory)
+  const projectRoot = resolve(workingDirectory)
+  const rootFromConfig = relative(configDirectory, projectRoot) || '.'
+  const fromProject = (path) => join(rootFromConfig, path).split(sep).join('/')
+  const rebased = structuredClone(wrangler)
+  rebased.$schema = fromProject('node_modules/wrangler/config-schema.json')
+  rebased.main = fromProject('src/index.ts')
+  rebased.assets = { ...rebased.assets, directory: fromProject('public') }
+  rebased.d1_databases = rebased.d1_databases.map((binding) => ({
+    ...binding,
+    migrations_dir: fromProject('migrations'),
+  }))
+  return deepFreeze(rebased)
 }
 
 function assertSafeOutputDirectory(target, workingDirectory) {

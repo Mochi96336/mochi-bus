@@ -27,6 +27,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Resolve release verification scope
+        id: operation
+        run: node scripts/instance/operation-scope.mjs releaseSmoke
       - name: Verify release candidate
         run: npm run check
       - name: Deploy Worker
@@ -38,13 +41,15 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Install Chromium for post-deploy smoke
+        if: steps.operation.outputs.enabled == 'true'
         run: npx playwright install --with-deps chromium >/dev/null 2>&1
       - name: Run true post-deploy release smoke
+        if: steps.operation.outputs.enabled == 'true'
         id: release_smoke
         run: npm run release:smoke
         env:
           EXPECTED_RELEASE_SHA: ${{ github.sha }}
-          RELEASE_SMOKE_ORIGIN: https://bus.moc96336.com
+          RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin }}
           RELEASE_SMOKE_PROPAGATION_MS: '300000'
           RELEASE_SMOKE_POLL_MS: '10000'
           RELEASE_SMOKE_OBSERVATION_MS: '600000'

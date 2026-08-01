@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { chromium } from '@playwright/test'
+import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import {
   networkPrefixMatches,
   readBoundedResponseText,
@@ -17,7 +18,6 @@ import {
   validateRoutesContract,
 } from './post-deploy.mjs'
 
-const DEFAULT_ORIGIN = 'https://bus.moc96336.com'
 const REPORT_PATH = 'release-smoke-report.json'
 const HTTP_TIMEOUT_MS = 20_000
 const MAX_PAGE_BYTES = 1_048_576
@@ -41,7 +41,7 @@ export async function main(env = process.env) {
   const expectedSha = env.EXPECTED_RELEASE_SHA
   const smokeStartedAt = Date.now()
   try {
-    const origin = productionOrigin(env.RELEASE_SMOKE_ORIGIN ?? DEFAULT_ORIGIN)
+    const origin = productionOrigin(env.RELEASE_SMOKE_ORIGIN ?? loadOperationalResources().publicOrigin)
     const token = smokeToken(env, expectedSha)
     const report = await runPostDeploySmoke({
       expectedSha,
@@ -404,6 +404,7 @@ function addProbe(path, token, phase) {
 }
 
 function productionOrigin(value) {
+  if (!value) throw new ReleaseSmokeError('release_identity_invalid')
   const url = new URL(value)
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
     throw new ReleaseSmokeError('release_identity_invalid')

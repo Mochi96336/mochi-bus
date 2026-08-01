@@ -97,19 +97,28 @@ test('compilation is deterministic and omits unprovisioned IDs', async () => {
   assert.deepEqual(first.operations.enabledCities, ['Chiayi'])
 })
 
-test('compiled files are replaced atomically and contain no secret fields', async () => {
+test('compiled files are replaced atomically, portable and contain no secret fields', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mochi-instance-'))
   const output = join(root, 'compiled')
   const starter = await loadInstanceConfig(starterPath)
-  await writeCompiledInstance(compileInstanceConfig(starter), output)
+  await writeCompiledInstance(
+    compileInstanceConfig(starter),
+    output,
+    { workingDirectory: root },
+  )
 
   const runtime = await readFile(join(output, 'instance-runtime.json'), 'utf8')
   const wrangler = await readFile(join(output, 'wrangler.instance.jsonc'), 'utf8')
   const operations = await readFile(join(output, 'operations-plan.json'), 'utf8')
+  const wranglerConfig = JSON.parse(wrangler)
   const combined = `${runtime}\n${wrangler}\n${operations}`
 
   assert.match(runtime, /"instanceId": "chiayi-bus"/)
   assert.match(wrangler, /"database_name": "chiayi-transit"/)
+  assert.equal(wranglerConfig.$schema, '../node_modules/wrangler/config-schema.json')
+  assert.equal(wranglerConfig.main, '../src/index.ts')
+  assert.equal(wranglerConfig.assets.directory, '../public')
+  assert.equal(wranglerConfig.d1_databases[0].migrations_dir, '../migrations')
   assert.match(operations, /"snapshotSchedule": "manual"/)
   assert.doesNotMatch(combined, /TDX_CLIENT_SECRET|CLOUDFLARE_API_TOKEN|R2_SECRET_ACCESS_KEY/)
 })

@@ -15,18 +15,29 @@ function stepSource(name: string, nextName?: string): string {
 }
 
 describe('Deploy workflow post-deploy smoke contract', () => {
-  it('runs exact-release HTTP/assets/browser smoke only after Worker deployment', () => {
+  it('resolves the instance before deploy and gates post-deploy verification', () => {
+    const resolve = stepPosition('Resolve release verification scope')
     const deploy = stepPosition('Deploy Worker')
     const install = stepPosition('Install Chromium for post-deploy smoke')
     const smoke = stepPosition('Run true post-deploy release smoke')
     const upload = stepPosition('Upload post-deploy smoke evidence')
 
+    expect(resolve).toBeLessThan(deploy)
     expect(deploy).toBeLessThan(install)
     expect(install).toBeLessThan(smoke)
     expect(smoke).toBeLessThan(upload)
+    expect(workflowSource).toContain('node scripts/instance/operation-scope.mjs releaseSmoke')
+    expect(stepSource('Install Chromium for post-deploy smoke', 'Run true post-deploy release smoke'))
+      .toContain("if: steps.operation.outputs.enabled == 'true'")
+    expect(stepSource('Run true post-deploy release smoke', 'Upload post-deploy smoke evidence'))
+      .toContain("if: steps.operation.outputs.enabled == 'true'")
+  })
+
+  it('uses the generated instance origin for exact-release smoke', () => {
     expect(workflowSource).toContain('run: npm run release:smoke')
     expect(workflowSource).toContain('EXPECTED_RELEASE_SHA: ${{ github.sha }}')
-    expect(workflowSource).toContain('RELEASE_SMOKE_ORIGIN: https://bus.moc96336.com')
+    expect(workflowSource).toContain('RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin }}')
+    expect(workflowSource).not.toContain('RELEASE_SMOKE_ORIGIN: https://bus.moc96336.com')
     expect(workflowSource).toContain('release-smoke-report.json')
   })
 

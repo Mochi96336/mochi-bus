@@ -14,7 +14,11 @@ export async function main({ argv = process.argv.slice(2), env = process.env, cw
   const configPath = await resolveInstanceConfigPath({ argv, env, cwd })
   const config = await loadInstanceConfig(configPath)
   const outputDirectory = resolve(cwd, parsed.outputDirectory ?? DEFAULT_OUTPUT_DIRECTORY)
-  const result = await writeCompiledInstance(compileInstanceConfig(config), outputDirectory)
+  const result = await writeCompiledInstance(
+    compileInstanceConfig(config),
+    outputDirectory,
+    { workingDirectory: cwd },
+  )
   console.log(JSON.stringify({
     message: 'instance_config_compiled',
     configPath,
