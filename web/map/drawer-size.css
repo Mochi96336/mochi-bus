@@ -57,6 +57,10 @@
       clamp(240px, 36dvh, 300px),
       var(--map-drawer-mobile-available-height)
     );
+    --map-drawer-size-nearby: min(
+      clamp(320px, 40dvh, 360px),
+      var(--map-drawer-mobile-available-height)
+    );
     --map-drawer-size-standard: min(
       50dvh,
       34rem,
@@ -68,6 +72,13 @@
       42rem,
       var(--map-drawer-mobile-available-height)
     );
+  }
+
+  /* Nearby loading and settled results share one stable workspace, but twelve possible
+     rows do not justify reserving the full generic half-screen sheet before scrolling. */
+  .map-drawer[data-view^="nearby:"][data-size="standard"] {
+    height: var(--map-drawer-size-nearby);
+    max-height: var(--map-drawer-size-nearby);
   }
 }
 
