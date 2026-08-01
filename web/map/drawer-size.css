@@ -56,8 +56,11 @@
       - var(--map-mobile-top-clearance, 118px)
       - var(--map-drawer-mobile-bottom, 10px)
     );
+    /* A settled route detail is only a back action, heading and one service summary.
+       Keep that common case close to its content; unusually long names and variant lists
+       can use the drawer's existing internal scroller instead of reserving empty space. */
     --map-drawer-size-compact: min(
-      clamp(240px, 36dvh, 300px),
+      clamp(216px, 26dvh, 240px),
       var(--map-drawer-mobile-available-height)
     );
     --map-drawer-size-nearby: min(
