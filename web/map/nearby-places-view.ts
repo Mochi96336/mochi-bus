@@ -1,4 +1,4 @@
-import type { DrawerSize, DrawerView, DrawerViewSession } from './drawer-view'
+import type { DrawerView, DrawerViewSession } from './drawer-view'
 import { createNearbyPlaceLoadingList } from './loading-skeleton'
 import type { NearbyPlace } from './map-api-client'
 
@@ -37,12 +37,6 @@ export type NearbyPlacesView = {
   renderError(view: NearbyPlacesFailureView): string
 }
 
-const CONTENT_SIZED_NEARBY_LIMIT = 3
-
-export function nearbyPlacesDrawerSize(placeCount: number): DrawerSize {
-  return placeCount <= CONTENT_SIZED_NEARBY_LIMIT ? 'content' : 'standard'
-}
-
 export function createNearbyPlacesView(options: NearbyPlacesViewOptions): NearbyPlacesView {
   function drawerKey(cityCode: string, origin: NearbyOrigin): string {
     return `nearby:${cityCode}:${origin[0].toFixed(5)}:${origin[1].toFixed(5)}`
@@ -60,9 +54,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
-        // The skeleton has three rows, matching the common sparse result. Let both use
-        // intrinsic height so a short nearby lookup does not reserve a half-screen sheet.
-        size: 'content',
+        size: 'standard',
         header: drawerHeader('附近站牌', '正在搜尋附近站牌', backLabel, onBack),
         content: [createNearbyPlaceLoadingList()],
       })
@@ -87,7 +79,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
-        size: nearbyPlacesDrawerSize(places.length),
+        size: 'standard',
         header: drawerHeader(
           '附近站牌',
           places.length
@@ -106,7 +98,7 @@ export function createNearbyPlacesView(options: NearbyPlacesViewOptions): Nearby
       options.renderDrawer({
         key: drawerKey(cityCode, origin),
         mode: 'map-list',
-        size: 'content',
+        size: 'standard',
         header: drawerHeader('附近站牌讀取失敗', message, backLabel, onBack),
         content: [options.createRetryButton(onRetry)],
       })
