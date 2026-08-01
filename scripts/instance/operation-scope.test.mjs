@@ -49,10 +49,9 @@ describe('instance operation workflow scope', () => {
     expect(resolveOperationScope('windowWatchdog', disabled, resources()).enabled).toBe(false)
   })
 
-  it('allows request-origin public probe overrides but requires fixed release smoke identity', () => {
+  it('allows explicit origin overrides for request-origin checks', () => {
     expect(resolveOperationScope('publicProbe', plan(), resources({ publicOrigin: null })).enabled).toBe(true)
-    expect(() => resolveOperationScope('releaseSmoke', plan(), resources({ publicOrigin: null })))
-      .toThrow('releaseSmoke requires a fixed instance public origin')
+    expect(resolveOperationScope('releaseSmoke', plan(), resources({ publicOrigin: null })).enabled).toBe(true)
   })
 
   it('fails closed when enabled snapshot operations lack a provisioned D1 ID', () => {
