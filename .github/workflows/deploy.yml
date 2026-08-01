@@ -49,7 +49,7 @@ jobs:
         run: npm run release:smoke
         env:
           EXPECTED_RELEASE_SHA: ${{ github.sha }}
-          RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin }}
+          RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin || vars.RELEASE_SMOKE_ORIGIN }}
           RELEASE_SMOKE_PROPAGATION_MS: '300000'
           RELEASE_SMOKE_POLL_MS: '10000'
           RELEASE_SMOKE_OBSERVATION_MS: '600000'
