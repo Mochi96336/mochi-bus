@@ -144,8 +144,8 @@ test('animates the mobile drawer from standard down to compact without exposing 
   expect(new Set(frames.map((frame) => Math.round(frame.maxHeight))).size).toBeGreaterThan(3)
   expect(frames.some((frame) => frame.height < first.height - 4 && frame.height > last.height + 4)).toBe(true)
 
-  // height 與 max-height 同步移動，避免任何一個先截斷另一個；overflow 持續負責裁切內容。
+  // height 與 max-height 同步移動，避免任何一個先截斷另一個；overflow 必須持續裁切內容。
   expect(frames.every((frame) => Math.abs(frame.height - frame.maxHeight) <= 2)).toBe(true)
-  expect(frames.every((frame) => frame.overflowY === 'auto')).toBe(true)
+  expect(frames.every((frame) => frame.overflowY !== 'visible')).toBe(true)
   expect(frames.slice(1).every((frame, index) => frame.height <= frames[index].height + 1)).toBe(true)
 })
