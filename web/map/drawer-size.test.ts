@@ -29,7 +29,9 @@ describe('drawer size states', () => {
   })
 
   it('keeps mobile compact and nearby sheets below the generic standard workspace', () => {
-    const mobileBlock = css.match(/@media \(max-width: 640px\) \{[\s\S]*?\n\}/)?.[0]
+    const mobileBlock = css
+      .split('@media (max-width: 640px) {')[1]
+      ?.split('/* Landscape')[0]
     expect(mobileBlock).toBeTruthy()
     expect(mobileBlock).toContain('--map-drawer-size-compact: min(')
     expect(mobileBlock).not.toContain('--map-drawer-size-compact: var(--map-drawer-size-standard)')
