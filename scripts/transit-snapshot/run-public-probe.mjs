@@ -1,7 +1,9 @@
 import { appendFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { readBoundedResponseJson } from './active-probe.mjs'
-import { SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY, taipeiDate } from './snapshot-schedule.mjs'
+import { resolvePublicProbeBaseUrl } from './public-probe-origin.mjs'
+import { enabledSnapshotCitiesInScheduleOrder, taipeiDate } from './snapshot-schedule.mjs'
 import {
   createPublicProbeEvent,
   deterministicPublicCaseIndex,
@@ -12,11 +14,11 @@ import {
 import { probePublicSurface } from './public-probe.mjs'
 import { createD1PublicProbeStore, publicProbeRunId } from './public-probe-d1.mjs'
 
-export const PUBLIC_PROBE_CITIES = Object.freeze(SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY.flat())
-export const PUBLIC_PROBE_DEFAULT_BASE_URL = 'https://bus.moc96336.com'
+const OPERATIONS_PLAN = loadOperationsPlan()
+export const PUBLIC_PROBE_CITIES = enabledSnapshotCitiesInScheduleOrder(OPERATIONS_PLAN.enabledCities)
 // The expensive rate-limit bucket allows 30 requests/minute per IP. Each city
 // makes three expensive calls (arrivals, network, journey), so pacing them
-// keeps a full 22-city sweep well under the limit.
+// keeps a full enabled-city sweep well under the limit.
 export const PUBLIC_PROBE_EXPENSIVE_INTERVAL_MS = 2_500
 
 const HEALTHY_STATUSES = new Set(['healthy', 'realtime_degraded'])
@@ -28,6 +30,7 @@ export async function runPublicProbe({
   monotonic = () => performance.now(),
   store,
   publicApi,
+  cities = PUBLIC_PROBE_CITIES,
   emitter = (event) => console.log(JSON.stringify(event)),
   summaryWriter = writePublicProbeSummary,
 }) {
@@ -47,7 +50,7 @@ export async function runPublicProbe({
   }
 
   const results = []
-  for (const city of PUBLIC_PROBE_CITIES) {
+  for (const city of cities) {
     const started = monotonic()
     let result
     try {
@@ -269,10 +272,15 @@ function safeLog(message, city, probeRunIdValue) {
 }
 
 async function main() {
+  const plan = loadOperationsPlan()
+  if (!plan.checks.publicProbe) {
+    console.log(JSON.stringify({ message: 'instance_operation_disabled', operation: 'publicProbe' }))
+    return
+  }
   const result = await runPublicProbe({
     store: storeFromEnvironment(process.env),
     publicApi: createPublicApiAdapter({
-      baseUrl: process.env.SNAPSHOT_SMOKE_BASE_URL ?? PUBLIC_PROBE_DEFAULT_BASE_URL,
+      baseUrl: resolvePublicProbeBaseUrl({ env: process.env }),
     }),
   })
   process.exitCode = result.ok ? 0 : 1
