@@ -135,9 +135,9 @@ test('animates the mobile drawer from standard down to compact without exposing 
   const first = frames[0]
   const last = frames.at(-1)!
   expect(Math.abs(first.height - standardHeight)).toBeLessThanOrEqual(1)
-  expect(last.height).toBeGreaterThanOrEqual(239)
-  expect(last.height).toBeLessThanOrEqual(301)
-  expect(last.height).toBeLessThan(standardHeight - 60)
+  expect(last.height).toBeGreaterThanOrEqual(215)
+  expect(last.height).toBeLessThanOrEqual(241)
+  expect(last.height).toBeLessThan(standardHeight - 120)
 
   // 瞬間被 max-height 截短時只會留下起點與終點；正常收合必須走過多個中間值。
   expect(new Set(frames.map((frame) => Math.round(frame.height))).size).toBeGreaterThan(3)
