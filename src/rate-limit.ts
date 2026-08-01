@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from 'hono'
+import { instanceId } from './instance-runtime'
 
 type RateLimitBindingName =
   | 'API_STANDARD_RATE_LIMITER'
@@ -52,7 +53,7 @@ export function apiRateLimit(): MiddlewareHandler<Env> {
 
     try {
       const outcome = await c.env[policy.binding].limit({
-        key: `mochi-tools:${policy.scope}:${actorKey(c.req.raw)}`,
+        key: `${instanceId}:${policy.scope}:${actorKey(c.req.raw)}`,
       })
       if (!outcome.success) {
         return c.json({
