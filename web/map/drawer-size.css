@@ -58,7 +58,7 @@
       var(--map-drawer-mobile-available-height)
     );
     --map-drawer-size-nearby: min(
-      clamp(320px, 40dvh, 360px),
+      clamp(320px, 36dvh, 340px),
       var(--map-drawer-mobile-available-height)
     );
     --map-drawer-size-standard: min(
