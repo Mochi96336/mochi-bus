@@ -1,11 +1,12 @@
-// Skeleton 的顯示時機閘。兩個門檻各解一個問題:
+// Skeleton 的顯示時機閘。只有一個門檻:
 //
-//   delayMs      快請求根本不該閃過 skeleton。邊緣快取命中常在 50ms 內回來,
-//                立刻換上 skeleton 只會製造一次多餘的畫面跳動。
-//   minVisibleMs skeleton 一旦出現就不能只活幾十毫秒。出現又立刻消失比
-//                從頭到尾不出現更像故障。
+//   delayMs  快請求根本不該閃過 skeleton。邊緣快取命中常在 50ms 內回來,
+//            立刻換上 skeleton 只會製造一次多餘的畫面跳動。
 //
-// 最壞情況總延遲 = delayMs + minVisibleMs。
+// 曾經還有一個 minVisibleMs(skeleton 一旦出現就撐滿最短存續時間),已移除。
+// 它是用「延後真實內容」換「不要閃一下」,而抽屜現在會平滑過渡高度,閃一下
+// 的代價比當初低得多;相對地,讓已經到手的資料多等 300ms 才上畫面是實打實
+// 的變慢。真要壓抖動應該調 delayMs,不是把結果扣住。
 //
 // 這裡只管 skeleton 的顯示時機。「哪一個請求算數」仍歸呼叫端既有的機制
 // (NavRequestCoordinator、各 controller 的 generation);abort() 是用來清掉
@@ -13,44 +14,32 @@
 export type LoadingGateOptions = {
   /** 低於此時間完成就完全不顯示 skeleton,預設 120ms。 */
   delayMs?: number
-  /** skeleton 一旦顯示的最短存續時間,預設 300ms。 */
-  minVisibleMs?: number
   showLoading: () => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void
-  now?: () => number
 }
 
 export type LoadingGate = {
   start(): void
-  /** render 會在滿足最短顯示時間後執行。 */
+  /** 資料到手就立刻交接,不論 skeleton 已經顯示多久。 */
   settle(render: () => void): void
-  /** 清掉所有排程;已排入但還沒執行的 render 不會執行。 */
+  /** 清掉所有排程;已排入但還沒執行的 skeleton 不會出現。 */
   abort(): void
 }
 
 const DEFAULT_DELAY_MS = 120
-const DEFAULT_MIN_VISIBLE_MS = 300
 
 export function createLoadingGate(options: LoadingGateOptions): LoadingGate {
   const delayMs = options.delayMs ?? DEFAULT_DELAY_MS
-  const minVisibleMs = options.minVisibleMs ?? DEFAULT_MIN_VISIBLE_MS
   const schedule = options.schedule ?? ((callback, ms) => setTimeout(callback, ms))
   const cancelSchedule = options.cancelSchedule ?? clearTimeout
-  const now = options.now ?? (() => Date.now())
 
   let timer: ReturnType<typeof setTimeout> | undefined
-  let shownAt: number | undefined
 
-  function clearTimer(): void {
+  function reset(): void {
     if (timer === undefined) return
     cancelSchedule(timer)
     timer = undefined
-  }
-
-  function reset(): void {
-    clearTimer()
-    shownAt = undefined
   }
 
   return {
@@ -60,29 +49,13 @@ export function createLoadingGate(options: LoadingGateOptions): LoadingGate {
       reset()
       timer = schedule(() => {
         timer = undefined
-        shownAt = now()
         options.showLoading()
       }, delayMs)
     },
 
     settle(render) {
-      if (shownAt === undefined) {
-        // 還在延遲窗內(或這一輪根本沒開過 gate):skeleton 從未出現,直接交接。
-        reset()
-        render()
-        return
-      }
-      const remaining = minVisibleMs - (now() - shownAt)
-      if (remaining <= 0) {
-        reset()
-        render()
-        return
-      }
-      clearTimer()
-      timer = schedule(() => {
-        reset()
-        render()
-      }, remaining)
+      reset()
+      render()
     },
 
     abort: reset,

@@ -29,6 +29,13 @@
 | 例外不往外拋，回傳 `undefined` | 改為 **discriminated result**，`reason` 原樣交還 | 違反 [place-routes-controller.ts:157-166](../web/map/place-routes-controller.ts#L157-L166) 既有原則；TDX 需要 error 物件才能產生訊息（§6.4） |
 | `quiet` 時仍在按鈕設 `aria-busy` | 改為 **`busyTarget` 選項，預設不設** | 按鈕 pending 期間是 `disabled`，已移出 AT 互動模型；busy 屬於內容變動的區域（§6.6） |
 
+上線後的第三次修正，兩項都出自實際使用：
+
+| 原稿 | 修正 | 理由 |
+|---|---|---|
+| `loading-gate` 有 `minVisibleMs: 300` | **移除**，資料到手即交接 | 讓已取得的資料多等 300ms 是每次都付的成本，而它要擋的閃動只在回應落在 120–150ms 時發生（§7.2） |
+| 抽屜尺寸變化為瞬間切換 | **加 `transition: height`**，並在 `prefers-reduced-motion` 下停用 | 讀取骨架必須在不知道內容量時就選尺寸，轉運站因此一定會從 `standard` 長到 `tall`；該修的是變化的方式，不是變化本身（§7.8） |
+
 ---
 
 ## 二、現況核實
@@ -393,19 +400,16 @@ E2E：`test/e2e/eta-lifecycle.spec.ts` 新增案例 —— 注入會讓 reconcil
 export type LoadingGateOptions = {
   /** 低於此時間完成則完全不顯示 skeleton，預設 120ms */
   delayMs?: number
-  /** skeleton 一旦顯示的最短存續時間，預設 300ms */
-  minVisibleMs?: number
   showLoading: () => void
   schedule?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void
-  now?: () => number
 }
 
 export type LoadingGate = {
   start(): void
-  /** render 會在滿足最短顯示時間後執行 */
+  /** 資料到手即交接，不論 skeleton 已顯示多久 */
   settle(render: () => void): void
-  /** 取消所有排程；已排入的 render 不會執行 */
+  /** 取消所有排程；已排入的 skeleton 不會出現 */
   abort(): void
 }
 
@@ -420,12 +424,12 @@ start()
   └─ >120ms    showLoading()
 
 settle(render)
-  ├─ skeleton 未顯示        → 取消計時器，立即 render()
-  ├─ 已顯示 <300ms          → 延後 render() 至補足 300ms
-  └─ 已顯示 ≥300ms          → 立即 render()
+  └─ 一律取消計時器，立即 render()
 ```
 
-最壞情況總延遲 = 120 + 300 = **420ms**，仍在可接受範圍。初版提議的 380ms 會使此值達 500ms，已超過感知上限，故下修。
+最壞情況總延遲 = **120ms**。
+
+**`minVisibleMs` 已移除（見修訂紀錄）。** 初版設計用 300ms 的最短顯示時間換「skeleton 不要閃一下」，代價是已經到手的資料要多等 300ms。實際使用後這個交換不划算：變慢是每一次都付，閃動只在回應剛好落在 120–150ms 時才發生，而抽屜改為過渡高度後，那一閃的視覺代價又進一步下降。若日後仍覺得抖，正確的旋鈕是調 `delayMs`，不是把結果扣住。
 
 ### 7.3 生命週期歸屬（關鍵）
 
@@ -470,20 +474,28 @@ Gate 的計時器 **必須由 controller 的 `generation` 擁有，不能掛在 
 
 ### 7.7 測試
 
-新增 `web/lib/loading-gate.test.ts`（假時鐘）：
+`web/lib/loading-gate.test.ts`（假時鐘）：
 
 - 100ms 完成 → `showLoading` 從未被呼叫，render 立即執行
-- 200ms 完成 → showLoading 於 120ms 觸發，render 於 420ms 執行
-- 500ms 完成 → showLoading 於 120ms，render 立即
+- 120ms 觸發 skeleton；130ms 完成 → render 立即執行，不留計時器
 - `abort()` 於延遲窗內 → showLoading 不觸發
-- `abort()` 於 min-visible 尾端 → render 不觸發
+- `settle()` 先於 skeleton 到期 → 排好的 skeleton 被拆掉，不會蓋在已渲染的內容上
 - 連續 `start()` → 前一輪計時器全數清除
 
 E2E：
 
-- `test/e2e/map-async-navigation.spec.ts`：快速連點兩個站牌，斷言第一個的 skeleton 不出現在第二個畫面
+- `test/e2e/map-async-navigation.spec.ts`：快速連點兩個站牌，斷言第一個的 skeleton 不出現在第二個畫面；另斷言 skeleton 出現後資料一到就交接
 - `test/e2e/map-route-loading-height.spec.ts`（既有）：擴充 place-routes loading → settled 的高度斷言
-- `test/e2e/map-visual.spec.ts`：更新 skeleton 截圖基準
+
+### 7.8 抽屜尺寸過渡（上線後補）
+
+骨架必須在**還不知道內容量**時決定尺寸，`drawerSizeForTransition` 給的預設是 `standard`。`placeRoutesDrawerSize` 則是 0 條 → `compact`、1–7 → `standard`、8 條以上 → `tall`。所以 1–7 條路線的站牌剛好對上，轉運站必然要長高一次（900px 視窗上約 110px）。
+
+原本的 `map-desktop-drawer-stability.spec.ts` 只用一條路線的 fixture，落在 `standard`，因此從未涵蓋這個情況。
+
+**尺寸變化本身是對的**（內容真的變多），不對的是它瞬間發生。因此 `.map-drawer` 加上 `transition: height`，並在 `prefers-reduced-motion` 下停用。只動 `height` 而不動 `max-height`：收合時 `max-height` 必須立刻生效，否則內容會在超出的框裡露出來。
+
+考慮過但否決的替代方案：在 place identity、nearby、network、search 四個 payload 補 `routeCount`，讓骨架一次算對。那個數字 arrivals 回應本來就會帶，為了提前幾百毫秒知道它而複製到四個 API 契約裡，代價與收益不成比例。
 
 ---
 
@@ -629,7 +641,7 @@ export type SettledLiveRegion = {
 |---|---|---|---|
 | 1 | Skeleton 靜態或單次 shimmer | **靜態** | reduced-motion 下已 `display:none`，現況等於兩套視覺（§7.6） |
 | 2 | Gate 延遲 120ms | **採用，但做成參數** | nearby 走邊緣快取常 <50ms，需實測校準 |
-| 3 | 最短顯示 380ms | **下修為 300ms** | 總延遲 420ms vs 500ms（§7.2） |
+| 3 | 最短顯示 380ms | **先下修為 300ms，上線後移除** | 扣住已到手的資料是每次都付的成本；閃動改由抽屜高度過渡吸收（§7.2、§7.8） |
 | 4 | 「已更新」顯示時長 | **1200ms，且只在 click 觸發** | 由 `quiet` 旗標在型別上強制（§6.7a）；`quiet` 不抑制錯誤 |
 | 5 | TDX 忙線可折疊 | 是 | — |
 | 6 | 「部分資料稍早」可永久關閉 | **否** | design-system.md：stale 必須保留可見文字 |
@@ -671,10 +683,11 @@ export type SettledLiveRegion = {
 ### 12.4 Loading（PR 3）
 
 - 120ms 內完成不顯示 skeleton
-- skeleton 顯示後不短於 300ms
+- skeleton 出現後，資料一到就交接，不再有最短顯示時間
 - 快速切換 view 時舊 skeleton 與舊 render 都不落在新畫面
 - place-routes loading → settled 沿用 size memory，不被 loading 覆寫（§7.5）
 - reduced-motion 與一般模式的 skeleton 視覺一致
+- 抽屜尺寸在一次導覽中最多變一次，且該次變化是高度過渡；`prefers-reduced-motion` 下為瞬間（§7.8）
 
 ### 12.5 迴歸（全部 PR）
 

@@ -26,6 +26,15 @@ const routeEntry = {
   source: 'realtime' as const,
 }
 
+// placeRoutesDrawerSize 在 8 條以上回 tall,轉運站是常態而不是邊界情況。
+const busyStopRoutes = Array.from({ length: 9 }, (_, index) => ({
+  ...routeEntry,
+  routeName: index === 0 ? routeEntry.routeName : `測試路線 ${index + 1}`,
+  routeUid: `R${index + 1}`,
+  variantKey: `R${index + 1}:0`,
+  stopUid: `P1-S${index + 1}`,
+}))
+
 type DrawerFrame = {
   top: number
   height: number
@@ -135,7 +144,9 @@ async function startDrawerFrameCapture(page: Page) {
       })
       window.requestAnimationFrame(sample)
     }
-    window.requestAnimationFrame(sample)
+    // 第一幀同步取,不等 rAF。否則呼叫端「開始取樣 → 放行回應」之間若沒撐過一次
+    // 繪製,起始狀態就漏掉了,取樣結果會看起來像從未發生過變化。
+    sample()
   })
 }
 
@@ -275,6 +286,68 @@ test('keeps URL-opened nearby loading and results at the standard size', async (
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   const resolvedHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
   expect(Math.abs(resolvedHeight - loadingHeight)).toBeLessThanOrEqual(1)
+})
+
+async function openBusyStop(page: Page) {
+  const arrivals = deferred()
+  const arrivalsRequested = deferred()
+
+  await mockBootstrap(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places: [place] } }))
+  await page.route('**/api/v1/map/place/P1?city=Tainan', (route) => route.fulfill({ json: { place } }))
+  await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => route.fulfill({ json: { variants: [] } }))
+  await page.route('**/api/v1/map/place/P1/arrivals?city=Tainan', async (route) => {
+    arrivalsRequested.release()
+    await fulfillAfter(route, arrivals.promise, { routes: busyStopRoutes })
+  })
+
+  await page.goto('/map?city=Tainan&place=P1')
+  await arrivalsRequested.promise
+  return arrivals
+}
+
+// 讀取骨架在還不知道路線數時就得決定尺寸,drawerSizeForTransition 給的預設是
+// standard。1–7 條路線的站牌剛好對上,轉運站不會,所以結果到達時抽屜一定要長高。
+// 鎖住的不是「不准變」,而是「只變一次,而且是長高不是跳動」。
+test('grows a busy stop to its content size exactly once, as motion rather than a jump', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const arrivals = await openBusyStop(page)
+
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.locator('.map-loading-row')).toHaveCount(3)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await startDrawerFrameCapture(page)
+
+  arrivals.release()
+  await expect(drawer.locator('.place-route-row')).toHaveCount(busyStopRoutes.length)
+  await page.waitForTimeout(400)
+  const frames = await stopDrawerFrameCapture(page)
+
+  const sizeSequence = frames
+    .map((frame) => frame.size)
+    .filter((size, index, all) => size !== all[index - 1])
+  expect(sizeSequence).toEqual(['standard', 'tall'])
+
+  // 高度必須真的走過中間值。若是瞬間跳,取樣到的高度只會有起訖兩種。
+  const heights = new Set(frames.map((frame) => Math.round(frame.height)))
+  expect(heights.size).toBeGreaterThan(2)
+  await expect(drawer).toHaveJSProperty('style.height', '')
+})
+
+test('resizes the drawer instantly when motion is not wanted', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  // 用 emulateMedia 而不是 test.use({ reducedMotion }):後者在 describe 層不會
+  // 套用到這個 spec 的 page fixture,實測 matchMedia 仍回 false。
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const arrivals = await openBusyStop(page)
+
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.locator('.map-loading-row')).toHaveCount(3)
+  arrivals.release()
+  await expect(drawer.locator('.place-route-row')).toHaveCount(busyStopRoutes.length)
+
+  await expect(drawer).toHaveAttribute('data-size', 'tall')
+  await expect(drawer).toHaveCSS('transition-duration', '0s')
 })
 
 test('keeps a full-network route click compact through loading and result', async ({ page }) => {
