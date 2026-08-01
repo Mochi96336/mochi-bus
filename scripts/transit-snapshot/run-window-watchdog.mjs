@@ -1,5 +1,6 @@
 import { appendFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { latestClosedSnapshotScheduleDate, scheduledCitiesForTaipeiDate, scheduledSnapshotWindow } from './snapshot-schedule.mjs'
 import {
@@ -142,11 +143,11 @@ async function writeWatchdogSummary(summary) {
   }))
 }
 
-function storeFromEnvironment(env) {
+function storeFromEnvironment(env, resources) {
   return createD1WatchdogStore({
     accountId: env.CLOUDFLARE_ACCOUNT_ID,
     apiToken: env.CLOUDFLARE_API_TOKEN,
-    databaseId: env.TRANSIT_DATABASE_ID,
+    databaseId: env.TRANSIT_DATABASE_ID ?? resources.d1DatabaseId,
   })
 }
 
@@ -169,7 +170,8 @@ async function main() {
     console.log(JSON.stringify({ message: 'instance_operation_disabled', operation: 'windowWatchdog' }))
     return
   }
-  const result = await runWindowWatchdog({ store: storeFromEnvironment(process.env) })
+  const resources = loadOperationalResources()
+  const result = await runWindowWatchdog({ store: storeFromEnvironment(process.env, resources) })
   process.exitCode = result.ok ? 0 : 1
 }
 
