@@ -1,10 +1,12 @@
+import { operationEnabledCities } from '../instance/operations-plan.mjs'
+
 export const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
 export const SNAPSHOT_SCHEDULE_HOUR = 3
 export const SNAPSHOT_SCHEDULE_MINUTE = 17
 export const SNAPSHOT_WINDOW_CLOSE_HOUR = 7
 export const SNAPSHOT_WINDOW_CLOSE_MINUTE = 30
 
-export const SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY = Object.freeze([
+export const SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY = Object.freeze([
   Object.freeze(['Taoyuan', 'YilanCounty', 'HualienCounty', 'TaitungCounty']),
   Object.freeze(['Taipei', 'NewTaipei']),
   Object.freeze(['Chiayi', 'Keelung', 'Hsinchu', 'HsinchuCounty']),
@@ -13,6 +15,31 @@ export const SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY = Object.freeze([
   Object.freeze(['Taichung']),
   Object.freeze(['Kaohsiung', 'YunlinCounty']),
 ])
+
+export function scopeSnapshotSchedule(schedule, enabledCities) {
+  if (!Array.isArray(schedule) || schedule.length !== 7) {
+    throw new Error('Snapshot schedule must contain exactly seven Taipei weekdays')
+  }
+  const scheduledCities = schedule.flat()
+  const scheduledCitySet = new Set(scheduledCities)
+  if (scheduledCitySet.size !== scheduledCities.length) {
+    throw new Error('Snapshot schedule must contain each city exactly once')
+  }
+  const enabledCitySet = new Set(enabledCities)
+  if (enabledCitySet.size !== enabledCities.length) {
+    throw new Error('Enabled snapshot cities must be unique')
+  }
+  for (const city of enabledCities) {
+    if (!scheduledCitySet.has(city)) throw new Error(`Enabled city is missing from snapshot schedule: ${city}`)
+  }
+  return Object.freeze(schedule.map((cities) =>
+    Object.freeze(cities.filter((city) => enabledCitySet.has(city)))))
+}
+
+export const SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY = scopeSnapshotSchedule(
+  SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
+  operationEnabledCities(),
+)
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 const CITY_WEEKDAY = new Map(SNAPSHOT_CITIES_BY_TAIPEI_WEEKDAY.flatMap((cities, weekday) =>
@@ -64,7 +91,7 @@ export function taipeiLocalTimeAsUtc(date, hour, minute) {
 }
 
 export function assertScheduledCity(city) {
-  if (!CITY_WEEKDAY.has(city)) throw new Error('Unsupported snapshot city')
+  if (!CITY_WEEKDAY.has(city)) throw new Error('Snapshot city is not enabled for scheduled operations')
 }
 
 export function validDateOnly(value) {
