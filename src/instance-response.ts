@@ -1,5 +1,5 @@
 import { instanceOrigin, siteName } from './instance-runtime'
-import { renderWebsiteStructuredData, siteSearchDescription, socialImageUrl } from './seo'
+import { renderWebsiteStructuredData, socialImageUrl } from './seo'
 
 const PRODUCT_SITE_NAME = 'Mochi Bus'
 
@@ -134,5 +134,3 @@ function escapeHTML(value: string): string {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;')
 }
-
-export const instanceSearchDescription = siteSearchDescription
