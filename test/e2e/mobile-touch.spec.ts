@@ -1,4 +1,5 @@
-import { expect, mockMapBootstrapCities, test, type Locator, type Page } from './fixtures'
+import type { Locator } from '@playwright/test'
+import { expect, mockMapBootstrapCities, test, type Page } from './fixtures'
 
 const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.997, 120.212] }
 
