@@ -72,6 +72,7 @@ export function scheduledCitiesForTaipeiDate(scheduleDate, plan = OPERATIONS_PLA
 }
 
 export function scheduledSnapshotWindow(city, scheduleDate, plan = OPERATIONS_PLAN) {
+  assertScheduledOperationEnabled(plan)
   assertScheduledCity(city, plan)
   const date = validDateOnly(scheduleDate)
   if (!scheduledCitiesForTaipeiDate(date, plan).includes(city)) throw new Error('City is not scheduled for this date')
@@ -83,6 +84,7 @@ export function scheduledSnapshotWindow(city, scheduleDate, plan = OPERATIONS_PL
 }
 
 export function latestScheduledTaipeiDate(city, now = new Date(), plan = OPERATIONS_PLAN) {
+  assertScheduledOperationEnabled(plan)
   assertScheduledCity(city, plan)
   const local = new Date(validDate(now).getTime() + TAIPEI_OFFSET_MS)
   const beforeSlot = local.getUTCHours() < SNAPSHOT_SCHEDULE_HOUR
@@ -118,8 +120,7 @@ export function taipeiLocalTimeAsUtc(date, hour, minute) {
 }
 
 export function assertScheduledCity(city, plan = OPERATIONS_PLAN) {
-  if (plan.snapshotSchedule === 'manual') throw new Error('Scheduled snapshot operations are disabled for this instance')
-  if (!plan.enabledCities.includes(city)) throw new Error('Snapshot city is not enabled for scheduled operations')
+  if (!plan.enabledCities.includes(city)) throw new Error('Snapshot city is not enabled for this instance')
   if (!SUPPORTED_CITY_WEEKDAY.has(city)) throw new Error('Unsupported snapshot city')
 }
 
@@ -128,6 +129,10 @@ export function validDateOnly(value) {
   const parsed = new Date(`${value}T00:00:00.000Z`)
   if (Number.isNaN(parsed.getTime()) || utcDateParts(parsed) !== value) throw new Error('Invalid snapshot schedule date')
   return value
+}
+
+function assertScheduledOperationEnabled(plan) {
+  if (plan.snapshotSchedule === 'manual') throw new Error('Scheduled snapshot operations are disabled for this instance')
 }
 
 function validDate(value) {
