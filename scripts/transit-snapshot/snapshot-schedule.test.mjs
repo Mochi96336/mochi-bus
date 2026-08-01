@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { operationEnabledCities } from '../instance/operations-plan.mjs'
 import { scheduledCitiesAt } from './scheduled-cities.mjs'
 import {
+  enabledSnapshotCitiesInScheduleOrder,
   latestClosedSnapshotScheduleDate,
+  latestScheduledTaipeiDate,
   scheduledCitiesForTaipeiDate,
   scheduledSnapshotWindow,
   scopeSnapshotSchedule,
   SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
+  snapshotCitiesByTaipeiWeekday,
   taipeiLocalTimeAsUtc,
 } from './snapshot-schedule.mjs'
 import { snapshotWindowIdentity } from './window-contract.mjs'
@@ -20,6 +23,17 @@ const scheduleDates = [
   '2026-07-24',
   '2026-07-25',
 ]
+
+function operationPlan(snapshotSchedule, enabledCities = ['Chiayi']) {
+  return {
+    schemaVersion: 1,
+    profile: 'managed',
+    enabledCities,
+    snapshotSchedule,
+    checks: { releaseSmoke: true, publicProbe: true, windowWatchdog: true },
+    provisioned: true,
+  }
+}
 
 describe('snapshot schedule contract', () => {
   it('keeps the complete supported Taipei-weekday schedule stable', () => {
@@ -35,7 +49,7 @@ describe('snapshot schedule contract', () => {
     expect(SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY.flat()).toHaveLength(22)
   })
 
-  it('filters the live schedule to the current instance without moving weekdays', () => {
+  it('filters the live weekly schedule to the current instance without moving weekdays', () => {
     const enabled = new Set(operationEnabledCities())
     for (const [weekday, date] of scheduleDates.entries()) {
       expect(scheduledCitiesForTaipeiDate(date)).toEqual(
@@ -59,6 +73,21 @@ describe('snapshot schedule contract', () => {
       SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
       ['Atlantis'],
     )).toThrow('Enabled city is missing from snapshot schedule: Atlantis')
+  })
+
+  it('honors manual and daily schedule modes without reinterpreting them as weekly', () => {
+    const manual = operationPlan('manual', ['Chiayi'])
+    expect(snapshotCitiesByTaipeiWeekday(manual)).toEqual([[], [], [], [], [], [], []])
+    expect(scheduledCitiesForTaipeiDate('2026-07-21', manual)).toEqual([])
+    expect(() => scheduledSnapshotWindow('Chiayi', '2026-07-21', manual))
+      .toThrow('Scheduled snapshot operations are disabled')
+
+    const daily = operationPlan('daily', ['Chiayi', 'Taipei'])
+    const ordered = enabledSnapshotCitiesInScheduleOrder(daily.enabledCities)
+    expect(ordered).toEqual(['Taipei', 'Chiayi'])
+    for (const date of scheduleDates) expect(scheduledCitiesForTaipeiDate(date, daily)).toEqual(ordered)
+    expect(latestScheduledTaipeiDate('Chiayi', new Date('2026-07-19T18:00:00.000Z'), daily)).toBe('2026-07-19')
+    expect(latestScheduledTaipeiDate('Chiayi', new Date('2026-07-19T19:18:00.000Z'), daily)).toBe('2026-07-20')
   })
 
   it('maps UTC Sunday 23:45 to Taipei Monday 07:45 without runner timezone state', () => {
