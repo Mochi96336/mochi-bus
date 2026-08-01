@@ -131,8 +131,13 @@ test('recomputes the compact desktop drawer size when the viewport shrinks durin
   await clickDesktopStageCenter(page)
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
+  // 讀取中沿用全路網的 standard;compact 要等路線資料到達。這裡要驗的是尺寸重算,
+  // 所以先讓它落到 compact 再縮視窗。
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  routeGate.release()
   await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
+  await page.waitForTimeout(320)
   const beforeResize = await drawer.evaluate((element) => element.getBoundingClientRect().height)
 
   await page.setViewportSize({ width: 1280, height: 600 })

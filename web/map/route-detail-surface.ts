@@ -158,11 +158,15 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     clearVehicleLayer(false)
   }
 
+  // 讀取中還不知道這條路線會走到變體挑選(map-list)還是路線詳情(compact),所以
+  // 它不決定高度——宣告 compact 等於在目錄還在畫面上的時候就先縮一次。size 只是
+  // 首次繪製(直接開網址進來)的退路。
   function showRouteLoading(view: RouteLoadingViewOptions): void {
     options.renderDrawer({
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
       size: 'compact',
+      transient: true,
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, '正在拼起路線與站牌…'),
@@ -175,6 +179,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
       size: 'compact',
+      transient: true,
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, view.message),

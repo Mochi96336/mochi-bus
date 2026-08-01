@@ -405,7 +405,9 @@ test('resizes the drawer instantly when motion is not wanted', async ({ page }) 
   await expect(drawer).toHaveCSS('transition-duration', '0s')
 })
 
-test('keeps a full-network route click compact through loading and result', async ({ page }) => {
+// 讀取中的畫面還不知道會走到變體挑選還是路線詳情,所以它不決定高度:全路網目錄的
+// standard 一路留到路線資料到達,收合只發生一次。
+test('holds the network catalogue height through route loading, then settles compact', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
   const routeRequested = deferred()
@@ -437,20 +439,19 @@ test('keeps a full-network route click compact through loading and result', asyn
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
   await expect(drawer).toHaveAttribute('data-mode', 'compact')
-  await expect(drawer).toHaveAttribute('data-size', 'compact')
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
-  await page.waitForTimeout(220)
+  await page.waitForTimeout(320)
   await startDrawerFrameCapture(page)
-  await page.waitForTimeout(40)
+  await page.waitForTimeout(120)
+  const loadingFrames = await stopDrawerFrameCapture(page)
+  expectStableFrames(loadingFrames, ['route-loading'], 'standard')
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
   await expect(drawer.locator('.route-service-summary')).toHaveCount(0)
   await expect(drawer).toHaveAttribute('data-size', 'compact')
-  await page.waitForTimeout(120)
-
-  const frames = await stopDrawerFrameCapture(page)
-  expectStableFrames(frames, ['route-loading', 'route-results'], 'compact')
+  await page.waitForTimeout(320)
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
