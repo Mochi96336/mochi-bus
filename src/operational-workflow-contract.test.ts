@@ -20,8 +20,9 @@ describe('instance operational workflow contracts', () => {
   it('gates public probe and supplies generated D1 and public origin identity', () => {
     expectScopedWorkflow(publicProbeWorkflow, 'publicProbe')
     expect(publicProbeWorkflow).toContain('TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}')
-    expect(publicProbeWorkflow).toContain('SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin }}')
-    expect(publicProbeWorkflow).not.toContain('vars.SNAPSHOT_SMOKE_BASE_URL')
+    expect(publicProbeWorkflow).toContain(
+      'SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}',
+    )
   })
 
   it('gates the watchdog and supplies its generated D1 database ID', () => {
