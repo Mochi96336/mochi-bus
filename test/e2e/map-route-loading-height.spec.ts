@@ -1,54 +1,39 @@
 import { expect, test, type Page } from './fixtures'
+import {
+  mockMapShell,
+  mockRouteCatalogue,
+  numberedRouteNames,
+  twoStopVariant,
+} from './drawer-fixtures'
 
-const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
-const routeNames = ['0右', ...Array.from({ length: 119 }, (_, index) => String(index + 1))]
+const routeNames = numberedRouteNames(119, '0右')
+const departureTimetable = {
+  mode: 'departure',
+  selectedStop: null,
+  departureStop: { stopUid: 'S1', stopName: '臺南火車站', sequence: 1 },
+  stops: [],
+  timedStopCount: 0,
+  services: [{
+    id: 'weekday',
+    label: '平日',
+    days: [1, 2, 3, 4, 5],
+    today: true,
+    times: ['06:10', '07:10'],
+    periods: [],
+    firstTime: '06:10',
+    lastTime: '07:10',
+  }],
+}
 
+// 變體帶著與 routeName 不同的 subRouteName,好讓變體挑選器多畫一行——這個 spec 量的
+// 就是那個挑選器落在 compact 之後的高度。
 function variant(routeName: string, index = 0) {
-  return {
-    variantKey: `${routeName}:${index}`,
-    routeName,
-    routeUid: `TNN-${routeName}`,
-    direction: index % 2 === 0 ? 0 as const : 1 as const,
-    label: index % 2 === 0 ? '臺南火車站 → 永康火車站' : '永康火車站 → 臺南火車站',
-    subRouteName: `${routeName}-${index}`,
-    updatedAt: null,
-    shape: {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: {
-        type: 'LineString' as const,
-        coordinates: [[120.20, 22.99], [120.24, 23.02]],
-      },
-    },
-    stops: {
-      type: 'FeatureCollection' as const,
-      features: [
-        {
-          type: 'Feature' as const,
-          properties: { stopUid: 'S1', stopName: '臺南火車站', sequence: 1 },
-          geometry: { type: 'Point' as const, coordinates: [120.20, 22.99] as [number, number] },
-        },
-        {
-          type: 'Feature' as const,
-          properties: { stopUid: 'S2', stopName: '永康火車站', sequence: 2 },
-          geometry: { type: 'Point' as const, coordinates: [120.24, 23.02] as [number, number] },
-        },
-      ],
-    },
-  }
+  return twoStopVariant(routeName, index, `${routeName}-${index}`)
 }
 
 async function mockMap(page: Page, routeGate: Promise<void>, variantCount = 1) {
-  await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
-  await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [city] } }))
-  await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({
-    json: {
-      routes: routeNames.map((routeName, index) => ({
-        routeName,
-        category: index % 4 === 0 ? '幹線' : '數字',
-      })),
-    },
-  }))
+  await mockMapShell(page, departureTimetable)
+  await mockRouteCatalogue(page, routeNames)
   await page.route(/\/api\/v1\/map\/route(?:\?|$)/, async (route) => {
     await routeGate
     const routeName = new URL(route.request().url()).searchParams.get('route') ?? '0右'
@@ -56,28 +41,6 @@ async function mockMap(page: Page, routeGate: Promise<void>, variantCount = 1) {
       json: { variants: Array.from({ length: variantCount }, (_, index) => variant(routeName, index)) },
     })
   })
-  await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
-  await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({
-    json: {
-      timetable: {
-        mode: 'departure',
-        selectedStop: null,
-        departureStop: { stopUid: 'S1', stopName: '臺南火車站', sequence: 1 },
-        stops: [],
-        timedStopCount: 0,
-        services: [{
-          id: 'weekday',
-          label: '平日',
-          days: [1, 2, 3, 4, 5],
-          today: true,
-          times: ['06:10', '07:10'],
-          periods: [],
-          firstTime: '06:10',
-          lastTime: '07:10',
-        }],
-      },
-    },
-  }))
 }
 
 async function catalogueHeight(page: Page): Promise<number> {
