@@ -15,9 +15,6 @@ export function resolveOperationScope(
     ? plan.snapshotSchedule !== 'manual'
     : plan.checks[operation]
 
-  if (enabled && operation === 'releaseSmoke' && !resources.publicOrigin) {
-    throw new Error('releaseSmoke requires a fixed instance public origin')
-  }
   if (enabled && ['snapshot', 'publicProbe', 'windowWatchdog'].includes(operation)
     && !resources.d1DatabaseId) {
     throw new Error(`${operation} requires a provisioned D1 database ID`)
