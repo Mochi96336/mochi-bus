@@ -304,6 +304,8 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     return timetableSummary
   }
 
+  // 換一個站牌是同一張時刻表裡的移動:key 變了(內容不同、捲動要歸零),sizeKey 不變,
+  // 所以下一個站牌讀取中時抽屜維持現在的高度。
   function timetableDrawerKeys(cityCode: string, variantKey: string, stopUid: string | undefined) {
     const sizeKey = `timetable:${cityCode}:${variantKey}`
     return {

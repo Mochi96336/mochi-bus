@@ -17,10 +17,15 @@ describe('drawer size states', () => {
     expect(drawerSizeForTransition(undefined, 'timetable', false, undefined)).toBe('standard')
   })
 
-  it('restores a remembered non-content size before applying the mode fallback', () => {
-    expect(drawerSizeForTransition(undefined, 'compact', false, 'standard')).toBe('standard')
+  it('keeps the size already on screen before applying the mode fallback', () => {
     expect(drawerSizeForTransition(undefined, 'map-list', false, 'tall')).toBe('tall')
     expect(drawerSizeForTransition(undefined, 'timetable', false, 'compact')).toBe('compact')
+  })
+
+  // compact 模式不捲動,繼承一個比內容短的固定高度會把內容裁掉。
+  it('leaves a content-sized compact view alone whatever is on screen', () => {
+    expect(drawerSizeForTransition(undefined, 'compact', false, 'standard')).toBe('content')
+    expect(drawerSizeForTransition(undefined, 'compact', false, 'tall')).toBe('content')
   })
 
   it('treats legacy preserve-height loading views as standard workspaces', () => {
@@ -32,9 +37,14 @@ describe('drawer size states', () => {
   })
 
   it('keeps mobile compact and nearby sheets below the generic standard workspace', () => {
-    expect(css).toContain('--map-drawer-size-compact: min(\n      clamp(240px, 36dvh, 300px),')
+    expect(css).toContain('--map-drawer-size-compact: min(\n      clamp(224px, 27dvh, 240px),')
     expect(css).not.toContain('--map-drawer-size-compact: var(--map-drawer-size-standard);')
     expect(css).toContain('--map-drawer-size-nearby: min(')
     expect(css).toContain('.map-drawer[data-view^="nearby:"][data-size="standard"]')
+  })
+
+  it('moves height and max-height together so shrinking remains animated', () => {
+    expect(css).toContain('height 220ms cubic-bezier(.22, .61, .36, 1),\n    max-height 220ms cubic-bezier(.22, .61, .36, 1);')
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*transition:\s*none/)
   })
 })

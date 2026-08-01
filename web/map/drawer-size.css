@@ -8,11 +8,14 @@
 /* 讀取骨架必須在還不知道內容量的時候就決定尺寸(drawerSizeForTransition 給
    standard),所以轉運站那種 8 條路線以上的站牌會在結果到達時從 standard 變成
    tall。那一次變化本身是對的——內容真的變多了——不對的是它用瞬間跳的方式發生。
-   改成過渡後,同樣的變化讀起來是抽屜長高,而不是畫面閃動。
 
-   只動 height:max-height 必須立刻生效,否則收合時內容會在超出的框裡露出來。 */
+   height 和 max-height 必須使用同一段過渡。只動 height 時,縮小方向會先被新的
+   max-height 立即截短,視覺上等於沒有動畫。抽屜本身使用 overflow:auto,因此兩者
+   同步收合時,超出的內容會留在捲動框內而不會畫到抽屜外。 */
 .map-drawer {
-  transition: height 220ms cubic-bezier(.22, .61, .36, 1);
+  transition:
+    height 220ms cubic-bezier(.22, .61, .36, 1),
+    max-height 220ms cubic-bezier(.22, .61, .36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -53,8 +56,11 @@
       - var(--map-mobile-top-clearance, 118px)
       - var(--map-drawer-mobile-bottom, 10px)
     );
+    /* A settled route detail is only a back action, heading and one service summary.
+       Keep that common case close to its content; unusually long names and variant lists
+       can use the drawer's existing internal scroller instead of reserving empty space. */
     --map-drawer-size-compact: min(
-      clamp(240px, 36dvh, 300px),
+      clamp(224px, 27dvh, 240px),
       var(--map-drawer-mobile-available-height)
     );
     --map-drawer-size-nearby: min(
