@@ -1,5 +1,6 @@
 import type { Context } from 'hono'
-import { supportedCityCodes } from '../config'
+import { enabledCityCodes } from '../config'
+import { CityNotEnabledError, CITY_NOT_ENABLED_CODE } from '../domain/city-availability'
 import { QueryValidationError } from '../domain/bus-query'
 import {
   TDX_ACCESS_TOKEN_REJECTED_CODE,
@@ -48,7 +49,7 @@ export function tdxEnv(c: Context<MapEnv>): MapBindings {
 }
 
 export function telemetryCity(value: string | undefined): TelemetryCity | null {
-  return value && supportedCityCodes.has(value) ? value as TelemetryCity : null
+  return value && enabledCityCodes.has(value) ? value as TelemetryCity : null
 }
 
 export function beginMapOperation(
@@ -97,6 +98,11 @@ export function completeMapError(
 export function mapJsonError(c: Context<MapEnv>, error: unknown, fallback: string) {
   if (error instanceof ApiInputError) {
     return c.json(apiInputErrorBody(error), error.status, { 'Cache-Control': 'no-store' })
+  }
+  if (error instanceof CityNotEnabledError) {
+    return c.json({ code: CITY_NOT_ENABLED_CODE, error: error.message }, 404, {
+      'Cache-Control': 'no-store',
+    })
   }
   if (isRejectedUserTdxToken(error, c.req.header('Authorization'))) {
     return c.json({

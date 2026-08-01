@@ -1,10 +1,15 @@
 import { Hono, type Context } from 'hono'
 import { getRoutePageWithFallback } from '../application/route-page'
-import { defaultBusQuery, supportedCities, supportedCityCodes } from '../config'
+import {
+  defaultBusQuery,
+  defaultCity,
+  enabledCities,
+  requireEnabledCity,
+  supportedCityCodes,
+} from '../config'
 import {
   canonicalBusPath,
   parseBusQuery,
-  QueryValidationError,
   toBusSearchParams,
   type BusQuery,
 } from '../domain/bus-query'
@@ -32,7 +37,7 @@ import {
   getStopPlaceByStopUid,
   type TransitBindings,
 } from '../infrastructure/transit/snapshot-repository'
-import { mapCities } from '../config/map-cities'
+import { enabledMapCities } from '../config/map-cities'
 import { siteSearchDescription } from '../seo'
 import {
   optionalQueryString,
@@ -85,7 +90,7 @@ bus.get('/bus', async (c) => {
   }
 })
 
-bus.get('/setup', (c) => c.html(renderSetupPage(supportedCities, c.req.url), 200, pageHeaders))
+bus.get('/setup', (c) => c.html(renderSetupPage(enabledCities, c.req.url), 200, pageHeaders))
 
 export type RoutePageHandlerDependencies = {
   getRoutePageWithFallback: typeof getRoutePageWithFallback
@@ -139,10 +144,9 @@ bus.get('/api/v1/eta', async (c) => {
 
 bus.get('/api/v1/stops', async (c) => {
   try {
-    const city = c.req.query('city')?.trim() || defaultBusQuery.city
+    const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const routeName = requiredQueryString(c.req.query('route'), '公車路線', 40)
     const routeUid = optionalQueryString(c.req.query('routeUid'), 'RouteUID', 100)
-    if (!supportedCityCodes.has(city)) throw new QueryValidationError(`不支援的縣市：${city}`)
 
     const groups = await getRouteStopGroups(tdxEnv(c), city, routeName, routeUid)
     return c.json({ schemaVersion: 2, city, routeName, routeUid: routeUid ?? null, groups }, 200, {
@@ -155,8 +159,7 @@ bus.get('/api/v1/stops', async (c) => {
 
 bus.get('/api/v1/routes', async (c) => {
   try {
-    const city = c.req.query('city')?.trim() || defaultBusQuery.city
-    if (!supportedCityCodes.has(city)) throw new QueryValidationError(`不支援的縣市：${city}`)
+    const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     // 快照目錄優先:除了省 TDX 額度,也只有它包含攤入本縣市的公路客運路線;
     // 沒建快照的縣市才退回 TDX 即時目錄(只有市區公車)。
     const snapshotRoutes = await getSnapshotRouteCatalog(c.env, city)
@@ -170,10 +173,9 @@ bus.get('/api/v1/routes', async (c) => {
 
 bus.get('/api/v1/stop-routes', async (c) => {
   try {
-    const city = c.req.query('city')?.trim() || defaultBusQuery.city
+    const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const stopName = requiredQueryString(c.req.query('stop'), '站牌名稱', 80)
     const stopUid = optionalQueryString(c.req.query('stopUid'), 'StopUID', 100)
-    if (!supportedCityCodes.has(city)) throw new QueryValidationError(`不支援的縣市：${city}`)
     const [buses, place] = await Promise.all([
       getStopRouteSuggestions(tdxEnv(c), city, stopName, stopUid),
       stopUid ? getStopPlaceByStopUid(c.env, city, stopUid) : Promise.resolve(null),
@@ -194,13 +196,12 @@ bus.get('/robots.txt', (c) => c.text([
 
 bus.get('/sitemap.xml', (c) => {
   const origin = new URL(c.req.url).origin
-  // 只列有意義的固定進入點:首頁、地圖、setup 與 22 個縣市深連結;
-  // 路線/站牌是 client-side render,爬蟲拿到空殼,列了也沒用。
+  // 只列有意義的固定進入點與這個實例真正提供的縣市深連結。
   const urls = [
     '/',
     '/map',
     '/setup',
-    ...mapCities.map((city) => `/map?city=${city.code}`),
+    ...enabledMapCities.map((city) => `/map?city=${city.code}`),
   ]
   const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${
     urls.map((path) => `  <url><loc>${origin}${path.replaceAll('&', '&amp;')}</loc></url>`).join('\n')
@@ -283,8 +284,9 @@ async function renderETA(
 
 function parseRequestQuery(c: Context<Env>): BusQuery {
   const input = c.req.query()
+  const city = requireEnabledCity(input.city || defaultCity)
   return parseBusQuery(
-    { ...input, city: input.city || defaultBusQuery.city },
+    { ...input, city },
     undefined,
     supportedCityCodes,
   )
@@ -311,8 +313,7 @@ function redirectHomeWithTDXNotice(c: Context<Env>, error: TDXServiceError) {
 }
 
 function renderPageError(c: Context<Env>, error: unknown) {
-  const setupUrl = `/setup?${toBusSearchParams({ ...defaultBusQuery, stopName: defaultBusQuery.stopName }).toString()}`
-  const presentation = presentPageError(error, setupUrl)
+  const presentation = presentPageError(error, '/setup')
   const actionsHTML = presentation.actions
     .map(({ href, label }) => `<a href="${escapeHTML(href)}">${escapeHTML(label)}</a>`)
     .join('')

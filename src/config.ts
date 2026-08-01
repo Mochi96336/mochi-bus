@@ -1,13 +1,6 @@
-import type { BusQuery } from './domain/bus-query'
-
-export const defaultBusQuery: BusQuery = {
-  city: 'Taipei',
-  routeName: '307',
-  stopName: '捷運西門站',
-  stopUid: 'TPE213044',
-  routeUid: 'TPE19108',
-  direction: 0,
-}
+import { instanceRuntime } from './instance-runtime'
+import { CityNotEnabledError } from './domain/city-availability'
+import { QueryValidationError, type BusQuery } from './domain/bus-query'
 
 export const supportedCities = [
   ['Taipei', '臺北市'],
@@ -34,4 +27,35 @@ export const supportedCities = [
   ['LienchiangCounty', '連江縣'],
 ] as const
 
+const supportedCityByCode = new Map<string, (typeof supportedCities)[number]>(
+  supportedCities.map((city) => [city[0], city] as const),
+)
+
 export const supportedCityCodes = new Set<string>(supportedCities.map(([code]) => code))
+export const enabledCityCodes = new Set<string>(instanceRuntime.transit.enabledCities)
+export const enabledCities = instanceRuntime.transit.enabledCities.map((code) => {
+  const city = supportedCityByCode.get(code)
+  if (!city) throw new Error(`Instance configuration references unknown city: ${code}`)
+  return city
+})
+export const defaultCity = instanceRuntime.transit.defaultCity
+export const demoBusQuery = instanceRuntime.transit.demoQuery as BusQuery | null
+
+// No-demo instances leave the root page before this compatibility value reaches the
+// legacy ETA renderer; city-scoped API defaults still use defaultCity directly.
+export const defaultBusQuery: BusQuery = demoBusQuery ?? {
+  city: defaultCity,
+  routeName: '',
+  direction: 0,
+}
+
+export function requireEnabledCity(
+  city: string,
+  enabledCodes: ReadonlySet<string> = enabledCityCodes,
+): string {
+  const normalized = city.trim()
+  const supported = supportedCityByCode.get(normalized)
+  if (!supported) throw new QueryValidationError(`不支援的縣市：${normalized}`)
+  if (!enabledCodes.has(normalized)) throw new CityNotEnabledError(normalized, supported[1])
+  return normalized
+}

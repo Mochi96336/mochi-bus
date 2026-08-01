@@ -1,11 +1,12 @@
 import { Hono, type Context } from 'hono'
-import { defaultBusQuery, supportedCityCodes } from '../config'
+import { defaultCity, requireEnabledCity, supportedCityCodes } from '../config'
 import {
   parseBusQuery,
   QueryValidationError,
   type BusQuery,
   type ResolvedBusQuery,
 } from '../domain/bus-query'
+import { CityNotEnabledError, CITY_NOT_ENABLED_CODE } from '../domain/city-availability'
 import { getRouteEtaDetail, toRouteEtaResponse } from '../domain/route-page-detail'
 import { TDX_ACCESS_TOKEN_REJECTED_CODE, TDX_ACCESS_TOKEN_REJECTED_MESSAGE } from '../domain/tdx-api-error'
 import {
@@ -50,8 +51,9 @@ function tdxEnv(c: Context<Env>): TDXEnv {
 
 function parseRequestQuery(c: Context<Env>): BusQuery {
   const input = c.req.query()
+  const city = requireEnabledCity(input.city || defaultCity)
   return parseBusQuery(
-    { ...input, city: input.city || defaultBusQuery.city },
+    { ...input, city },
     undefined,
     supportedCityCodes,
   )
@@ -60,6 +62,9 @@ function parseRequestQuery(c: Context<Env>): BusQuery {
 function jsonError(c: Context<Env>, error: unknown) {
   if (error instanceof ApiInputError) {
     return c.json(apiInputErrorBody(error), error.status, noStoreHeaders)
+  }
+  if (error instanceof CityNotEnabledError) {
+    return c.json({ code: CITY_NOT_ENABLED_CODE, error: error.message }, 404, noStoreHeaders)
   }
   if (isRejectedUserTdxToken(error, c.req.header('Authorization'))) {
     return c.json({
