@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Mochi96336/mochi-bus/blob/main/config/instance.schema.json",
+  "title": "Mochi Bus instance configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "instanceId",
+    "site",
+    "transit",
+    "cloudflare",
+    "operations"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "instanceId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,62}$"
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "canonicalOrigin"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "canonicalOrigin": {
+          "oneOf": [
+            { "const": "request" },
+            { "type": "string", "format": "uri", "pattern": "^https://[^/?#]+/?$" }
+          ]
+        }
+      }
+    },
+    "transit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabledCities", "defaultCity", "demoQuery"],
+      "properties": {
+        "enabledCities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/cityCode" }
+        },
+        "defaultCity": { "$ref": "#/$defs/cityCode" },
+        "demoQuery": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["city", "routeName", "stopName", "stopUid", "routeUid", "direction"],
+              "properties": {
+                "city": { "$ref": "#/$defs/cityCode" },
+                "routeName": { "type": "string", "minLength": 1, "maxLength": 160 },
+                "stopName": { "type": "string", "minLength": 1, "maxLength": 160 },
+                "stopUid": { "type": "string", "minLength": 1, "maxLength": 160 },
+                "routeUid": { "type": "string", "minLength": 1, "maxLength": 160 },
+                "direction": { "enum": [0, 1] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "cloudflare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workerName", "workersDev", "d1", "r2", "rateLimits"],
+      "properties": {
+        "workerName": { "$ref": "#/$defs/cloudflareName" },
+        "workersDev": { "type": "boolean" },
+        "d1": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["databaseName", "databaseId"],
+          "properties": {
+            "databaseName": { "$ref": "#/$defs/cloudflareName" },
+            "databaseId": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          }
+        },
+        "r2": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bucketName"],
+          "properties": {
+            "bucketName": { "$ref": "#/$defs/cloudflareName" }
+          }
+        },
+        "rateLimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["standardNamespaceId", "expensiveNamespaceId"],
+          "properties": {
+            "standardNamespaceId": { "$ref": "#/$defs/nullableNamespaceId" },
+            "expensiveNamespaceId": { "$ref": "#/$defs/nullableNamespaceId" }
+          }
+        }
+      }
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "snapshotSchedule", "releaseSmoke", "publicProbe", "windowWatchdog"],
+      "properties": {
+        "profile": { "enum": ["starter", "managed", "operator"] },
+        "snapshotSchedule": { "enum": ["manual", "daily", "taipei-weekly-sharded"] },
+        "releaseSmoke": { "type": "boolean" },
+        "publicProbe": { "type": "boolean" },
+        "windowWatchdog": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "cloudflareName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+    },
+    "nullableNamespaceId": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{1,20}$"
+    },
+    "cityCode": {
+      "enum": [
+        "Taipei",
+        "NewTaipei",
+        "Taoyuan",
+        "Taichung",
+        "Tainan",
+        "Kaohsiung",
+        "Keelung",
+        "Hsinchu",
+        "HsinchuCounty",
+        "MiaoliCounty",
+        "ChanghuaCounty",
+        "NantouCounty",
+        "YunlinCounty",
+        "Chiayi",
+        "ChiayiCounty",
+        "PingtungCounty",
+        "YilanCounty",
+        "HualienCounty",
+        "TaitungCounty",
+        "KinmenCounty",
+        "PenghuCounty",
+        "LienchiangCounty"
+      ]
+    }
+  }
+}
