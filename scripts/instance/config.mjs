@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path'
 
 export const INSTANCE_SCHEMA_VERSION = 1
 export const DEFAULT_PRODUCTION_CONFIG = 'instances/mochi-production.json'
@@ -120,6 +120,7 @@ export function validateInstanceConfig(value, { source = 'instance config' } = {
   if (!root) throw validationError(errors)
 
   rejectUnknownKeys(root, ALLOWED_TOP_LEVEL_KEYS, source, errors)
+  if (root.$schema !== undefined) nonEmptyString(root.$schema, `${source}.$schema`, errors, 500)
   exactNumber(root.schemaVersion, INSTANCE_SCHEMA_VERSION, `${source}.schemaVersion`, errors)
   stringMatching(root.instanceId, INSTANCE_ID, `${source}.instanceId`, errors)
 
@@ -323,8 +324,13 @@ export function compileInstanceConfig(config) {
   return deepFreeze({ runtime, wrangler, operations })
 }
 
-export async function writeCompiledInstance(compiled, outputDirectory) {
+export async function writeCompiledInstance(
+  compiled,
+  outputDirectory,
+  { workingDirectory = process.cwd() } = {},
+) {
   const target = resolve(outputDirectory)
+  assertSafeOutputDirectory(target, workingDirectory)
   const parent = dirname(target)
   const temporary = `${target}.tmp-${process.pid}-${Date.now()}`
   await mkdir(parent, { recursive: true })
@@ -352,6 +358,14 @@ export async function writeCompiledInstance(compiled, outputDirectory) {
       join(target, 'operations-plan.json'),
     ]),
   })
+}
+
+function assertSafeOutputDirectory(target, workingDirectory) {
+  const cwd = resolve(workingDirectory)
+  const filesystemRoot = parse(target).root
+  if (target === filesystemRoot || target === cwd || cwd.startsWith(`${target}${sep}`)) {
+    throw new Error('Refusing to replace the working directory, its parent, or the filesystem root')
+  }
 }
 
 async function writeJson(path, value) {
