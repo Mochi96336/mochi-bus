@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { applyAppearanceShell } from './appearance-shell'
+import { applyInstanceResponse } from './instance-response'
 import { apiRateLimit } from './rate-limit'
 import { applyRouteShell } from './route-shell'
 import bus from './routes/bus'
@@ -22,6 +23,7 @@ app.use('*', async (c, next) => {
   if (redirectTarget) return c.redirect(redirectTarget, 308)
 
   await next()
+  c.res = await applyInstanceResponse(c.res, requestUrl.toString())
   c.res = applyAppearanceShell(c.res)
   if (requestUrl.pathname === '/route') c.res = applyRouteShell(c.res)
 
