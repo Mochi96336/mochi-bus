@@ -109,6 +109,7 @@ jobs:
 
           if [ -n "$INPUT_CITY" ]; then
             cities="$INPUT_CITY"
+            node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"
             if [ "$INPUT_FORCE_PUBLISH" = "true" ]; then
               export SNAPSHOT_FORCE=1
             fi
@@ -137,9 +138,8 @@ jobs:
               echo 'Scheduled runs cannot enable legacy previous repair' >&2
               exit 1
             fi
-            # 城市分片:單日 D1 寫入量要留在額度內,大城市獨占或成對一天、小縣市成組。
+            # 城市分片仍沿用正式星期表,但 scheduled-cities 會先套用 instance enabledCities。
             # 內容沒變的城市會被 hash 檢查跳過,實際寫入只發生在資料有更新的日子。
-            # 1=週一 … 7=週日(UTC)
             cities="$(node scripts/transit-snapshot/scheduled-cities.mjs)"
           fi
           if [ -z "$cities" ]; then
