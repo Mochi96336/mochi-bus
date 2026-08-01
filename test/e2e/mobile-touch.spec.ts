@@ -1,4 +1,4 @@
-import { expect, mockMapBootstrapCities, test, type Page } from './fixtures'
+import { expect, mockMapBootstrapCities, test, type Locator, type Page } from './fixtures'
 
 const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.997, 120.212] }
 
@@ -48,6 +48,24 @@ async function mockTouchMap(page: Page) {
   } }))
 }
 
+async function exposedPathPoint(pathLocator: Locator): Promise<{ x: number; y: number }> {
+  const point = await pathLocator.evaluate((path: SVGPathElement) => {
+    const matrix = path.getScreenCTM()
+    if (!matrix) return null
+    const length = path.getTotalLength()
+    for (const fraction of [.5, .4, .6, .3, .7, .2, .8, .1, .9]) {
+      const local = path.getPointAtLength(length * fraction)
+      const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix)
+      if (document.elementFromPoint(screen.x, screen.y) === path) {
+        return { x: screen.x, y: screen.y }
+      }
+    }
+    return null
+  })
+  if (!point) throw new Error('touch route hit target has no exposed point')
+  return point
+}
+
 test('uses a real touch profile and a wide invisible route hit target', async ({ page }) => {
   await mockTouchMap(page)
   await page.goto('/map?city=Tainan')
@@ -65,17 +83,10 @@ test('uses a real touch profile and a wide invisible route hit target', async ({
   await expect(page.locator('.variant-list')).toBeVisible()
   const hitTarget = page.locator('.leaflet-routePreview-pane path[stroke-opacity="0"]').first()
   await expect(hitTarget).toHaveAttribute('stroke-width', '26')
-  const routePoint = await hitTarget.evaluate((path: SVGPathElement) => {
-    const matrix = path.getScreenCTM()
-    if (!matrix) return null
-    const point = path.getPointAtLength(path.getTotalLength() / 2)
-    const screenPoint = new DOMPoint(point.x, point.y).matrixTransform(matrix)
-    return { x: screenPoint.x, y: screenPoint.y }
-  })
-  if (!routePoint) throw new Error('touch route hit target has no screen transform')
-  // The center of an SVG path's bounding box is not guaranteed to lie on the
-  // stroke. Tap a point on the path itself so this still exercises real touch
-  // hit testing instead of occasionally falling through to the map canvas.
+  // The route may continue below the mobile drawer. Pick a point on the SVG
+  // stroke that hit testing confirms is actually exposed, rather than using a
+  // bounding-box center that can fall through to the map canvas.
+  const routePoint = await exposedPathPoint(hitTarget)
   await page.touchscreen.tap(routePoint.x, routePoint.y)
 
   await expect(page.locator('.variant-list')).toHaveCount(0)
