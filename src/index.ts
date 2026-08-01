@@ -16,7 +16,7 @@ const app = new Hono<Env>()
 app.use('*', async (c, next) => {
   const requestUrl = new URL(c.req.url)
   const redirectTarget = httpsRedirectTarget(requestUrl.toString())
-  const headers = securityHeaders(requestUrl.protocol === 'https:', requestUrl.origin)
+  const headers = securityHeaders(requestUrl.protocol === 'https:', requestUrl.toString())
 
   for (const [name, value] of Object.entries(headers)) c.header(name, value)
   if (redirectTarget) return c.redirect(redirectTarget, 308)
