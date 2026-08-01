@@ -306,6 +306,61 @@ async function openBusyStop(page: Page) {
   return arrivals
 }
 
+// 曾經有一份 size memory 讓 skeleton 照著上次的尺寸開,於是重訪轉運站時抽屜會在
+// skeleton 貼上去的瞬間從 standard 跳到 tall——只是把落地時的跳動提前到讀取中發生。
+// 現在 skeleton 沿用抽屜當下的高度,讀取中一律不動。
+test('does not resize when the skeleton returns to a stop already seen at its content size', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const secondVisit = deferred()
+  const secondVisitRequested = deferred()
+  let arrivalsCalls = 0
+
+  await mockBootstrap(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places: [place] } }))
+  await page.route('**/api/v1/map/place/P1?city=Tainan', (route) => route.fulfill({ json: { place } }))
+  await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => route.fulfill({ json: { variants: [] } }))
+  await page.route('**/api/v1/map/place/P1/arrivals?city=Tainan', async (route) => {
+    arrivalsCalls += 1
+    if (arrivalsCalls === 1) {
+      await route.fulfill({ json: { routes: busyStopRoutes } })
+      return
+    }
+    secondVisitRequested.release()
+    await fulfillAfter(route, secondVisit.promise, { routes: busyStopRoutes })
+  })
+
+  await page.goto('/map?city=Tainan&lat=22.99700&lon=120.21200')
+  const drawer = page.locator('#map-drawer')
+  await drawer.locator('.nearby-place-button').first().click()
+  await expect(drawer.locator('.place-route-row')).toHaveCount(busyStopRoutes.length)
+  await expect(drawer).toHaveAttribute('data-size', 'tall')
+
+  await drawer.locator('.drawer-back').click()
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  // 取樣要在 tall → standard 的高度過渡(220ms)結束之後開始,否則錄到的是動畫中途值。
+  await page.waitForTimeout(400)
+
+  // 從附近清單一路錄到 skeleton 貼上去為止。斷言的不是頭尾相等,而是中間沒有任何
+  // 一幀動過——高度過渡會讓「只比對兩個取樣點」放過一次真正的跳動。
+  await startDrawerFrameCapture(page)
+  await drawer.locator('.nearby-place-button').first().click()
+  await secondVisitRequested.promise
+  await expect(drawer.locator('.map-loading-row')).toHaveCount(3)
+  await page.waitForTimeout(300)
+  const frames = await stopDrawerFrameCapture(page)
+
+  expect(frames.some((frame) => frame.phase === 'place-loading')).toBe(true)
+  expect(new Set(frames.map((frame) => frame.size))).toEqual(new Set(['standard']))
+  const heights = frames.map((frame) => frame.height)
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(1)
+
+  // 尺寸仍然會變,但只在資料到達時變一次。
+  secondVisit.release()
+  await expect(drawer.locator('.place-route-row')).toHaveCount(busyStopRoutes.length)
+  await expect(drawer).toHaveAttribute('data-size', 'tall')
+})
+
 // 讀取骨架在還不知道路線數時就得決定尺寸,drawerSizeForTransition 給的預設是
 // standard。1–7 條路線的站牌剛好對上,轉運站不會,所以結果到達時抽屜一定要長高。
 // 鎖住的不是「不准變」,而是「只變一次,而且是長高不是跳動」。

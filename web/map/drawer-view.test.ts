@@ -4,7 +4,7 @@ import {
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
-  drawerSizeMemoryKey,
+  drawerSizeWorkspaceKey,
   shouldAnimateDrawerTransition,
   shouldPreserveDrawerHeight,
 } from './drawer-view'
@@ -27,7 +27,7 @@ describe('drawer view transitions', () => {
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:B', -20)).toBe(0)
   })
 
-  it('uses an explicit size workspace without changing content identity', () => {
+  it('keeps another stop in the same timetable in one size workspace while resetting its scroll', () => {
     const sizeKey = 'timetable:ChiayiCounty:CHI-7211:0'
     const firstStop = {
       key: `${sizeKey}:C1`,
@@ -36,18 +36,12 @@ describe('drawer view transitions', () => {
       header: [],
       content: [],
     }
-    const secondStop = {
-      key: `${sizeKey}:C2`,
-      sizeKey,
-      mode: 'timetable' as const,
-      header: [],
-      content: [],
-    }
+    const secondStop = { ...firstStop, key: `${sizeKey}:C2` }
 
-    expect(drawerSizeMemoryKey(firstStop)).toBe(sizeKey)
-    expect(drawerSizeMemoryKey(secondStop)).toBe(sizeKey)
+    expect(drawerSizeWorkspaceKey(firstStop)).toBe(sizeKey)
+    expect(drawerSizeWorkspaceKey(secondStop)).toBe(sizeKey)
     expect(drawerScrollTopForTransition(firstStop.key, secondStop.key, 240)).toBe(0)
-    expect(drawerSizeMemoryKey({ ...secondStop, sizeKey: undefined })).toBe(secondStop.key)
+    expect(drawerSizeWorkspaceKey({ ...secondStop, sizeKey: undefined })).toBe(secondStop.key)
   })
 
   it('keeps catalogue loading and failure in the standard workspace', () => {
@@ -69,7 +63,7 @@ describe('drawer view transitions', () => {
     }, undefined)).toBe('content')
   })
 
-  it('restores the remembered workspace before falling back from a content mode', () => {
+  it('keeps a size-less loading view at the size already on screen', () => {
     expect(drawerSizeForView({
       key: 'place:Tainan:busy-stop',
       mode: 'map-list',
@@ -90,7 +84,7 @@ describe('drawer view transitions', () => {
     }, undefined)).toBe('standard')
   })
 
-  it('lets an explicit final size replace a remembered loading size', () => {
+  it('lets an explicit final size replace the size the skeleton inherited', () => {
     expect(drawerSizeForView({
       key: 'place:Tainan:busy-stop',
       mode: 'map-list',

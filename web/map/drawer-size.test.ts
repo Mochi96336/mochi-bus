@@ -17,10 +17,15 @@ describe('drawer size states', () => {
     expect(drawerSizeForTransition(undefined, 'timetable', false, undefined)).toBe('standard')
   })
 
-  it('restores a remembered non-content size before applying the mode fallback', () => {
-    expect(drawerSizeForTransition(undefined, 'compact', false, 'standard')).toBe('standard')
+  it('keeps the size already on screen before applying the mode fallback', () => {
     expect(drawerSizeForTransition(undefined, 'map-list', false, 'tall')).toBe('tall')
     expect(drawerSizeForTransition(undefined, 'timetable', false, 'compact')).toBe('compact')
+  })
+
+  // compact 模式不捲動,繼承一個比內容短的固定高度會把內容裁掉。
+  it('leaves a content-sized compact view alone whatever is on screen', () => {
+    expect(drawerSizeForTransition(undefined, 'compact', false, 'standard')).toBe('content')
+    expect(drawerSizeForTransition(undefined, 'compact', false, 'tall')).toBe('content')
   })
 
   it('treats legacy preserve-height loading views as standard workspaces', () => {

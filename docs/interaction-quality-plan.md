@@ -460,9 +460,9 @@ Gate 的計時器 **必須由 controller 的 `generation` 擁有，不能掛在 
 
 > renders the three-row loading skeleton without overriding a remembered workspace size
 
-`renderError`（[:251](../web/map/place-routes-view.test.ts#L251)）同樣如此。這是刻意設計 —— 留空才能讓 `drawerSizeForTransition` 的 size memory 生效：重訪一個 12 條路線的站牌時，loading 會沿用上次的 `tall`，而不是先跳 `standard` 再跳 `tall`。寫死 `'standard'` 反而會製造它想避免的跳動。
+`renderError`（[:251](../web/map/place-routes-view.test.ts#L251)）同樣如此。這是刻意設計 —— **不帶 `size` 的畫面不決定高度**：`drawerSizeForTransition` 會讓它沿用抽屜此刻的尺寸（見 §7.9），而 skeleton 與錯誤頁正是唯二不知道最後有幾列的畫面。寫死 `'standard'` 會在使用者已經看著 `tall` 的時候把抽屜縮回去。
 
-僅在**首次造訪**且結果為 0 條或 8 條以上時，才會有 `standard → compact/tall` 的一次變化。Gate 反而縮小了這個窗口：多數空結果會在 120ms 內直接呈現，根本不經過 skeleton。
+結果為 0 條或 8 條以上時，會有 `standard → compact/tall` 的一次變化，發生在資料到達的那一刻。Gate 縮小了這個窗口：多數空結果會在 120ms 內直接呈現，根本不經過 skeleton。
 
 ### 7.6 Skeleton 視覺：採靜態（方案 A）
 
@@ -496,6 +496,17 @@ E2E：
 **尺寸變化本身是對的**（內容真的變多），不對的是它瞬間發生。因此 `.map-drawer` 加上 `transition: height`，並在 `prefers-reduced-motion` 下停用。只動 `height` 而不動 `max-height`：收合時 `max-height` 必須立刻生效，否則內容會在超出的框裡露出來。
 
 考慮過但否決的替代方案：在 place identity、nearby、network、search 四個 payload 補 `routeCount`，讓骨架一次算對。那個數字 arrivals 回應本來就會帶，為了提前幾百毫秒知道它而複製到四個 API 契約裡，代價與收益不成比例。
+
+### 7.9 讀取中不動高度：移除跨 workspace 的 size memory
+
+§7.8 處理的是**資料到達時**的那一次變化。另外還有一次跳動發生在**更早**：`drawerSizeForTransition` 曾經查一份以 view key 為索引的 size memory，記住每個站牌上次的尺寸讓骨架照著開。重訪一個 8 條路線以上的站牌時，上一個畫面（附近站牌，`standard`）會在骨架貼上去的瞬間跳到 `tall` —— 那份記憶不是在避免跳動，只是把它從落地提前到讀取中。
+
+改成：骨架沿用**抽屜此刻的高度**，而且只在同一個尺寸 workspace（`sizeKey ?? key`）內沿用。同一個 workspace 的「上一次」就是使用者眼前的高度，所以讀取中一律不動；跨 workspace 則各自回到自己的尺寸，不會把上一個畫面的高度帶過去。
+
+兩個邊界，都是實作時撞出來的：
+
+- **compact 模式不繼承。** 它不捲動（`data-scrollable="false"`），套上一個比內容短的固定高度會直接裁掉下半截。[main.ts:1209](../web/map/main.ts#L1209)、[trip-results-view.ts:222](../web/map/trip-results-view.ts#L222) 這些畫面本來就是 `content` 自適應，維持原樣。
+- **workspace 而不是 view key。** 時刻表換站牌時 `key` 會變（內容不同、捲動要歸零），`sizeKey` 不變，[map-timetable-size-memory.spec.ts:128](../test/e2e/map-timetable-size-memory.spec.ts#L128) 早就在鎖這件事。改用 view key 判斷會讓「從路線詳情返回行程候選」被當成同一個畫面而繼承 `compact`，清單被裁到點不到按鈕。
 
 ---
 

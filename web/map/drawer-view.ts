@@ -4,11 +4,10 @@ import './drawer-size.css'
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
 export type DrawerSize = 'content' | 'compact' | 'standard' | 'tall' | 'expanded'
 
-const DRAWER_SIZE_MEMORY_LIMIT = 32
-
 export type DrawerView =
   | {
       key: string
+      /** 同一個尺寸 workspace 的畫面共用它;省略時就是 key 本身。見 drawerSizeForView。 */
       sizeKey?: string
       mode: 'compact'
       size?: DrawerSize
@@ -54,7 +53,8 @@ export function createDrawerRenderer(
   let disposeCurrentView: (() => void) | undefined
   let currentViewKey: string | undefined
   let currentScrollRegion: HTMLDivElement | undefined
-  const sizesByViewKey = new Map<string, DrawerSize>()
+  let currentSizeKey: string | undefined
+  let currentSize: DrawerSize | undefined
 
   const dispose = () => {
     disposeCurrentView?.()
@@ -63,8 +63,8 @@ export function createDrawerRenderer(
 
   const render = (view: DrawerView): DrawerViewSession => {
     const previousViewKey = currentViewKey
-    const sizeKey = drawerSizeMemoryKey(view)
-    const nextSize = drawerSizeForView(view, sizesByViewKey.get(sizeKey))
+    const sizeKey = drawerSizeWorkspaceKey(view)
+    const nextSize = drawerSizeForView(view, sizeKey === currentSizeKey ? currentSize : undefined)
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
       view.key,
@@ -82,7 +82,8 @@ export function createDrawerRenderer(
     const keyboardEntry = isKeyboardActivation()
     const hadFocusInside = drawer.contains(document.activeElement)
     currentViewKey = view.key
-    rememberDrawerSize(sizesByViewKey, sizeKey, nextSize)
+    currentSizeKey = sizeKey
+    currentSize = nextSize
 
     drawer.dataset.view = view.key
     drawer.dataset.mode = view.mode
@@ -220,13 +221,22 @@ export function drawerScrollTopForTransition(
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
 }
 
-export function drawerSizeMemoryKey(view: DrawerView): string {
+export function drawerSizeWorkspaceKey(view: DrawerView): string {
   return view.sizeKey ?? view.key
 }
 
+// currentSize 是抽屜此刻的尺寸,而且只在同一個 workspace 內傳進來。於是 skeleton 與
+// 錯誤頁——唯二不帶 size 的畫面——不決定高度,沿用畫面上已經有的;它們都不知道最後
+// 有幾列,任何猜測都只是把跳動提前到讀取中發生。一次導覽因此只剩一次尺寸變化,發生在
+// 資料到達時,而且是 drawer-size.css 的過渡。
+//
+// 曾經是一份跨 workspace 的 size memory,記住每個站牌上次的尺寸讓 skeleton 照著開。
+// 那份記憶正是跳動的來源:重訪 8 條路線以上的站牌時,抽屜會在 skeleton 貼上去的瞬間
+// 從 standard 跳到 tall。限定在同一個 workspace 內就沒有這個問題——那裡的「上一次」
+// 就是使用者眼前的高度。
 export function drawerSizeForView(
   view: DrawerView,
-  rememberedSize: DrawerSize | undefined,
+  currentSize: DrawerSize | undefined,
 ): DrawerSize {
   // A view key names the navigation workspace. Catalogue loading, failure, and the final
   // route list share that workspace even though their temporary content modes differ.
@@ -236,7 +246,7 @@ export function drawerSizeForView(
     workspaceSize,
     view.mode,
     Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
-    rememberedSize,
+    currentSize,
   )
 }
 
@@ -244,13 +254,14 @@ export function drawerSizeForTransition(
   explicitSize: DrawerSize | undefined,
   mode: DrawerView['mode'],
   preserveHeight: boolean,
-  rememberedSize: DrawerSize | undefined,
+  currentSize: DrawerSize | undefined,
 ): DrawerSize {
   if (explicitSize) return explicitSize
-  if (rememberedSize && rememberedSize !== 'content') return rememberedSize
-  if (mode === 'map-list' || mode === 'results' || mode === 'timetable') return 'standard'
-  if (preserveHeight) return 'standard'
-  return 'content'
+  // 內容自適應的畫面不繼承高度。compact 模式不捲動,套上一個比內容短的固定高度
+  // 會直接把下半截裁掉,連按鈕都點不到。
+  if (mode === 'compact' && !preserveHeight) return 'content'
+  if (currentSize && currentSize !== 'content') return currentSize
+  return 'standard'
 }
 
 // Transitional helpers are retained for compatibility with focused unit tests and callers
@@ -277,18 +288,6 @@ export function drawerMinHeightForTransition(
     ? Math.min(previousHeight, Math.max(0, maximumHeight))
     : previousHeight
   return boundedHeight > 0 ? `${Math.ceil(boundedHeight)}px` : ''
-}
-
-function rememberDrawerSize(memory: Map<string, DrawerSize>, key: string, size: DrawerSize) {
-  if (size === 'content') {
-    memory.delete(key)
-    return
-  }
-  memory.delete(key)
-  memory.set(key, size)
-  if (memory.size <= DRAWER_SIZE_MEMORY_LIMIT) return
-  const oldestKey = memory.keys().next().value
-  if (oldestKey) memory.delete(oldestKey)
 }
 
 function animateNodes(nodes: readonly Node[]) {
