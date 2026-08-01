@@ -8,7 +8,10 @@ export type HomePageView = {
   requestUrl: string
 }
 
-/** Render the local-first homepage without requiring a configured sample route. */
+/**
+ * Keep `/` as the local-board surface even when an instance has no sample route.
+ * A null bootstrap lets the browser choose a saved board or the explicit empty state.
+ */
 export function renderHomePage(view: HomePageView): string {
   const query = view.demoQuery ? resolvedDemoQuery(view.demoQuery) : undefined
   return renderETAPage({
