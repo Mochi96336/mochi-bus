@@ -60,7 +60,7 @@
        Keep that common case close to its content; unusually long names and variant lists
        can use the drawer's existing internal scroller instead of reserving empty space. */
     --map-drawer-size-compact: min(
-      clamp(216px, 26dvh, 240px),
+      clamp(224px, 27dvh, 240px),
       var(--map-drawer-mobile-available-height)
     );
     --map-drawer-size-nearby: min(
