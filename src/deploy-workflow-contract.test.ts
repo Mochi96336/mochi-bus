@@ -33,10 +33,12 @@ describe('Deploy workflow post-deploy smoke contract', () => {
       .toContain("if: steps.operation.outputs.enabled == 'true'")
   })
 
-  it('uses the generated instance origin for exact-release smoke', () => {
+  it('uses generated identity first and an explicit request-origin override second', () => {
     expect(workflowSource).toContain('run: npm run release:smoke')
     expect(workflowSource).toContain('EXPECTED_RELEASE_SHA: ${{ github.sha }}')
-    expect(workflowSource).toContain('RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin }}')
+    expect(workflowSource).toContain(
+      'RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin || vars.RELEASE_SMOKE_ORIGIN }}',
+    )
     expect(workflowSource).not.toContain('RELEASE_SMOKE_ORIGIN: https://bus.moc96336.com')
     expect(workflowSource).toContain('release-smoke-report.json')
   })
