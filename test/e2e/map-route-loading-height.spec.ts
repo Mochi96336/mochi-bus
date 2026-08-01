@@ -96,6 +96,12 @@ async function drawerGeometry(page: Page) {
   }))
 }
 
+async function resizeAndSettleDrawer(page: Page, viewport: { width: number; height: number }) {
+  await page.setViewportSize(viewport)
+  await page.waitForTimeout(260)
+  return drawerGeometry(page)
+}
+
 async function settledCompactHeight(page: Page, previousHeight: number): Promise<number> {
   const drawer = page.locator('#map-drawer')
   await expect.poll(
@@ -128,26 +134,21 @@ test('uses a genuinely shorter compact route state while keeping it usable acros
     expect((await drawerGeometry(page)).scrollHeight - (await drawerGeometry(page)).clientHeight).toBeLessThanOrEqual(1)
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
 
-    await page.setViewportSize({ width: 640, height: 390 })
-    const at640 = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-    await page.setViewportSize({ width: 641, height: 390 })
-    const at641 = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-    expect(Math.abs(at641 - at640)).toBeLessThanOrEqual(1)
+    const at640 = await resizeAndSettleDrawer(page, { width: 640, height: 390 })
+    const at641 = await resizeAndSettleDrawer(page, { width: 641, height: 390 })
+    expect(Math.abs(at641.height - at640.height)).toBeLessThanOrEqual(1)
 
-    await page.setViewportSize({ width: 844, height: 520 })
-    const at520 = await drawerGeometry(page)
-    await page.setViewportSize({ width: 844, height: 521 })
-    const at521 = await drawerGeometry(page)
+    const at520 = await resizeAndSettleDrawer(page, { width: 844, height: 520 })
+    const at521 = await resizeAndSettleDrawer(page, { width: 844, height: 521 })
     expect(Math.abs(at521.height - at520.height)).toBeLessThanOrEqual(1)
     expect(at521.height).toBeGreaterThanOrEqual(250)
     expect(at521.scrollHeight - at521.clientHeight).toBeLessThanOrEqual(1)
 
-    await page.setViewportSize({ width: 844, height: 390 })
+    const landscapeLoading = await resizeAndSettleDrawer(page, { width: 844, height: 390 })
     await expect(drawer.getByRole('heading', { name: '0右' })).toBeVisible()
     await expect(drawer.locator('.drawer-back')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
-    const landscapeLoading = await drawerGeometry(page)
     expect(landscapeLoading.height).toBeGreaterThanOrEqual(250)
     expect(landscapeLoading.scrollHeight - landscapeLoading.clientHeight).toBeLessThanOrEqual(1)
 
