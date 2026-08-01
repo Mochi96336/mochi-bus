@@ -4,7 +4,6 @@ import type { NearbyPlace } from './map-api-client'
 import source from './nearby-places-view.ts?raw'
 import {
   createNearbyPlacesView,
-  nearbyPlacesDrawerSize,
   nearbyPlacesFailureMessage,
   type NearbyOrigin,
 } from './nearby-places-view'
@@ -145,19 +144,13 @@ afterEach(() => {
 })
 
 describe('Nearby places view', () => {
-  it('content-sizes sparse nearby workspaces and promotes longer lists', () => {
-    expect(nearbyPlacesDrawerSize(0)).toBe('content')
-    expect(nearbyPlacesDrawerSize(3)).toBe('content')
-    expect(nearbyPlacesDrawerSize(4)).toBe('standard')
-  })
-
-  it('renders the three-row loading skeleton at content size and delegates the back action', () => {
+  it('renders the loading skeleton at the explicit standard size and delegates the back action', () => {
     const harness = createHarness()
     const onBack = vi.fn()
     harness.view.renderLoading({ cityCode: 'Taipei', origin, backLabel: '附近站牌', onBack })
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('nearby:Taipei:25.01234:121.56789')
-    expect(drawer.size).toBe('content')
+    expect(drawer.size).toBe('standard')
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|正在搜尋附近站牌')
     const loading = drawer.content[0] as unknown as FakeElement
@@ -168,12 +161,12 @@ describe('Nearby places view', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders sparse rounded distances at content size, opens the selected place, and includes the Trip footer', () => {
+  it('renders rounded distances without a deferred height release, opens the selected place, and includes the Trip footer', () => {
     const harness = createHarness()
     const places = [place('A', '市政府', 120.4), place('B', '捷運站', 48.7)]
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('content')
+    expect(drawer.size).toBe('standard')
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.sessions[0].releasePreservedHeight).not.toHaveBeenCalled()
     expect((drawer.header[1] as unknown as FakeElement).textContent)
@@ -188,18 +181,11 @@ describe('Nearby places view', () => {
     expect(harness.createTripModeButton).toHaveBeenCalledOnce()
   })
 
-  it('keeps longer nearby lists in the standard scrollable workspace', () => {
-    const harness = createHarness()
-    const places = Array.from({ length: 4 }, (_, index) => place(String(index), `站牌 ${index}`, index * 100))
-    harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
-    expect(scrollable(harness.rendered()).size).toBe('standard')
-  })
-
-  it('renders the existing empty-state copy at content size', () => {
+  it('renders the existing empty-state copy at the same standard size', () => {
     const harness = createHarness()
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('content')
+    expect(drawer.size).toBe('standard')
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
@@ -209,7 +195,7 @@ describe('Nearby places view', () => {
     expect(findByClass(list, 'nearby-place-button')).toBeUndefined()
   })
 
-  it('renders active error text at content size and delegates retry and back actions', () => {
+  it('renders active error text and delegates retry and back actions', () => {
     const harness = createHarness()
     const onBack = vi.fn()
     const onRetry = vi.fn()
@@ -218,7 +204,7 @@ describe('Nearby places view', () => {
     })
     expect(message).toBe('附近服務忙碌中')
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('content')
+    expect(drawer.size).toBe('standard')
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌讀取失敗|附近服務忙碌中')
     ;(drawer.header[0] as unknown as FakeElement).click()
     ;(drawer.content[0] as unknown as FakeElement).click()
