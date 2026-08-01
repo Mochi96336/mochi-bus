@@ -58,7 +58,6 @@ class FakeElement {
 type FakeSession = {
   controller: AbortController
   cleanups: Array<() => void>
-  releasePreservedHeight: ReturnType<typeof vi.fn>
   session: DrawerViewSession
 }
 
@@ -82,7 +81,6 @@ function place(id: string, name: string, distanceMeters: number): NearbyPlace {
 function createHarness() {
   let rendered: DrawerView | undefined
   let currentSession: FakeSession | undefined
-  const sessions: FakeSession[] = []
   const onOpenPlace = vi.fn()
   const createTripModeButton = vi.fn(() => element('button') as unknown as HTMLButtonElement)
   const view = createNearbyPlacesView({
@@ -94,14 +92,11 @@ function createHarness() {
       rendered = drawerView
       const controller = new AbortController()
       const cleanups: Array<() => void> = []
-      const releasePreservedHeight = vi.fn()
       const session: DrawerViewSession = {
         signal: controller.signal,
-        releasePreservedHeight,
         onDispose(cleanup) { cleanups.push(cleanup) },
       }
-      currentSession = { controller, cleanups, releasePreservedHeight, session }
-      sessions.push(currentSession)
+      currentSession = { controller, cleanups, session }
       return session
     },
     createBackButton: (label, onClick) => {
@@ -125,7 +120,7 @@ function createHarness() {
     createTripModeButton,
     onOpenPlace,
   })
-  return { view, rendered: () => rendered, sessions, onOpenPlace, createTripModeButton }
+  return { view, rendered: () => rendered, onOpenPlace, createTripModeButton }
 }
 
 function scrollable(view: DrawerView | undefined): Exclude<DrawerView, { mode: 'compact' }> {
@@ -153,7 +148,6 @@ describe('Nearby places view', () => {
     expect(drawer.size).toBe('nearby')
     // 骨架標記為 transient:抽屜已經有高度時沿用它,size 只是首次繪製的退路。
     expect(drawer.transient).toBe(true)
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|正在搜尋附近站牌')
     const loading = drawer.content[0] as unknown as FakeElement
     expect(loading.classList.contains('map-loading-list')).toBe(true)
@@ -163,7 +157,7 @@ describe('Nearby places view', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('renders rounded distances without a deferred height release, opens the selected place, and includes the Trip footer', () => {
+  it('renders rounded distances, opens the selected place, and includes the Trip footer', () => {
     const harness = createHarness()
     const places = [place('A', '市政府', 120.4), place('B', '捷運站', 48.7)]
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
@@ -171,8 +165,6 @@ describe('Nearby places view', () => {
     expect(drawer.size).toBe('nearby')
     // 結果就是最終內容,由它決定高度。
     expect(drawer.transient).toBeUndefined()
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
-    expect(harness.sessions[0].releasePreservedHeight).not.toHaveBeenCalled()
     expect((drawer.header[1] as unknown as FakeElement).textContent)
       .toBe('附近站牌|2 個附近站牌，點任一站牌預覽所有經過路線。')
     const list = drawer.content[0] as unknown as FakeElement
@@ -190,7 +182,6 @@ describe('Nearby places view', () => {
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
     expect(drawer.size).toBe('nearby')
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
     expect(list.children).toHaveLength(1)

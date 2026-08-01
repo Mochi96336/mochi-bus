@@ -17,16 +17,12 @@ export type DrawerView =
       key: string
       mode: 'compact'
       size?: DrawerSize
-      preserveMobileHeight?: boolean
-      preserveDesktopHeight?: boolean
       content: readonly Node[]
     })
   | (TransientView & {
       key: string
       mode: DrawerScrollableMode
       size?: DrawerSize
-      preserveMobileHeight?: boolean
-      preserveDesktopHeight?: boolean
       header: readonly Node[]
       content: readonly Node[]
       footer?: readonly Node[]
@@ -35,7 +31,6 @@ export type DrawerView =
 export type DrawerViewSession = {
   readonly signal: AbortSignal
   readonly scrollRegion?: HTMLDivElement
-  releasePreservedHeight(): void
   onDispose(cleanup: () => void): void
 }
 
@@ -150,9 +145,6 @@ export function createDrawerRenderer(
     return {
       signal: abortController.signal,
       scrollRegion,
-      // Legacy callers release a measured transition height after rendering.
-      // Size states no longer depend on DOM measurement, so this is intentionally a no-op.
-      releasePreservedHeight() {},
       onDispose(cleanup) {
         if (active) cleanups.push(cleanup)
         else cleanup()
@@ -250,52 +242,19 @@ export function drawerSizeForView(
   currentSize: DrawerSize | undefined,
 ): DrawerSize {
   if (view.transient && currentSize) return currentSize
-  // A view key names the navigation workspace. Catalogue loading, failure, and the final
-  // route list share that workspace even though their temporary content modes differ.
-  const workspaceSize = view.size
-    ?? (view.key.startsWith('catalogue:') ? 'standard' : undefined)
-  return drawerSizeForTransition(
-    workspaceSize,
-    view.mode,
-    Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
-  )
+  return drawerSizeForTransition(view.size, view.mode)
 }
 
+// 沒有指定尺寸時,可捲動的畫面落在中性的 standard 工作區,compact 則貼著內容。
+// 需要別的尺寸(例如目錄的讀取與失敗狀態要留在 standard)由呼叫端明講 size——
+// renderer 不去解讀 view key 的命名慣例。
 export function drawerSizeForTransition(
   explicitSize: DrawerSize | undefined,
   mode: DrawerView['mode'],
-  preserveHeight: boolean,
 ): DrawerSize {
   if (explicitSize) return explicitSize
   if (mode === 'map-list' || mode === 'results' || mode === 'timetable') return 'standard'
-  if (preserveHeight) return 'standard'
   return 'content'
-}
-
-// Transitional helpers are retained for compatibility with focused unit tests and callers
-// that have not yet migrated from measured heights. The renderer no longer uses them.
-export function shouldPreserveDrawerHeight(
-  preserveMobileHeight: boolean | undefined,
-  preserveDesktopHeight: boolean | undefined,
-  mobileLayout: boolean,
-  desktopLayout: boolean,
-): boolean {
-  return Boolean(
-    (preserveMobileHeight && mobileLayout)
-    || (preserveDesktopHeight && desktopLayout),
-  )
-}
-
-export function drawerMinHeightForTransition(
-  preserveHeight: boolean | undefined,
-  previousHeight: number,
-  maximumHeight = Number.POSITIVE_INFINITY,
-): string {
-  if (!preserveHeight || !Number.isFinite(previousHeight) || previousHeight <= 0) return ''
-  const boundedHeight = Number.isFinite(maximumHeight)
-    ? Math.min(previousHeight, Math.max(0, maximumHeight))
-    : previousHeight
-  return boundedHeight > 0 ? `${Math.ceil(boundedHeight)}px` : ''
 }
 
 function animateNodes(nodes: readonly Node[]) {
