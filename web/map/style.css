@@ -747,6 +747,14 @@ button { cursor: pointer; }
   outline-offset: -2px;
 }
 
+/* 返回鍵與 quiet button 少了這條,鍵盤焦點只能靠瀏覽器預設的藍圈,跟整頁的綠色
+   焦點語彙對不上。它們是獨立元件而不是清單列,所以外擴而不是內縮。 */
+.drawer-back:focus-visible,
+.quiet-button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
 /* 一般控制項的 hover/active 節奏。只列色彩類屬性:有自己幾何動畫的元件
    (.map-feature-button 的展開寬度、.map-chip)保留各自完整的 transition。 */
 :is(

@@ -83,7 +83,7 @@ export function createDrawerRenderer(
     // 每次 render 都消耗掉旗標,否則一次鍵盤操作留下的 true 會被後面某個
     // 非鍵盤觸發的 render(popstate、URL hydration、ETA 刷新)撿去用。
     const keyboardEntry = isKeyboardActivation()
-    const hadFocusInside = drawer.contains(document.activeElement)
+    const hadVisibleFocusInside = hasVisibleFocusInside(drawer)
     currentViewKey = view.key
     currentSize = nextSize
 
@@ -131,7 +131,12 @@ export function createDrawerRenderer(
     // replaceChildren 把那個節點拔掉的。loading 與 settled 共用 view key,
     // 所以這種情況很常見——不接回來的話焦點會掉到 body,下一次 Tab 就從
     // 整頁最上面重來。焦點原本在 drawer 之外時一律不碰。
-    const orphanedFocus = hadFocusInside && !drawer.contains(document.activeElement)
+    //
+    // 而且只修復「看得見的」焦點。手機上點一顆按鈕也會讓它得到焦點,接回來等於
+    // 憑空生出一個焦點框:使用者從沒用鍵盤,卻在返回鍵上看到一圈 focus ring。
+    // 這條路徑要保住的是 Tab 序,而 Tab 序只對正在用鍵盤的人有意義,那正是
+    // :focus-visible 的定義。
+    const orphanedFocus = hadVisibleFocusInside && !drawer.contains(document.activeElement)
     if ((animateContent && keyboardEntry) || orphanedFocus) focusDrawerEntry(drawer)
 
     const disposeView = () => {
@@ -191,6 +196,19 @@ export function createKeyboardActivationTracker(
       target.removeEventListener('click', onClick, true)
       target.removeEventListener('pointerdown', onPointerDown, true)
     },
+  }
+}
+
+// 抽屜裡是否有一個「正在顯示焦點指示」的元素。:focus-visible 就是瀏覽器對這件事
+// 的判斷,不必自己重寫一套 heuristic。舊瀏覽器不認得這個選擇器時 matches 會丟出
+// SyntaxError,那時退回只看有沒有焦點——寧可多修復一次,不要整條路徑失效。
+export function hasVisibleFocusInside(drawer: HTMLElement): boolean {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || !drawer.contains(active)) return false
+  try {
+    return active.matches(':focus-visible')
+  } catch {
+    return true
   }
 }
 

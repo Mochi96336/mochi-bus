@@ -214,17 +214,33 @@ test('a map click opens a view without pulling focus into the drawer', async ({ 
 })
 
 // loading 與 settled 共用 view key,settled 的 replaceChildren 會把剛聚焦的節點
-// 拔掉。焦點本來就在 drawer 裡時要接回來,不能讓它掉到 body。
-test('repairs focus the drawer itself orphaned during a re-render', async ({ page }) => {
+// 拔掉。鍵盤焦點要接回來,不能讓它掉到 body——否則下一次 Tab 從整頁最上面重來。
+test('repairs a keyboard focus the drawer itself orphaned during a re-render', async ({ page }) => {
   await mockCatalogue(page)
   await page.goto('/map?city=Tainan')
 
   const drawer = page.locator('#map-drawer')
   const search = drawer.getByRole('textbox', { name: '篩選路線，或搜尋站牌名稱' })
   await search.focus()
-  await drawer.getByRole('button', { name: '15', exact: true }).click()
+  await drawer.getByRole('button', { name: '15', exact: true }).press('Enter')
 
   await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
   await expect(search).toHaveCount(0)
   expect(await activeElementInDrawer(page)).toBe(true)
+})
+
+// 點擊也會讓按鈕得到焦點,但那是不可見的焦點。把它接回返回鍵等於憑空生出一個
+// focus ring:使用者從沒用鍵盤,卻在手機上看到一圈藍框。要保住的是 Tab 序,
+// 而 Tab 序只對正在用鍵盤的人有意義。
+test('does not manufacture a focus ring when a tap orphaned the focus', async ({ page }) => {
+  await mockCatalogue(page)
+  await page.goto('/map?city=Tainan')
+
+  const drawer = page.locator('#map-drawer')
+  const route = drawer.getByRole('button', { name: '15', exact: true })
+  await route.click()
+
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+  expect(await activeElementInDrawer(page)).toBe(false)
+  expect(await page.evaluate(() => document.querySelectorAll(':focus-visible').length)).toBe(0)
 })
