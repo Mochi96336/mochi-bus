@@ -30,11 +30,13 @@ describe('instance operational workflow contracts', () => {
     expect(watchdogWorkflow).toContain('TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}')
   })
 
-  it('uses the generated Wrangler config for dev, deploy, types and dry-run', () => {
+  it('uses generated Wrangler config for runtime commands while keeping one binding type contract', () => {
     const scripts = JSON.parse(packageSource).scripts as Record<string, string>
-    for (const name of ['dev', 'deploy', 'cf-typegen', 'cf-typegen:check', 'check']) {
+    for (const name of ['dev', 'deploy', 'check']) {
       expect(scripts[name], name).toContain('.generated/instance/wrangler.instance.jsonc')
     }
+    expect(scripts['cf-typegen']).not.toContain('.generated/instance/wrangler.instance.jsonc')
+    expect(scripts['cf-typegen:check']).not.toContain('.generated/instance/wrangler.instance.jsonc')
   })
 
   it('does not retain Mochi production fallbacks in operational entrypoints', () => {
