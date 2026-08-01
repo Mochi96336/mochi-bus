@@ -101,6 +101,7 @@
       var(--map-drawer-landscape-available-height),
       clamp(300px, 44dvh, 420px)
     );
+    --map-drawer-size-nearby: var(--map-drawer-size-standard);
     --map-drawer-size-tall: min(
       var(--map-drawer-landscape-available-height),
       clamp(340px, 56dvh, 560px)
