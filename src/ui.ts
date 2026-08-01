@@ -1,10 +1,13 @@
 import { toBusSearchParams, type BusQuery, type ResolvedBusQuery } from './domain/bus-query'
+import type { FavoriteBoard } from './domain/favorite-board'
 import { etaPresentation } from './domain/eta-presentation'
 import { tdxWarningMessages, type ETAResult, type RouteDetail, type RouteStop } from './lib/tdx'
 import { canonicalUrl, renderWebsiteStructuredData, siteSearchDescription, siteSocialDescription, siteSocialImage, siteTitle } from './seo'
 
 type ETAView = {
-  query: ResolvedBusQuery
+  query?: ResolvedBusQuery
+  initialBoard?: FavoriteBoard | null
+  mapCity?: string
   result?: ETAResult
   error?: string
   notice?: string
@@ -15,23 +18,41 @@ type ETAView = {
 const brandWordmark = 'MOCHI <span>BUS</span>'
 
 export function renderETAPage(view: ETAView): string {
-  const { query, result, error, notice, useLocalBoard, requestUrl } = view
-  const initialBoard = {
-    version: 2,
-    id: 'default',
-    title: query.stopName,
-    buses: [query],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+  const {
+    query,
+    initialBoard: initialBoardOverride,
+    mapCity,
+    result,
+    error,
+    notice,
+    useLocalBoard,
+    requestUrl,
+  } = view
+  if (!useLocalBoard && !query) {
+    throw new Error('ETA page requires a resolved query outside the local homepage')
   }
+  const routeQuery = query as ResolvedBusQuery
+  const initialBoard = initialBoardOverride === undefined
+    ? query
+      ? {
+          version: 2 as const,
+          id: 'default',
+          title: query.stopName,
+          buses: [query],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      : null
+    : initialBoardOverride
   // 封面標題保持通用(內容由本機看板決定);/bus 是可分享頁,
   // 標題與描述帶上路線與站牌,貼到聊天軟體的預覽卡才看得出是哪班車。
-  const pageTitle = useLocalBoard ? siteTitle : `${query.routeName} · ${query.stopName}｜Mochi Bus`
+  const pageTitle = useLocalBoard ? siteTitle : `${routeQuery.routeName} · ${routeQuery.stopName}｜Mochi Bus`
   const pageDescription = useLocalBoard
     ? siteSearchDescription
-    : `${query.routeName} 在${query.stopName}的即時到站時間`
-  const heading = useLocalBoard ? '台灣公車到站看板' : `${query.routeName} 在 ${query.stopName} 的到站時間`
-  const mapHref = `/map?city=${encodeURIComponent(query.city)}`
+    : `${routeQuery.routeName} 在${routeQuery.stopName}的即時到站時間`
+  const heading = useLocalBoard ? '台灣公車到站看板' : `${routeQuery.routeName} 在 ${routeQuery.stopName} 的到站時間`
+  const mapCityCode = mapCity ?? query?.city
+  const mapHref = mapCityCode ? `/map?city=${encodeURIComponent(mapCityCode)}` : '/map'
   // 上方已有服務橫幅(notice)時,狀態列不再重複同一句 TDX 警語。
   const warningNotice = !notice && result?.warning ? tdxWarningMessages[result.warning] : undefined
   const resultNotice = warningNotice
@@ -41,7 +62,7 @@ export function renderETAPage(view: ETAView): string {
   // skeleton,不畫任何會被 JS 推翻的內容(避免 flash of stale content)。
   const boardMarkup = useLocalBoard
     ? `<div class="bus-row skeleton-row" aria-hidden="true"><span class="skeleton-bar skeleton-name"></span><span class="skeleton-bar skeleton-eta"></span></div><div class="bus-row skeleton-row" aria-hidden="true"><span class="skeleton-bar skeleton-name"></span><span class="skeleton-bar skeleton-eta"></span></div><noscript><p class="empty">需要啟用 JavaScript 才能顯示你的常用站牌。</p></noscript>`
-    : renderBusRow(query, result, error)
+    : renderBusRow(routeQuery, result, error)
   const headingMarkup = useLocalBoard
     ? '<span class="skeleton-bar skeleton-title" aria-hidden="true"></span>'
     : escapeHTML(heading)
