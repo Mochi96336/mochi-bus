@@ -126,11 +126,18 @@ test('uses a genuinely shorter compact route state while keeping it usable acros
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
+    // 讀取中維持目錄的高度;compact 是路線資料到達後的狀態,所以先讓它落地再量。
+    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    releaseRoute()
+    released = true
+    await expect(drawer.locator('.route-service-summary')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
+    // settledCompactHeight 只輪詢到「已經夠矮」,收合動畫途中就滿足了。等它走完再量。
+    await page.waitForTimeout(400)
 
-    const portraitLoadingHeight = await settledCompactHeight(page, catalogue)
-    expect(portraitLoadingHeight).toBeGreaterThanOrEqual(215)
-    expect(portraitLoadingHeight).toBeLessThanOrEqual(241)
+    const portraitCompactHeight = await settledCompactHeight(page, catalogue)
+    expect(portraitCompactHeight).toBeGreaterThanOrEqual(215)
+    expect(portraitCompactHeight).toBeLessThanOrEqual(241)
     expect((await drawerGeometry(page)).scrollHeight - (await drawerGeometry(page)).clientHeight).toBeLessThanOrEqual(1)
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
 
@@ -144,25 +151,16 @@ test('uses a genuinely shorter compact route state while keeping it usable acros
     expect(at521.height).toBeGreaterThanOrEqual(250)
     expect(at521.scrollHeight - at521.clientHeight).toBeLessThanOrEqual(1)
 
-    const landscapeLoading = await resizeAndSettleDrawer(page, { width: 844, height: 390 })
+    const landscapeResult = await resizeAndSettleDrawer(page, { width: 844, height: 390 })
     await expect(drawer.getByRole('heading', { name: '0右' })).toBeVisible()
     await expect(drawer.locator('.drawer-back')).toBeVisible()
     await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
-    expect(landscapeLoading.height).toBeGreaterThanOrEqual(250)
-    expect(landscapeLoading.scrollHeight - landscapeLoading.clientHeight).toBeLessThanOrEqual(1)
-
-    releaseRoute()
-    released = true
-    await expect(drawer.locator('.route-service-summary')).toBeVisible()
-    await expect(drawer.locator('.drawer-back')).toBeVisible()
-    await expect(drawer).toHaveAttribute('data-size', 'compact')
-    const landscapeResult = await drawerGeometry(page)
     expect(landscapeResult.height).toBeGreaterThanOrEqual(250)
     expect(landscapeResult.scrollHeight - landscapeResult.clientHeight).toBeLessThanOrEqual(1)
 
     const portraitResult = await resizeAndSettleDrawer(page, { width: 390, height: 844 })
-    expect(Math.abs(portraitResult.height - portraitLoadingHeight)).toBeLessThanOrEqual(1)
+    expect(Math.abs(portraitResult.height - portraitCompactHeight)).toBeLessThanOrEqual(1)
     expect(portraitResult.scrollHeight - portraitResult.clientHeight).toBeLessThanOrEqual(1)
 
     // 428 × 926 matches the class of device in the reported screenshot: compact should cap
@@ -180,7 +178,8 @@ test('uses a genuinely shorter compact route state while keeping it usable acros
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('keeps compact route loading and a compact variant picker at the same short mobile height', async ({ page }) => {
+// 讀取中維持目錄高度,收合發生在變體清單到達時。
+test('holds the catalogue height through route loading before a compact variant picker', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -189,13 +188,13 @@ test('keeps compact route loading and a compact variant picker at the same short
 
   const drawer = page.locator('#map-drawer')
   const catalogue = await catalogueHeight(page)
-  let loadingHeight = 0
 
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
-    await expect(drawer).toHaveAttribute('data-size', 'compact')
-    loadingHeight = await settledCompactHeight(page, catalogue)
+    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    const loadingHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+    expect(Math.abs(loadingHeight - catalogue)).toBeLessThanOrEqual(1)
   } finally {
     releaseRoute()
   }
@@ -204,8 +203,7 @@ test('keeps compact route loading and a compact variant picker at the same short
   await expect(drawer).toHaveAttribute('data-size', 'compact')
   await expect(drawer.locator('.variant-button')).toHaveCount(2)
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
-  await expect.poll(async () => {
-    const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-    return Math.abs(height - loadingHeight)
-  }).toBeLessThanOrEqual(1)
+  const pickerHeight = await settledCompactHeight(page, catalogue)
+  expect(pickerHeight).toBeGreaterThanOrEqual(215)
+  expect(pickerHeight).toBeLessThanOrEqual(241)
 })

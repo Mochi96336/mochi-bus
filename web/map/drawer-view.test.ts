@@ -4,7 +4,6 @@ import {
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
-  drawerSizeWorkspaceKey,
   shouldAnimateDrawerTransition,
   shouldPreserveDrawerHeight,
 } from './drawer-view'
@@ -27,23 +26,6 @@ describe('drawer view transitions', () => {
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:B', -20)).toBe(0)
   })
 
-  it('keeps another stop in the same timetable in one size workspace while resetting its scroll', () => {
-    const sizeKey = 'timetable:ChiayiCounty:CHI-7211:0'
-    const firstStop = {
-      key: `${sizeKey}:C1`,
-      sizeKey,
-      mode: 'timetable' as const,
-      header: [],
-      content: [],
-    }
-    const secondStop = { ...firstStop, key: `${sizeKey}:C2` }
-
-    expect(drawerSizeWorkspaceKey(firstStop)).toBe(sizeKey)
-    expect(drawerSizeWorkspaceKey(secondStop)).toBe(sizeKey)
-    expect(drawerScrollTopForTransition(firstStop.key, secondStop.key, 240)).toBe(0)
-    expect(drawerSizeWorkspaceKey({ ...secondStop, sizeKey: undefined })).toBe(secondStop.key)
-  })
-
   it('keeps catalogue loading and failure in the standard workspace', () => {
     expect(drawerSizeForView({
       key: 'catalogue:Tainan',
@@ -63,35 +45,54 @@ describe('drawer view transitions', () => {
     }, undefined)).toBe('content')
   })
 
-  it('keeps a size-less loading view at the size already on screen', () => {
+  // 點站牌是 nearby → place 的跨 workspace 導覽,骨架仍然不能改高度。
+  it('holds the size on screen for a transient view, across workspaces and over its own size', () => {
+    const skeleton = {
+      key: 'place:Tainan:busy-stop',
+      mode: 'map-list' as const,
+      transient: true,
+      header: [],
+      content: [],
+    }
+
+    expect(drawerSizeForView(skeleton, 'nearby')).toBe('nearby')
+    expect(drawerSizeForView(skeleton, 'tall')).toBe('tall')
+    expect(drawerSizeForView({ ...skeleton, size: 'compact' }, 'nearby')).toBe('nearby')
+  })
+
+  // 第一次繪製時抽屜還沒有高度可以沿用,transient 也只能自己算。
+  it('falls back to its own size when nothing is on screen yet', () => {
+    expect(drawerSizeForView({
+      key: 'nearby:Tainan:22.99700:120.21200',
+      mode: 'map-list',
+      size: 'nearby',
+      transient: true,
+      header: [],
+      content: [],
+    }, undefined)).toBe('nearby')
     expect(drawerSizeForView({
       key: 'place:Tainan:busy-stop',
       mode: 'map-list',
-      header: [],
-      content: [],
-    }, 'tall')).toBe('tall')
-    expect(drawerSizeForView({
-      key: 'timetable:Tainan:R1:',
-      mode: 'timetable',
-      header: [],
-      content: [],
-    }, 'compact')).toBe('compact')
-    expect(drawerSizeForView({
-      key: 'timetable:Tainan:R2:',
-      mode: 'timetable',
+      transient: true,
       header: [],
       content: [],
     }, undefined)).toBe('standard')
   })
 
-  it('lets an explicit final size replace the size the skeleton inherited', () => {
+  // 帶著最終內容的畫面照樣決定尺寸,不受畫面上現有高度影響。
+  it('lets a settled view set its own size regardless of what is on screen', () => {
     expect(drawerSizeForView({
       key: 'place:Tainan:busy-stop',
       mode: 'map-list',
-      size: 'standard',
+      size: 'tall',
       header: [],
       content: [],
-    }, 'tall')).toBe('standard')
+    }, 'nearby')).toBe('tall')
+    expect(drawerSizeForView({
+      key: 'trip-results:A:B',
+      mode: 'compact',
+      content: [],
+    }, 'compact')).toBe('content')
   })
 
   it('uses the previous measured height only for an explicitly preserved transition', () => {

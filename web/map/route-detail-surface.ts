@@ -158,11 +158,15 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     clearVehicleLayer(false)
   }
 
+  // 讀取中還不知道這條路線會走到變體挑選(map-list)還是路線詳情(compact),所以
+  // 它不決定高度——宣告 compact 等於在目錄還在畫面上的時候就先縮一次。size 只是
+  // 首次繪製(直接開網址進來)的退路。
   function showRouteLoading(view: RouteLoadingViewOptions): void {
     options.renderDrawer({
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
       size: 'compact',
+      transient: true,
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, '正在拼起路線與站牌…'),
@@ -175,6 +179,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
       key: `route:${view.cityCode}:${view.routeName}`,
       mode: 'compact',
       size: 'compact',
+      transient: true,
       content: [
         options.drawerBack(view.backLabel, view.onBack),
         options.heading(view.routeName, view.message),
@@ -304,14 +309,8 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     return timetableSummary
   }
 
-  // 換一個站牌是同一張時刻表裡的移動:key 變了(內容不同、捲動要歸零),sizeKey 不變,
-  // 所以下一個站牌讀取中時抽屜維持現在的高度。
   function timetableDrawerKeys(cityCode: string, variantKey: string, stopUid: string | undefined) {
-    const sizeKey = `timetable:${cityCode}:${variantKey}`
-    return {
-      key: `${sizeKey}:${stopUid ?? ''}`,
-      sizeKey,
-    }
+    return { key: `timetable:${cityCode}:${variantKey}:${stopUid ?? ''}` }
   }
 
   function showTimetableLoading(
@@ -323,6 +322,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       ...timetableDrawerKeys(cityCode, variant.variantKey, stopUid),
       mode: 'timetable',
+      transient: true,
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
         options.heading(variant.routeName, `時刻 · ${variant.label}`),
@@ -342,6 +342,7 @@ export function createRouteDetailSurface(options: RouteDetailSurfaceOptions): Ro
     options.renderDrawer({
       ...timetableDrawerKeys(cityCode, variant.variantKey, stopUid),
       mode: 'timetable',
+      transient: true,
       header: [
         options.drawerBack(`返回 ${variant.routeName}`, onBack),
         options.heading(variant.routeName, message),

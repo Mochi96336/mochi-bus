@@ -259,7 +259,7 @@ test('keeps one standard drawer size while auto-preview resolves into place resu
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('keeps URL-opened nearby loading and results at the standard size', async ({ page }) => {
+test('keeps URL-opened nearby loading and results at the nearby size', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const nearby = deferred()
   const nearbyRequested = deferred()
@@ -274,14 +274,14 @@ test('keeps URL-opened nearby loading and results at the standard size', async (
   const drawer = page.locator('#map-drawer')
   await nearbyRequested.promise
   await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'nearby')
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   const loadingHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
 
   nearby.release()
   await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
+  await expect(drawer).toHaveAttribute('data-size', 'nearby')
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   const resolvedHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height)
@@ -306,10 +306,10 @@ async function openBusyStop(page: Page) {
   return arrivals
 }
 
-// 曾經有一份 size memory 讓 skeleton 照著上次的尺寸開,於是重訪轉運站時抽屜會在
-// skeleton 貼上去的瞬間從 standard 跳到 tall——只是把落地時的跳動提前到讀取中發生。
-// 現在 skeleton 沿用抽屜當下的高度,讀取中一律不動。
-test('does not resize when the skeleton returns to a stop already seen at its content size', async ({ page }) => {
+// 點站牌是 nearby → place 的跨 workspace 導覽,而且兩邊尺寸狀態本來就不同(nearby
+// 比 standard 矮)。骨架標記為 transient,所以它沿用附近清單的高度,不套用 place
+// workspace 自己的 standard,也不套用這個站牌上次落在的 tall。
+test('holds the nearby height through the place skeleton, on a stop already seen at its content size', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const secondVisit = deferred()
   const secondVisitRequested = deferred()
@@ -337,8 +337,8 @@ test('does not resize when the skeleton returns to a stop already seen at its co
 
   await drawer.locator('.drawer-back').click()
   await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
-  await expect(drawer).toHaveAttribute('data-size', 'standard')
-  // 取樣要在 tall → standard 的高度過渡(220ms)結束之後開始,否則錄到的是動畫中途值。
+  await expect(drawer).toHaveAttribute('data-size', 'nearby')
+  // 取樣要在 tall → nearby 的高度過渡(220ms)結束之後開始,否則錄到的是動畫中途值。
   await page.waitForTimeout(400)
 
   // 從附近清單一路錄到 skeleton 貼上去為止。斷言的不是頭尾相等,而是中間沒有任何
@@ -351,7 +351,7 @@ test('does not resize when the skeleton returns to a stop already seen at its co
   const frames = await stopDrawerFrameCapture(page)
 
   expect(frames.some((frame) => frame.phase === 'place-loading')).toBe(true)
-  expect(new Set(frames.map((frame) => frame.size))).toEqual(new Set(['standard']))
+  expect(new Set(frames.map((frame) => frame.size))).toEqual(new Set(['nearby']))
   const heights = frames.map((frame) => frame.height)
   expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(1)
 
@@ -405,7 +405,9 @@ test('resizes the drawer instantly when motion is not wanted', async ({ page }) 
   await expect(drawer).toHaveCSS('transition-duration', '0s')
 })
 
-test('keeps a full-network route click compact through loading and result', async ({ page }) => {
+// 讀取中的畫面還不知道會走到變體挑選還是路線詳情,所以它不決定高度:全路網目錄的
+// standard 一路留到路線資料到達,收合只發生一次。
+test('holds the network catalogue height through route loading, then settles compact', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const routeGate = deferred()
   const routeRequested = deferred()
@@ -437,20 +439,19 @@ test('keeps a full-network route click compact through loading and result', asyn
   await routeRequested.promise
   await expect(drawer.getByRole('heading', { name: routeEntry.routeName })).toBeVisible()
   await expect(drawer).toHaveAttribute('data-mode', 'compact')
-  await expect(drawer).toHaveAttribute('data-size', 'compact')
+  await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
-  await page.waitForTimeout(220)
+  await page.waitForTimeout(320)
   await startDrawerFrameCapture(page)
-  await page.waitForTimeout(40)
+  await page.waitForTimeout(120)
+  const loadingFrames = await stopDrawerFrameCapture(page)
+  expectStableFrames(loadingFrames, ['route-loading'], 'standard')
 
   routeGate.release()
   await expect(drawer.getByRole('button', { name: '← 更換路線' })).toBeVisible()
   await expect(drawer.locator('.route-service-summary')).toHaveCount(0)
   await expect(drawer).toHaveAttribute('data-size', 'compact')
-  await page.waitForTimeout(120)
-
-  const frames = await stopDrawerFrameCapture(page)
-  expectStableFrames(frames, ['route-loading', 'route-results'], 'compact')
+  await page.waitForTimeout(320)
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })

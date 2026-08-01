@@ -144,13 +144,15 @@ afterEach(() => {
 })
 
 describe('Nearby places view', () => {
-  it('renders the loading skeleton at the explicit standard size and delegates the back action', () => {
+  it('renders the loading skeleton at the nearby size without deciding the height itself', () => {
     const harness = createHarness()
     const onBack = vi.fn()
     harness.view.renderLoading({ cityCode: 'Taipei', origin, backLabel: '附近站牌', onBack })
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('nearby:Taipei:25.01234:121.56789')
-    expect(drawer.size).toBe('standard')
+    expect(drawer.size).toBe('nearby')
+    // 骨架標記為 transient:抽屜已經有高度時沿用它,size 只是首次繪製的退路。
+    expect(drawer.transient).toBe(true)
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|正在搜尋附近站牌')
     const loading = drawer.content[0] as unknown as FakeElement
@@ -166,7 +168,9 @@ describe('Nearby places view', () => {
     const places = [place('A', '市政府', 120.4), place('B', '捷運站', 48.7)]
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places, backLabel: '路線列表', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('standard')
+    expect(drawer.size).toBe('nearby')
+    // 結果就是最終內容,由它決定高度。
+    expect(drawer.transient).toBeUndefined()
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect(harness.sessions[0].releasePreservedHeight).not.toHaveBeenCalled()
     expect((drawer.header[1] as unknown as FakeElement).textContent)
@@ -181,11 +185,11 @@ describe('Nearby places view', () => {
     expect(harness.createTripModeButton).toHaveBeenCalledOnce()
   })
 
-  it('renders the existing empty-state copy at the same standard size', () => {
+  it('renders the existing empty-state copy at the same nearby size', () => {
     const harness = createHarness()
     harness.view.renderPlaces({ cityCode: 'Taipei', origin, places: [], backLabel: '返回行程候選', onBack: vi.fn() })
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('standard')
+    expect(drawer.size).toBe('nearby')
     expect(drawer.preserveDesktopHeight).toBeUndefined()
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌|附近沒有站牌。')
     const list = drawer.content[0] as unknown as FakeElement
@@ -204,7 +208,7 @@ describe('Nearby places view', () => {
     })
     expect(message).toBe('附近服務忙碌中')
     const drawer = scrollable(harness.rendered())
-    expect(drawer.size).toBe('standard')
+    expect(drawer.size).toBe('nearby')
     expect((drawer.header[1] as unknown as FakeElement).textContent).toBe('附近站牌讀取失敗|附近服務忙碌中')
     ;(drawer.header[0] as unknown as FakeElement).click()
     ;(drawer.content[0] as unknown as FakeElement).click()

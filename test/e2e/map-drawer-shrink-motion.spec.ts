@@ -109,7 +109,9 @@ async function stopDrawerMotionCapture(page: Page): Promise<DrawerMotionFrame[]>
   })
 }
 
-test('animates the mobile drawer from standard down to compact without exposing content', async ({ page }) => {
+// 收合發生在路線資料到達時,不是點下去的當下:讀取中的畫面還不知道會走到變體挑選
+// 還是路線詳情,所以它維持目錄的高度。這裡驗證的是那一次收合的動畫品質。
+test('animates the mobile drawer from standard down to compact when the route settles', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -124,12 +126,16 @@ test('animates the mobile drawer from standard down to compact without exposing 
   await startDrawerMotionCapture(page)
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
-    await expect(drawer).toHaveAttribute('data-size', 'compact')
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
-    await page.waitForTimeout(320)
+    // 讀取中不改高度:目錄的 standard 一路留到資料到達。
+    await expect(drawer).toHaveAttribute('data-size', 'standard')
+    const whileLoading = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+    expect(Math.abs(whileLoading - standardHeight)).toBeLessThanOrEqual(1)
   } finally {
     releaseRoute()
   }
+  await expect(drawer).toHaveAttribute('data-size', 'compact')
+  await page.waitForTimeout(320)
 
   const frames = await stopDrawerMotionCapture(page)
   const first = frames[0]

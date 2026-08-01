@@ -2,22 +2,27 @@ import { attachScrollFade } from '../lib/scroll-fade'
 import './drawer-size.css'
 
 export type DrawerScrollableMode = 'map-list' | 'results' | 'timetable'
-export type DrawerSize = 'content' | 'compact' | 'standard' | 'tall' | 'expanded'
+export type DrawerSize = 'content' | 'compact' | 'nearby' | 'standard' | 'tall' | 'expanded'
+
+/**
+ * 這個畫面顯示的不是這次導覽的最終內容(skeleton、錯誤頁),所以它不決定高度:
+ * 抽屜維持現在的高度,等真正的內容到達才改一次。標記必須是顯式的——曾經用
+ * 「有沒有給 size」來推論,而那個推論兩個方向都會錯:showRouteLoading 是讀取中
+ * 卻給了 size,trip-results 的 compact 是最終內容卻沒給。
+ */
+type TransientView = { transient?: boolean }
 
 export type DrawerView =
-  | {
+  | (TransientView & {
       key: string
-      /** 同一個尺寸 workspace 的畫面共用它;省略時就是 key 本身。見 drawerSizeForView。 */
-      sizeKey?: string
       mode: 'compact'
       size?: DrawerSize
       preserveMobileHeight?: boolean
       preserveDesktopHeight?: boolean
       content: readonly Node[]
-    }
-  | {
+    })
+  | (TransientView & {
       key: string
-      sizeKey?: string
       mode: DrawerScrollableMode
       size?: DrawerSize
       preserveMobileHeight?: boolean
@@ -25,7 +30,7 @@ export type DrawerView =
       header: readonly Node[]
       content: readonly Node[]
       footer?: readonly Node[]
-    }
+    })
 
 export type DrawerViewSession = {
   readonly signal: AbortSignal
@@ -53,7 +58,6 @@ export function createDrawerRenderer(
   let disposeCurrentView: (() => void) | undefined
   let currentViewKey: string | undefined
   let currentScrollRegion: HTMLDivElement | undefined
-  let currentSizeKey: string | undefined
   let currentSize: DrawerSize | undefined
 
   const dispose = () => {
@@ -63,8 +67,7 @@ export function createDrawerRenderer(
 
   const render = (view: DrawerView): DrawerViewSession => {
     const previousViewKey = currentViewKey
-    const sizeKey = drawerSizeWorkspaceKey(view)
-    const nextSize = drawerSizeForView(view, sizeKey === currentSizeKey ? currentSize : undefined)
+    const nextSize = drawerSizeForView(view, currentSize)
     const restoredScrollTop = drawerScrollTopForTransition(
       previousViewKey,
       view.key,
@@ -82,7 +85,6 @@ export function createDrawerRenderer(
     const keyboardEntry = isKeyboardActivation()
     const hadFocusInside = drawer.contains(document.activeElement)
     currentViewKey = view.key
-    currentSizeKey = sizeKey
     currentSize = nextSize
 
     drawer.dataset.view = view.key
@@ -221,23 +223,15 @@ export function drawerScrollTopForTransition(
   return previousKey === nextKey ? Math.max(0, previousScrollTop) : 0
 }
 
-export function drawerSizeWorkspaceKey(view: DrawerView): string {
-  return view.sizeKey ?? view.key
-}
-
-// currentSize 是抽屜此刻的尺寸,而且只在同一個 workspace 內傳進來。於是 skeleton 與
-// 錯誤頁——唯二不帶 size 的畫面——不決定高度,沿用畫面上已經有的;它們都不知道最後
-// 有幾列,任何猜測都只是把跳動提前到讀取中發生。一次導覽因此只剩一次尺寸變化,發生在
-// 資料到達時,而且是 drawer-size.css 的過渡。
-//
-// 曾經是一份跨 workspace 的 size memory,記住每個站牌上次的尺寸讓 skeleton 照著開。
-// 那份記憶正是跳動的來源:重訪 8 條路線以上的站牌時,抽屜會在 skeleton 貼上去的瞬間
-// 從 standard 跳到 tall。限定在同一個 workspace 內就沒有這個問題——那裡的「上一次」
-// 就是使用者眼前的高度。
+// 只有帶著最終內容的畫面決定尺寸。transient 的畫面沿用抽屜當下的高度,跨 workspace
+// 也一樣——點站牌是 nearby → place 的跨 workspace 導覽,限定在同一個 workspace 內
+// 沿用的話,骨架就會在那裡改高度。一次導覽因此只剩一次尺寸變化,發生在資料到達時,
+// 而且是 drawer-size.css 的過渡。
 export function drawerSizeForView(
   view: DrawerView,
   currentSize: DrawerSize | undefined,
 ): DrawerSize {
+  if (view.transient && currentSize) return currentSize
   // A view key names the navigation workspace. Catalogue loading, failure, and the final
   // route list share that workspace even though their temporary content modes differ.
   const workspaceSize = view.size
@@ -246,7 +240,6 @@ export function drawerSizeForView(
     workspaceSize,
     view.mode,
     Boolean(view.preserveMobileHeight || view.preserveDesktopHeight),
-    currentSize,
   )
 }
 
@@ -254,14 +247,11 @@ export function drawerSizeForTransition(
   explicitSize: DrawerSize | undefined,
   mode: DrawerView['mode'],
   preserveHeight: boolean,
-  currentSize: DrawerSize | undefined,
 ): DrawerSize {
   if (explicitSize) return explicitSize
-  // 內容自適應的畫面不繼承高度。compact 模式不捲動,套上一個比內容短的固定高度
-  // 會直接把下半截裁掉,連按鈕都點不到。
-  if (mode === 'compact' && !preserveHeight) return 'content'
-  if (currentSize && currentSize !== 'content') return currentSize
-  return 'standard'
+  if (mode === 'map-list' || mode === 'results' || mode === 'timetable') return 'standard'
+  if (preserveHeight) return 'standard'
+  return 'content'
 }
 
 // Transitional helpers are retained for compatibility with focused unit tests and callers
