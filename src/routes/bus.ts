@@ -1,8 +1,9 @@
 import { Hono, type Context } from 'hono'
+import { renderHomePage } from '../application/home-page'
 import { getRoutePageWithFallback } from '../application/route-page'
 import {
-  defaultBusQuery,
   defaultCity,
+  demoBusQuery,
   enabledCities,
   requireEnabledCity,
   supportedCityCodes,
@@ -59,7 +60,12 @@ const tdxEnv = (c: Context<Env>) => {
   }
 }
 
-bus.get('/', async (c) => renderETA(c, defaultBusQuery, true, true, homeNotice(c)))
+bus.get('/', (c) => c.html(renderHomePage({
+  demoQuery: demoBusQuery,
+  defaultCity,
+  notice: homeNotice(c),
+  requestUrl: c.req.url,
+}), 200, pageHeaders))
 
 bus.get('/bus', async (c) => {
   if (!hasBusQuery(c)) return c.redirect('/')

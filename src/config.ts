@@ -41,14 +41,6 @@ export const enabledCities = instanceRuntime.transit.enabledCities.map((code) =>
 export const defaultCity = instanceRuntime.transit.defaultCity
 export const demoBusQuery = instanceRuntime.transit.demoQuery as BusQuery | null
 
-// No-demo instances leave the root page before this compatibility value reaches the
-// legacy ETA renderer; city-scoped API defaults still use defaultCity directly.
-export const defaultBusQuery: BusQuery = demoBusQuery ?? {
-  city: defaultCity,
-  routeName: '',
-  direction: 0,
-}
-
 export function requireEnabledCity(
   city: string,
   enabledCodes: ReadonlySet<string> = enabledCityCodes,

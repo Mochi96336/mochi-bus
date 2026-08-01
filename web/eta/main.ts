@@ -9,10 +9,11 @@ import {
 import { createAsyncAction } from '../lib/async-action-state'
 import { isTdxTokenRejectedError, requestMochiJson } from '../tdx/api-client'
 import type { EtaSource } from '../../src/domain/eta-presentation'
+import { resolveHomeBoardState } from './home-board-state'
 import { createEtaRow, updateEtaRow, type EtaRowViewModel } from './eta-row-view'
 
 type EtaBootstrap = {
-  initialBoard: FavoriteBoard
+  initialBoard: FavoriteBoard | null
   useLocalBoard: boolean
   tdxWarningMessages: Record<string, string>
 }
@@ -83,25 +84,35 @@ function readBootstrap(): EtaBootstrap {
   }
   const record = value as Record<string, unknown>
   const initialBoard = record.initialBoard
-  if (!initialBoard || typeof initialBoard !== 'object' || Array.isArray(initialBoard)) {
-    throw new Error('ETA bootstrap initialBoard must be an object')
+  if (initialBoard !== null) {
+    if (!initialBoard || typeof initialBoard !== 'object' || Array.isArray(initialBoard)) {
+      throw new Error('ETA bootstrap initialBoard must be an object or null')
+    }
+    const buses = (initialBoard as Record<string, unknown>).buses
+    if (!Array.isArray(buses)) throw new Error('ETA bootstrap initialBoard.buses must be an array')
   }
-  const buses = (initialBoard as Record<string, unknown>).buses
-  if (!Array.isArray(buses)) throw new Error('ETA bootstrap initialBoard.buses must be an array')
   if (typeof record.useLocalBoard !== 'boolean') throw new Error('ETA bootstrap useLocalBoard must be a boolean')
   const warnings = record.tdxWarningMessages
   if (!warnings || typeof warnings !== 'object' || Array.isArray(warnings)) {
     throw new Error('ETA bootstrap tdxWarningMessages must be an object')
   }
   return {
-    initialBoard: initialBoard as FavoriteBoard,
+    initialBoard: initialBoard as FavoriteBoard | null,
     useLocalBoard: record.useLocalBoard,
     tdxWarningMessages: warnings as Record<string, string>,
   }
 }
 
 const { initialBoard, useLocalBoard, tdxWarningMessages } = readBootstrap()
-let currentBoard = initialBoard
+const emptyBoard: FavoriteBoard = {
+  version: 2,
+  id: 'empty',
+  title: '',
+  buses: [],
+  createdAt: '',
+  updatedAt: '',
+}
+let currentBoard = initialBoard ?? emptyBoard
 // 示範模式:使用者沒有正式常用或地圖暫存封面時，顯示示範站牌且不寫入本機資料。
 let demoBoard = false
 const listNode = requiredElement<HTMLDivElement>('#bus-list')
@@ -289,9 +300,22 @@ function clearRefreshNotice(): void {
   noticeNode.replaceChildren()
 }
 
+function showEmptyHome(): void {
+  currentBoard = emptyBoard
+  demoBoard = false
+  titleNode.textContent = '還沒有常用站牌'
+  listNode.removeAttribute('aria-busy')
+  listNode.replaceChildren()
+  onboardNode.hidden = false
+  onboardSignNode.hidden = false
+  updatedNode.textContent = '尚未設定'
+  refreshButton.hidden = true
+}
+
 // 互斥、按鈕文字、aria-busy 與宣告都由 refreshAction 負責:這個函式本身
 // 只描述「刷新一次看板」要做的事,不再自己管狀態(見下方 refreshAction)。
 async function refreshBoard(): Promise<void> {
+  if (!currentBoard.buses.length) return
   const placeLoad = await loadPlaceArrivals()
   const placeArrivals = placeLoad.routes
   const credentialError = isTdxTokenRejectedError(placeLoad.error) ? placeLoad.error : undefined
@@ -364,6 +388,7 @@ const refreshAction = createAsyncAction({
 
 // quiet:自動更新不播成功回饋。失敗仍會呈現,否則 renderer bug 會每 30 秒靜默失敗。
 function refreshQuietly(): void {
+  if (!currentBoard.buses.length) return
   void refreshAction.run(refreshBoard, { quiet: true })
 }
 
@@ -371,31 +396,39 @@ if (useLocalBoard) {
   // 顯示用方向文字可能因舊資料、API 降級或暫時缺欄位而不存在；
   // 缺少 directionLabel 不能證明看板損壞，更不能據此刪除使用者資料。
   const boards = migrateBoards()
-  const resolved = resolveHomeBoard(boards)
-  demoBoard = !resolved
-  currentBoard = resolved ?? initialBoard
-  if (demoBoard) {
-    onboardNode.hidden = false
-    onboardSignNode.hidden = false
+  const state = resolveHomeBoardState(resolveHomeBoard(boards), initialBoard)
+  if (state.mode === 'empty') {
+    showEmptyHome()
+  } else {
+    currentBoard = state.board
+    demoBoard = state.mode === 'demo'
+    if (demoBoard) {
+      onboardNode.hidden = false
+      onboardSignNode.hidden = false
+    }
+    titleNode.textContent = demoBoard ? '示範 · ' + currentBoard.title : currentBoard.title
+    const firstBus = currentBoard.buses[0]
+    const city = currentBoard.city || firstBus?.city
+    // 示範看板的城市(config.ts 的預設值)不是使用者選的,不能寫進 activeCity——
+    // 否則使用者從沒去過台北,打開地圖卻直接跳台北而不是台灣總覽。
+    if (city && !demoBoard) {
+      setActiveCity(city)
+      const mapParams = new URLSearchParams({ city })
+      if (currentBoard.placeId) mapParams.set('place', currentBoard.placeId)
+      if (firstBus?.stopUid) mapParams.set('stopUid', firstBus.stopUid)
+      mapLink.href = '/map?' + mapParams
+    }
+    const initialBus = initialBoard?.buses[0]
+    if (!initialBoard || currentBoard.id !== initialBoard.id || currentBoard.buses.length > 1 || firstBus?.stopUid !== initialBus?.stopUid || firstBus?.routeName !== initialBus?.routeName || firstBus?.direction !== initialBus?.direction) {
+      listNode.replaceChildren(...currentBoard.buses.map((bus) => makeRow(bus)))
+    }
+    refreshQuietly()
   }
-  titleNode.textContent = demoBoard ? '示範 · ' + currentBoard.title : currentBoard.title
-  const firstBus = currentBoard.buses[0]
-  const city = currentBoard.city || firstBus?.city
-  // 示範看板的城市(config.ts 的預設值)不是使用者選的,不能寫進 activeCity——
-  // 否則使用者從沒去過台北,打開地圖卻直接跳台北而不是台灣總覽。
-  if (city && !demoBoard) {
-    setActiveCity(city)
-    const mapParams = new URLSearchParams({ city })
-    if (currentBoard.placeId) mapParams.set('place', currentBoard.placeId)
-    if (firstBus?.stopUid) mapParams.set('stopUid', firstBus.stopUid)
-    mapLink.href = '/map?' + mapParams
-  }
-  if (currentBoard.id !== initialBoard.id || currentBoard.buses.length > 1 || firstBus?.stopUid !== initialBoard.buses[0].stopUid || firstBus?.routeName !== initialBoard.buses[0].routeName || firstBus?.direction !== initialBoard.buses[0].direction) {
-    listNode.replaceChildren(...currentBoard.buses.map((bus) => makeRow(bus)))
-  }
-  refreshQuietly()
 }
-refreshButton.addEventListener('click', () => { void refreshAction.run(refreshBoard) })
+refreshButton.addEventListener('click', () => {
+  if (!currentBoard.buses.length) return
+  void refreshAction.run(refreshBoard)
+})
 setInterval(() => { if (!document.hidden) refreshQuietly() }, 30_000)
 // 通勤時是「從口袋掏出來瞄一眼」:切回前景那一刻就要是最新的,不能等下一輪定時器。
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshQuietly() })
