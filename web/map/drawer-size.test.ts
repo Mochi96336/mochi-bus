@@ -32,7 +32,7 @@ describe('drawer size states', () => {
   })
 
   it('keeps mobile compact and nearby sheets below the generic standard workspace', () => {
-    expect(css).toContain('--map-drawer-size-compact: min(\n      clamp(240px, 36dvh, 300px),')
+    expect(css).toContain('--map-drawer-size-compact: min(\n      clamp(216px, 26dvh, 240px),')
     expect(css).not.toContain('--map-drawer-size-compact: var(--map-drawer-size-standard);')
     expect(css).toContain('--map-drawer-size-nearby: min(')
     expect(css).toContain('.map-drawer[data-view^="nearby:"][data-size="standard"]')
