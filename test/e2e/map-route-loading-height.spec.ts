@@ -106,9 +106,9 @@ async function settledCompactHeight(page: Page, previousHeight: number): Promise
   const drawer = page.locator('#map-drawer')
   await expect.poll(
     () => drawer.evaluate((element) => element.getBoundingClientRect().height),
-  ).toBeLessThanOrEqual(301)
+  ).toBeLessThanOrEqual(241)
   const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-  expect(height).toBeLessThan(previousHeight - 60)
+  expect(height).toBeLessThan(previousHeight - 120)
   return height
 }
 
@@ -129,8 +129,8 @@ test('uses a genuinely shorter compact route state while keeping it usable acros
     await expect(drawer).toHaveAttribute('data-size', 'compact')
 
     const portraitLoadingHeight = await settledCompactHeight(page, catalogue)
-    expect(portraitLoadingHeight).toBeGreaterThanOrEqual(239)
-    expect(portraitLoadingHeight).toBeLessThanOrEqual(301)
+    expect(portraitLoadingHeight).toBeGreaterThanOrEqual(215)
+    expect(portraitLoadingHeight).toBeLessThanOrEqual(241)
     expect((await drawerGeometry(page)).scrollHeight - (await drawerGeometry(page)).clientHeight).toBeLessThanOrEqual(1)
     await expect(drawer).toHaveJSProperty('style.minHeight', '')
 
@@ -161,11 +161,16 @@ test('uses a genuinely shorter compact route state while keeping it usable acros
     expect(landscapeResult.height).toBeGreaterThanOrEqual(250)
     expect(landscapeResult.scrollHeight - landscapeResult.clientHeight).toBeLessThanOrEqual(1)
 
-    await page.setViewportSize({ width: 390, height: 844 })
-    await expect.poll(async () => {
-      const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-      return Math.abs(height - portraitLoadingHeight)
-    }).toBeLessThanOrEqual(1)
+    const portraitResult = await resizeAndSettleDrawer(page, { width: 390, height: 844 })
+    expect(Math.abs(portraitResult.height - portraitLoadingHeight)).toBeLessThanOrEqual(1)
+    expect(portraitResult.scrollHeight - portraitResult.clientHeight).toBeLessThanOrEqual(1)
+
+    // 428 × 926 matches the class of device in the reported screenshot: compact should cap
+    // at 240 px rather than reserving the previous 300 px sheet.
+    const largePortraitResult = await resizeAndSettleDrawer(page, { width: 428, height: 926 })
+    expect(largePortraitResult.height).toBeGreaterThanOrEqual(239)
+    expect(largePortraitResult.height).toBeLessThanOrEqual(241)
+    expect(largePortraitResult.scrollHeight - largePortraitResult.clientHeight).toBeLessThanOrEqual(1)
   } finally {
     if (!released) releaseRoute()
   }
