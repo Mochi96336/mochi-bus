@@ -48,25 +48,25 @@
 
 @media (max-width: 640px) {
   :root {
+    --map-drawer-mobile-available-height: calc(
+      100dvh
+      - var(--map-mobile-top-clearance, 118px)
+      - var(--map-drawer-mobile-bottom, 10px)
+    );
+    --map-drawer-size-compact: min(
+      clamp(240px, 36dvh, 300px),
+      var(--map-drawer-mobile-available-height)
+    );
     --map-drawer-size-standard: min(
       50dvh,
       34rem,
-      calc(
-        100dvh
-        - var(--map-mobile-top-clearance, 118px)
-        - var(--map-drawer-mobile-bottom, 10px)
-      )
+      var(--map-drawer-mobile-available-height)
     );
-    --map-drawer-size-compact: var(--map-drawer-size-standard);
     --map-drawer-size-tall: var(--map-drawer-size-standard);
     --map-drawer-size-expanded: min(
       72dvh,
       42rem,
-      calc(
-        100dvh
-        - var(--map-mobile-top-clearance, 118px)
-        - var(--map-drawer-mobile-bottom, 10px)
-      )
+      var(--map-drawer-mobile-available-height)
     );
   }
 }
