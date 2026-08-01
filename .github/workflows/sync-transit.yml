@@ -2,8 +2,7 @@ name: Sync transit snapshots
 
 on:
   schedule:
-    # 每天跑,城市按星期分片(見下方 case):
-    # 單日 D1 寫入量才不會超過免費方案 10 萬列/天的額度。
+    # 每天跑,城市按 instance snapshotSchedule 決定是否執行與如何分片。
     - cron: '17 19 * * *'
   workflow_dispatch:
     inputs:
@@ -82,12 +81,17 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Resolve snapshot operation scope
+        id: operation
+        run: node scripts/instance/operation-scope.mjs snapshot
       - name: Apply transit database migrations
+        if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 migrations apply mochi-transit --remote
       - name: Build and publish snapshot
+        if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
         shell: bash
         env:
           INPUT_CITY: ${{ inputs.city }}
@@ -138,8 +142,6 @@ jobs:
               echo 'Scheduled runs cannot enable legacy previous repair' >&2
               exit 1
             fi
-            # 城市分片仍沿用正式星期表,但 scheduled-cities 會先套用 instance enabledCities。
-            # 內容沒變的城市會被 hash 檢查跳過,實際寫入只發生在資料有更新的日子。
             cities="$(node scripts/transit-snapshot/scheduled-cities.mjs)"
           fi
           if [ -z "$cities" ]; then
