@@ -48,26 +48,37 @@
 
 @media (max-width: 640px) {
   :root {
+    --map-drawer-mobile-available-height: calc(
+      100dvh
+      - var(--map-mobile-top-clearance, 118px)
+      - var(--map-drawer-mobile-bottom, 10px)
+    );
+    --map-drawer-size-compact: min(
+      clamp(240px, 36dvh, 300px),
+      var(--map-drawer-mobile-available-height)
+    );
+    --map-drawer-size-nearby: min(
+      clamp(320px, 36dvh, 340px),
+      var(--map-drawer-mobile-available-height)
+    );
     --map-drawer-size-standard: min(
       50dvh,
       34rem,
-      calc(
-        100dvh
-        - var(--map-mobile-top-clearance, 118px)
-        - var(--map-drawer-mobile-bottom, 10px)
-      )
+      var(--map-drawer-mobile-available-height)
     );
-    --map-drawer-size-compact: var(--map-drawer-size-standard);
     --map-drawer-size-tall: var(--map-drawer-size-standard);
     --map-drawer-size-expanded: min(
       72dvh,
       42rem,
-      calc(
-        100dvh
-        - var(--map-mobile-top-clearance, 118px)
-        - var(--map-drawer-mobile-bottom, 10px)
-      )
+      var(--map-drawer-mobile-available-height)
     );
+  }
+
+  /* Nearby loading and settled results share one stable workspace, but twelve possible
+     rows do not justify reserving the full generic half-screen sheet before scrolling. */
+  .map-drawer[data-view^="nearby:"][data-size="standard"] {
+    height: var(--map-drawer-size-nearby);
+    max-height: var(--map-drawer-size-nearby);
   }
 }
 
@@ -90,6 +101,7 @@
       var(--map-drawer-landscape-available-height),
       clamp(300px, 44dvh, 420px)
     );
+    --map-drawer-size-nearby: var(--map-drawer-size-standard);
     --map-drawer-size-tall: min(
       var(--map-drawer-landscape-available-height),
       clamp(340px, 56dvh, 560px)

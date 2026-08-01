@@ -1,5 +1,9 @@
+// @ts-expect-error Vitest 執行於 Node；應用程式 tsconfig 刻意不載入 Node 全域型別。
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { drawerSizeForTransition } from './drawer-view'
+
+const css = readFileSync(new URL('./drawer-size.css', import.meta.url), 'utf8')
 
 describe('drawer size states', () => {
   it('uses an explicit size without consulting the content mode', () => {
@@ -25,5 +29,12 @@ describe('drawer size states', () => {
 
   it('leaves unrelated compact views content-sized', () => {
     expect(drawerSizeForTransition(undefined, 'compact', false, undefined)).toBe('content')
+  })
+
+  it('keeps mobile compact and nearby sheets below the generic standard workspace', () => {
+    expect(css).toContain('--map-drawer-size-compact: min(\n      clamp(240px, 36dvh, 300px),')
+    expect(css).not.toContain('--map-drawer-size-compact: var(--map-drawer-size-standard);')
+    expect(css).toContain('--map-drawer-size-nearby: min(')
+    expect(css).toContain('.map-drawer[data-view^="nearby:"][data-size="standard"]')
   })
 })

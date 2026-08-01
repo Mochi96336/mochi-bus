@@ -96,7 +96,15 @@ async function drawerGeometry(page: Page) {
   }))
 }
 
-test('keeps the compact route state usable across portrait and landscape boundaries', async ({ page }) => {
+async function settledCompactHeight(page: Page, previousHeight: number): Promise<number> {
+  const drawer = page.locator('#map-drawer')
+  await expect.poll(
+    () => drawer.evaluate((element) => element.getBoundingClientRect().height),
+  ).toBeLessThan(previousHeight - 60)
+  return drawer.evaluate((element) => element.getBoundingClientRect().height)
+}
+
+test('uses a genuinely shorter compact route state while keeping it usable across viewport boundaries', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let released = false
   let releaseRoute!: () => void
@@ -105,19 +113,18 @@ test('keeps the compact route state usable across portrait and landscape boundar
   await page.goto('/map?city=Tainan')
 
   const drawer = page.locator('#map-drawer')
-  const beforeHeight = await catalogueHeight(page)
+  const catalogue = await catalogueHeight(page)
 
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
     await expect(drawer).toHaveAttribute('data-size', 'compact')
 
-    const loading = await drawer.evaluate((element) => ({
-      height: element.getBoundingClientRect().height,
-      minHeight: element.style.minHeight,
-    }))
-    expect(Math.abs(loading.height - beforeHeight)).toBeLessThanOrEqual(1)
-    expect(loading.minHeight).toBe('')
+    const portraitLoadingHeight = await settledCompactHeight(page, catalogue)
+    expect(portraitLoadingHeight).toBeGreaterThanOrEqual(239)
+    expect(portraitLoadingHeight).toBeLessThanOrEqual(301)
+    expect((await drawerGeometry(page)).scrollHeight - (await drawerGeometry(page)).clientHeight).toBeLessThanOrEqual(1)
+    await expect(drawer).toHaveJSProperty('style.minHeight', '')
 
     await page.setViewportSize({ width: 640, height: 390 })
     const at640 = await drawer.evaluate((element) => element.getBoundingClientRect().height)
@@ -154,7 +161,7 @@ test('keeps the compact route state usable across portrait and landscape boundar
     await page.setViewportSize({ width: 390, height: 844 })
     await expect.poll(async () => {
       const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-      return Math.abs(height - beforeHeight)
+      return Math.abs(height - portraitLoadingHeight)
     }).toBeLessThanOrEqual(1)
   } finally {
     if (!released) releaseRoute()
@@ -165,7 +172,7 @@ test('keeps the compact route state usable across portrait and landscape boundar
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
 
-test('keeps the mobile sheet height through compact loading before a compact variant picker', async ({ page }) => {
+test('keeps compact route loading and a compact variant picker at the same short mobile height', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseRoute!: () => void
   const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve })
@@ -173,16 +180,14 @@ test('keeps the mobile sheet height through compact loading before a compact var
   await page.goto('/map?city=Tainan')
 
   const drawer = page.locator('#map-drawer')
-  const beforeHeight = await catalogueHeight(page)
+  const catalogue = await catalogueHeight(page)
+  let loadingHeight = 0
 
   try {
     await drawer.getByRole('button', { name: '0右', exact: true }).click()
     await expect(drawer.locator('.drawer-heading p')).toContainText('正在拼起路線與站牌')
     await expect(drawer).toHaveAttribute('data-size', 'compact')
-    await expect.poll(async () => {
-      const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-      return Math.abs(height - beforeHeight) <= 1
-    }).toBe(true)
+    loadingHeight = await settledCompactHeight(page, catalogue)
   } finally {
     releaseRoute()
   }
@@ -193,6 +198,6 @@ test('keeps the mobile sheet height through compact loading before a compact var
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   await expect.poll(async () => {
     const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
-    return Math.abs(height - beforeHeight) <= 1
-  }).toBe(true)
+    return Math.abs(height - loadingHeight)
+  }).toBeLessThanOrEqual(1)
 })
