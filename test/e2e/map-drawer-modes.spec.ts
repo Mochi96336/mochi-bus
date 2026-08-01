@@ -1,25 +1,18 @@
 import { expect, test, type Page } from './fixtures'
+import {
+  mockMapShell,
+  mockRouteCatalogue,
+  numberedRouteNames,
+  twoStopVariant,
+} from './drawer-fixtures'
 
-const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
-const routeNames = ['0右', '0左', ...Array.from({ length: 179 }, (_, index) => String(index + 1))]
 // 直接重現回報中的兩種長列表：181 條路線與 29 個行車方向。
+const routeNames = numberedRouteNames(179, '0右', '0左')
 const drawerViewports = [
   { label: '390 × 844', width: 390, height: 844 },
   { label: '420 × 480', width: 420, height: 480 },
   { label: '636 × 381', width: 636, height: 381 },
 ]
-
-function variant(routeName: string) {
-  return {
-    variantKey: `${routeName}:0`, routeName, routeUid: `TNN-${routeName}`, direction: 0 as const,
-    label: '臺南火車站 → 永康火車站', subRouteName: routeName, updatedAt: null,
-    shape: { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: [[120.20, 22.99], [120.24, 23.02]] } },
-    stops: { type: 'FeatureCollection' as const, features: [
-      { type: 'Feature' as const, properties: { stopUid: 'S1', stopName: '臺南火車站', sequence: 1 }, geometry: { type: 'Point' as const, coordinates: [120.20, 22.99] as [number, number] } },
-      { type: 'Feature' as const, properties: { stopUid: 'S2', stopName: '永康火車站', sequence: 2 }, geometry: { type: 'Point' as const, coordinates: [120.24, 23.02] as [number, number] } },
-    ] },
-  }
-}
 
 function arrivals() {
   return Array.from({ length: 29 }, (_, index) => ({
@@ -41,19 +34,12 @@ function arrivals() {
 }
 
 async function mockMap(page: Page) {
-  await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
-  await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [city] } }))
-  await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({
-    json: { routes: routeNames.map((routeName, index) => ({ routeName, category: index % 4 === 0 ? '幹線' : '數字' })) },
-  }))
+  await mockMapShell(page)
+  await mockRouteCatalogue(page, routeNames)
   await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => {
     const routeName = new URL(route.request().url()).searchParams.get('route') ?? '0右'
-    return route.fulfill({ json: { variants: [variant(routeName)] } })
+    return route.fulfill({ json: { variants: [twoStopVariant(routeName)] } })
   })
-  await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
-  await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({
-    json: { timetable: { mode: 'none', selectedStop: null, departureStop: null, stops: [], timedStopCount: 0, services: [] } },
-  }))
   await page.route('**/api/v1/map/place/P1?city=Tainan', (route) => route.fulfill({
     json: { place: { placeId: 'P1', name: '臺南火車站(成功路A)', latitude: 22.997, longitude: 120.212, distanceMeters: 101 } },
   }))

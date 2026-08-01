@@ -3,27 +3,26 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { drawerSizeForTransition } from './drawer-view'
 
+// 斷言是逐字比對多行 CSS,所以換行必須正規化:Windows 檢出(core.autocrlf=true)
+// 的工作區是 CRLF,不正規化的話每一條多行斷言都只在 CI 過、在本機一律失敗。
 const css = readFileSync(new URL('./drawer-size.css', import.meta.url), 'utf8')
+  .replace(/\r\n/g, '\n')
 
 describe('drawer size states', () => {
   it('uses an explicit size without consulting the content mode', () => {
-    expect(drawerSizeForTransition('content', 'timetable', true)).toBe('content')
-    expect(drawerSizeForTransition('standard', 'compact', false)).toBe('standard')
-    expect(drawerSizeForTransition('nearby', 'map-list', false)).toBe('nearby')
+    expect(drawerSizeForTransition('content', 'timetable')).toBe('content')
+    expect(drawerSizeForTransition('standard', 'compact')).toBe('standard')
+    expect(drawerSizeForTransition('nearby', 'map-list')).toBe('nearby')
   })
 
   it('maps unknown scrollable workspaces to the neutral standard size', () => {
-    expect(drawerSizeForTransition(undefined, 'map-list', false)).toBe('standard')
-    expect(drawerSizeForTransition(undefined, 'results', false)).toBe('standard')
-    expect(drawerSizeForTransition(undefined, 'timetable', false)).toBe('standard')
+    expect(drawerSizeForTransition(undefined, 'map-list')).toBe('standard')
+    expect(drawerSizeForTransition(undefined, 'results')).toBe('standard')
+    expect(drawerSizeForTransition(undefined, 'timetable')).toBe('standard')
   })
 
-  it('treats legacy preserve-height loading views as standard workspaces', () => {
-    expect(drawerSizeForTransition(undefined, 'compact', true)).toBe('standard')
-  })
-
-  it('leaves unrelated compact views content-sized', () => {
-    expect(drawerSizeForTransition(undefined, 'compact', false)).toBe('content')
+  it('leaves unsized compact views content-sized', () => {
+    expect(drawerSizeForTransition(undefined, 'compact')).toBe('content')
   })
 
   it('keeps mobile compact and nearby sheets below the generic standard workspace', () => {

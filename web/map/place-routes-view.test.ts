@@ -120,7 +120,6 @@ function createHarness() {
   const onRetry = vi.fn()
   const onOpenRoute = vi.fn()
   const createFavoriteControl = vi.fn(() => element('button') as unknown as HTMLButtonElement)
-  const releasePreservedHeight = vi.fn()
   const onDispose = vi.fn()
   const createDegradedNotice = vi.fn((options: DegradedNoticeOptions) => {
     const notice = element('section')
@@ -135,7 +134,6 @@ function createHarness() {
       rendered = drawerView
       return {
         signal: new AbortController().signal,
-        releasePreservedHeight,
         onDispose,
       } satisfies DrawerViewSession
     },
@@ -166,7 +164,6 @@ function createHarness() {
     onOpenRoute,
     createFavoriteControl,
     createDegradedNotice,
-    releasePreservedHeight,
     onDispose,
   }
 }
@@ -216,8 +213,6 @@ describe('Place routes view', () => {
 
     const drawer = scrollable(harness.rendered())
     expect(drawer.size).toBe('standard')
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
-    expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
     expect(harness.onDispose).not.toHaveBeenCalled()
     // 路線清單仍然可用,所以這則降級提示可折疊。
     expect(harness.createDegradedNotice).toHaveBeenCalledWith({
@@ -260,8 +255,6 @@ describe('Place routes view', () => {
     const drawer = scrollable(harness.rendered())
     expect(drawer.key).toBe('place:Taipei:PLACE')
     expect(drawer.size).toBeUndefined()
-    expect(drawer.preserveDesktopHeight).toBeUndefined()
-    expect(harness.releasePreservedHeight).not.toHaveBeenCalled()
     expect(harness.onDispose).not.toHaveBeenCalled()
     // 通知就是整個畫面的內容,不可折疊。
     expect(harness.createDegradedNotice).toHaveBeenCalledWith({

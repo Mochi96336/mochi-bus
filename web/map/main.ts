@@ -896,6 +896,7 @@ async function chooseCity(city: MapCity) {
   renderDrawer({
     key: `catalogue:${city.code}`,
     mode: 'compact',
+    size: 'standard',
     content: [drawerBack('返回區域', returnToRegion), heading(city.name, '正在載入路線…')],
   })
   camera.focusPoint(city.center, 11)
@@ -914,6 +915,7 @@ async function chooseCity(city: MapCity) {
     renderDrawer({
       key: `catalogue:${city.code}`,
       mode: 'compact',
+      size: 'standard',
       content: [
         drawerBack('返回區域', returnToRegion),
         heading(city.name, '目前無法載入這個縣市的路線。'),
@@ -938,6 +940,7 @@ function renderRoutePicker() {
     renderDrawer({
       key: `catalogue:${activeCity.code}`,
       mode: 'compact',
+      size: 'standard',
       content: [
         drawerBack('返回縣市', returnToRegion),
         heading(activeCity.name, '正在載入路線…'),
@@ -961,6 +964,7 @@ function renderRoutePicker() {
         renderDrawer({
           key: `catalogue:${activeCity!.code}`,
           mode: 'compact',
+          size: 'standard',
           content: [
             drawerBack('返回縣市', returnToRegion),
             heading(activeCity!.name, '目前無法載入這個縣市的路線。'),

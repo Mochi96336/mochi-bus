@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   createKeyboardActivationTracker,
-  drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
   shouldAnimateDrawerTransition,
-  shouldPreserveDrawerHeight,
 } from './drawer-view'
 
 describe('drawer view transitions', () => {
@@ -26,18 +24,20 @@ describe('drawer view transitions', () => {
     expect(drawerScrollTopForTransition('trip-results:A:B', 'trip-results:A:B', -20)).toBe(0)
   })
 
-  it('keeps catalogue loading and failure in the standard workspace', () => {
+  // 尺寸只看 size 與 mode。呼叫端想讓讀取狀態留在某個工作區就自己給 size,
+  // renderer 不從 view key 的命名慣例反推。
+  it('reads the size off the view, never off the view key', () => {
     expect(drawerSizeForView({
       key: 'catalogue:Tainan',
       mode: 'compact',
+      size: 'standard',
       content: [],
     }, undefined)).toBe('standard')
     expect(drawerSizeForView({
       key: 'catalogue:Tainan',
       mode: 'compact',
-      size: 'compact',
       content: [],
-    }, undefined)).toBe('compact')
+    }, undefined)).toBe('content')
     expect(drawerSizeForView({
       key: 'region:south',
       mode: 'compact',
@@ -93,26 +93,6 @@ describe('drawer view transitions', () => {
       mode: 'compact',
       content: [],
     }, 'compact')).toBe('content')
-  })
-
-  it('uses the previous measured height only for an explicitly preserved transition', () => {
-    expect(drawerMinHeightForTransition(true, 319.2)).toBe('320px')
-    expect(drawerMinHeightForTransition(true, 319.2, 280)).toBe('280px')
-    expect(drawerMinHeightForTransition(true, 319.2, 0)).toBe('')
-    expect(drawerMinHeightForTransition(false, 319.2)).toBe('')
-    expect(drawerMinHeightForTransition(undefined, 319.2)).toBe('')
-    expect(drawerMinHeightForTransition(true, 0)).toBe('')
-    expect(drawerMinHeightForTransition(true, Number.NaN)).toBe('')
-  })
-
-  it('preserves height only in the independently enabled responsive layout', () => {
-    expect(shouldPreserveDrawerHeight(true, undefined, true, false)).toBe(true)
-    expect(shouldPreserveDrawerHeight(true, undefined, false, true)).toBe(false)
-    expect(shouldPreserveDrawerHeight(true, false, false, true)).toBe(false)
-    expect(shouldPreserveDrawerHeight(false, true, false, true)).toBe(true)
-    expect(shouldPreserveDrawerHeight(false, true, true, false)).toBe(false)
-    expect(shouldPreserveDrawerHeight(true, true, false, true)).toBe(true)
-    expect(shouldPreserveDrawerHeight(undefined, undefined, false, true)).toBe(false)
   })
 })
 

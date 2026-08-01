@@ -1,30 +1,20 @@
-import type { Route } from '@playwright/test'
 import { expect, test, type Page } from './fixtures'
-
-const city = { code: 'Tainan', name: '臺南', region: 'south', center: [22.997, 120.212] }
-const place = {
-  placeId: 'P1',
-  name: '臺南火車站',
-  latitude: 22.997,
-  longitude: 120.212,
-  distanceMeters: 76,
-}
-const routeEntry = {
-  routeName: '中山幹線',
-  routeUid: 'R1',
-  variantKey: 'R1:0',
-  direction: 0 as const,
-  label: '大臺南公園 → 嘉義大學校區內',
-  subRouteUid: 'R1',
-  subRouteName: '中山幹線',
-  stopUid: 'P1-S',
-  stopName: '臺南火車站',
-  stopSequence: 2,
-  estimateSeconds: 120,
-  etaLabel: '2 分',
-  stopStatus: 0,
-  source: 'realtime' as const,
-}
+import {
+  clickDesktopStageCenter,
+  deferred,
+  type DrawerFrame,
+  fulfillAfter,
+  mockMapShell,
+  mockRouteCatalogue,
+  openNetwork,
+  place,
+  routeEntry,
+  startDrawerCapture,
+  stopDrawerCapture,
+  tainan as city,
+  trunkRouteNames,
+  trunkVariant as variant,
+} from './drawer-fixtures'
 
 // placeRoutesDrawerSize 在 8 條以上回 tall,轉運站是常態而不是邊界情況。
 const busyStopRoutes = Array.from({ length: 9 }, (_, index) => ({
@@ -35,155 +25,30 @@ const busyStopRoutes = Array.from({ length: 9 }, (_, index) => ({
   stopUid: `P1-S${index + 1}`,
 }))
 
-type DrawerFrame = {
-  top: number
-  height: number
-  view: string
-  mode: string
-  size: string
-  phase: string
-}
-
-function variant() {
-  return {
-    variantKey: routeEntry.variantKey,
-    routeName: routeEntry.routeName,
-    routeUid: routeEntry.routeUid,
-    subRouteUid: routeEntry.subRouteUid,
-    direction: 0 as const,
-    label: routeEntry.label,
-    subRouteName: routeEntry.subRouteName,
-    updatedAt: null,
-    shape: {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: {
-        type: 'LineString' as const,
-        coordinates: [[120.209, 22.997], [120.212, 22.997], [120.215, 22.997]],
-      },
-    },
-    stops: {
-      type: 'FeatureCollection' as const,
-      features: [{
-        type: 'Feature' as const,
-        properties: { stopUid: routeEntry.stopUid, stopName: routeEntry.stopName, sequence: 2 },
-        geometry: { type: 'Point' as const, coordinates: [120.212, 22.997] as [number, number] },
-      }],
-    },
-  }
-}
-
-function deferred() {
-  let release!: () => void
-  const promise = new Promise<void>((resolve) => { release = resolve })
-  return { promise, release }
-}
-
-async function fulfillAfter(route: Route, gate: Promise<void>, json: unknown) {
-  await gate
-  try {
-    await route.fulfill({ json })
-  } catch {
-    // A newer navigation may abort a delayed request; a closed route is expected in that case.
-  }
-}
-
 async function mockBootstrap(page: Page, routeCount = 80) {
-  await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
-  await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [city] } }))
-  await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({
-    json: {
-      routes: Array.from({ length: routeCount }, (_, index) => ({
-        routeName: index === 0 ? routeEntry.routeName : `測試路線 ${index + 1}`,
-        category: index % 4 === 0 ? '幹線' : '數字',
-      })),
-    },
-  }))
-  await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
-  await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({
-    json: {
-      timetable: {
-        mode: 'none',
-        selectedStop: null,
-        departureStop: null,
-        stops: [],
-        timedStopCount: 0,
-        services: [],
-      },
-    },
-  }))
+  await mockMapShell(page)
+  await mockRouteCatalogue(page, trunkRouteNames(routeCount))
 }
 
-async function startDrawerFrameCapture(page: Page) {
-  await page.evaluate(() => {
-    type Frame = { top: number; height: number; view: string; mode: string; size: string; phase: string }
-    type FrameStore = { active: boolean; frames: Frame[] }
-    const store: FrameStore = { active: true, frames: [] }
-    ;(window as Window & { __drawerFrameStore?: FrameStore }).__drawerFrameStore = store
-    const drawer = document.getElementById('map-drawer')!
-    const sample = () => {
-      if (!store.active) return
-      const rect = drawer.getBoundingClientRect()
-      const heading = drawer.querySelector<HTMLElement>('.drawer-heading h1')?.textContent ?? ''
-      const description = drawer.querySelector<HTMLElement>('.drawer-heading p')?.textContent ?? ''
-      let phase = 'other'
-      if (heading === '臺南') phase = 'catalogue'
-      else if (drawer.querySelector('.place-route-row')) phase = 'place-results'
-      else if (drawer.querySelector('.map-loading-row')) {
-        phase = heading === '附近站牌' ? 'nearby-loading' : 'place-loading'
-      } else if (drawer.querySelector('.variant-list')) phase = 'variant-picker'
-      else if (heading === '中山幹線' && description.includes('正在拼起路線與站牌')) phase = 'route-loading'
-      else if (heading === '中山幹線') phase = 'route-results'
-      store.frames.push({
-        top: rect.top,
-        height: rect.height,
-        view: drawer.dataset.view ?? '',
-        mode: drawer.dataset.mode ?? '',
-        size: drawer.dataset.size ?? '',
-        phase,
-      })
-      window.requestAnimationFrame(sample)
-    }
-    // 第一幀同步取,不等 rAF。否則呼叫端「開始取樣 → 放行回應」之間若沒撐過一次
-    // 繪製,起始狀態就漏掉了,取樣結果會看起來像從未發生過變化。
-    sample()
-  })
-}
-
-async function stopDrawerFrameCapture(page: Page): Promise<DrawerFrame[]> {
-  return page.evaluate(() => {
-    type Frame = { top: number; height: number; view: string; mode: string; size: string; phase: string }
-    type FrameStore = { active: boolean; frames: Frame[] }
-    const store = (window as Window & { __drawerFrameStore?: FrameStore }).__drawerFrameStore!
-    store.active = false
-    return store.frames
-  })
+// 順序有意義:place-results 要贏過 loading rows(結果到齊的那一幀兩者可能並存),
+// 而 route-loading 與 route-results 共用標題,只有描述文字分得出來。
+function phaseOf(frame: DrawerFrame): string {
+  if (frame.heading === city.name) return 'catalogue'
+  if (frame.hasPlaceRows) return 'place-results'
+  if (frame.hasLoadingRows) return frame.heading === '附近站牌' ? 'nearby-loading' : 'place-loading'
+  if (frame.hasVariantList) return 'variant-picker'
+  if (frame.heading === routeEntry.routeName) {
+    return frame.description.includes('正在拼起路線與站牌') ? 'route-loading' : 'route-results'
+  }
+  return 'other'
 }
 
 function expectStableFrames(frames: DrawerFrame[], phases: string[], size = 'standard') {
-  const selected = frames.filter((frame) => phases.includes(frame.phase))
-  expect(new Set(selected.map((frame) => frame.phase))).toEqual(new Set(phases))
+  const selected = frames.filter((frame) => phases.includes(phaseOf(frame)))
+  expect(new Set(selected.map(phaseOf))).toEqual(new Set(phases))
   expect(new Set(selected.map((frame) => frame.size))).toEqual(new Set([size]))
   expect(Math.max(...selected.map((frame) => frame.top)) - Math.min(...selected.map((frame) => frame.top))).toBeLessThanOrEqual(1)
   expect(Math.max(...selected.map((frame) => frame.height)) - Math.min(...selected.map((frame) => frame.height))).toBeLessThanOrEqual(1)
-}
-
-async function openNetwork(page: Page) {
-  const network = page.getByRole('button', { name: '切換全路網與全部站點' })
-  await network.click()
-  await expect(network).toHaveAttribute('aria-pressed', 'true')
-  await expect(network).not.toHaveAttribute('aria-busy')
-}
-
-async function clickDesktopStageCenter(page: Page) {
-  const mapBox = await page.locator('#map').boundingBox()
-  const drawerBox = await page.locator('#map-drawer').boundingBox()
-  if (!mapBox || !drawerBox) throw new Error('map stage has no layout box')
-  // focusPoint places the city center in the drawer-aware visible stage. These offsets mirror
-  // the desktop camera padding constants: left 45, top 90, bottom 45, safety gap 48.
-  const targetX = mapBox.x + (drawerBox.x - mapBox.x + 45 - 48) / 2
-  const targetY = mapBox.y + mapBox.height / 2 + (90 - 45) / 2
-  await page.mouse.click(targetX, targetY)
 }
 
 test('keeps one standard drawer size while auto-preview resolves into place results', async ({ page }) => {
@@ -228,7 +93,7 @@ test('keeps one standard drawer size while auto-preview resolves into place resu
   await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
-  await startDrawerFrameCapture(page)
+  await startDrawerCapture(page)
 
   await openNetwork(page)
   await clickDesktopStageCenter(page)
@@ -252,9 +117,9 @@ test('keeps one standard drawer size while auto-preview resolves into place resu
   await expect(page.locator('.leaflet-routePreview-pane svg path')).toHaveCount(1)
   await page.waitForTimeout(120)
 
-  const frames = await stopDrawerFrameCapture(page)
+  const frames = await stopDrawerCapture(page)
   expectStableFrames(frames, ['catalogue', 'place-loading', 'place-results'])
-  expect(frames.some((frame) => frame.phase === 'nearby-loading')).toBe(false)
+  expect(frames.some((frame) => phaseOf(frame) === 'nearby-loading')).toBe(false)
   await expect(drawer).toHaveJSProperty('style.height', '')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
 })
@@ -343,14 +208,14 @@ test('holds the nearby height through the place skeleton, on a stop already seen
 
   // 從附近清單一路錄到 skeleton 貼上去為止。斷言的不是頭尾相等,而是中間沒有任何
   // 一幀動過——高度過渡會讓「只比對兩個取樣點」放過一次真正的跳動。
-  await startDrawerFrameCapture(page)
+  await startDrawerCapture(page)
   await drawer.locator('.nearby-place-button').first().click()
   await secondVisitRequested.promise
   await expect(drawer.locator('.map-loading-row')).toHaveCount(3)
   await page.waitForTimeout(300)
-  const frames = await stopDrawerFrameCapture(page)
+  const frames = await stopDrawerCapture(page)
 
-  expect(frames.some((frame) => frame.phase === 'place-loading')).toBe(true)
+  expect(frames.some((frame) => phaseOf(frame) === 'place-loading')).toBe(true)
   expect(new Set(frames.map((frame) => frame.size))).toEqual(new Set(['nearby']))
   const heights = frames.map((frame) => frame.height)
   expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(1)
@@ -371,12 +236,12 @@ test('grows a busy stop to its content size exactly once, as motion rather than 
   const drawer = page.locator('#map-drawer')
   await expect(drawer.locator('.map-loading-row')).toHaveCount(3)
   await expect(drawer).toHaveAttribute('data-size', 'standard')
-  await startDrawerFrameCapture(page)
+  await startDrawerCapture(page)
 
   arrivals.release()
   await expect(drawer.locator('.place-route-row')).toHaveCount(busyStopRoutes.length)
   await page.waitForTimeout(400)
-  const frames = await stopDrawerFrameCapture(page)
+  const frames = await stopDrawerCapture(page)
 
   const sizeSequence = frames
     .map((frame) => frame.size)
@@ -442,9 +307,9 @@ test('holds the network catalogue height through route loading, then settles com
   await expect(drawer).toHaveAttribute('data-size', 'standard')
   await expect(drawer).toHaveJSProperty('style.minHeight', '')
   await page.waitForTimeout(320)
-  await startDrawerFrameCapture(page)
+  await startDrawerCapture(page)
   await page.waitForTimeout(120)
-  const loadingFrames = await stopDrawerFrameCapture(page)
+  const loadingFrames = await stopDrawerCapture(page)
   expectStableFrames(loadingFrames, ['route-loading'], 'standard')
 
   routeGate.release()
