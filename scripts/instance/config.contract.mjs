@@ -114,6 +114,21 @@ test('compiled files are replaced atomically and contain no secret fields', asyn
   assert.doesNotMatch(combined, /TDX_CLIENT_SECRET|CLOUDFLARE_API_TOKEN|R2_SECRET_ACCESS_KEY/)
 })
 
+test('compiled output refuses destructive target directories', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mochi-output-safety-'))
+  const starter = await loadInstanceConfig(starterPath)
+  const compiled = compileInstanceConfig(starter)
+
+  await assert.rejects(
+    () => writeCompiledInstance(compiled, root, { workingDirectory: root }),
+    /Refusing to replace the working directory/,
+  )
+  await assert.rejects(
+    () => writeCompiledInstance(compiled, tmpdir(), { workingDirectory: join(tmpdir(), 'nested-project') }),
+    /Refusing to replace the working directory/,
+  )
+})
+
 test('configuration resolution follows CLI, environment, local and production precedence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mochi-resolution-'))
   await mkdir(join(root, 'instances'), { recursive: true })
