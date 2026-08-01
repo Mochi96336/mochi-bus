@@ -37,4 +37,9 @@ describe('drawer size states', () => {
     expect(css).toContain('--map-drawer-size-nearby: min(')
     expect(css).toContain('.map-drawer[data-view^="nearby:"][data-size="standard"]')
   })
+
+  it('moves height and max-height together so shrinking remains animated', () => {
+    expect(css).toContain('height 220ms cubic-bezier(.22, .61, .36, 1),\n    max-height 220ms cubic-bezier(.22, .61, .36, 1);')
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*transition:\s*none/)
+  })
 })
