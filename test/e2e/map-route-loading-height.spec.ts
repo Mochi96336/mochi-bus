@@ -100,8 +100,10 @@ async function settledCompactHeight(page: Page, previousHeight: number): Promise
   const drawer = page.locator('#map-drawer')
   await expect.poll(
     () => drawer.evaluate((element) => element.getBoundingClientRect().height),
-  ).toBeLessThan(previousHeight - 60)
-  return drawer.evaluate((element) => element.getBoundingClientRect().height)
+  ).toBeLessThanOrEqual(301)
+  const height = await drawer.evaluate((element) => element.getBoundingClientRect().height)
+  expect(height).toBeLessThan(previousHeight - 60)
+  return height
 }
 
 test('uses a genuinely shorter compact route state while keeping it usable across viewport boundaries', async ({ page }) => {
