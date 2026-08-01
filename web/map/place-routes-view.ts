@@ -51,6 +51,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
       options.renderDrawer({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
+        transient: true,
         header: drawerHeader(place, '正在取得路線與到站時間'),
         content: [createPlaceRouteLoadingList()],
       })
@@ -119,6 +120,7 @@ export function createPlaceRoutesView(options: PlaceRoutesViewOptions): PlaceRou
       renderSettled({
         key: `place:${cityCode}:${place.placeId}`,
         mode: 'map-list',
+        transient: true,
         header: drawerHeader(place, message),
         // 這裡通知就是整個畫面的內容,折疊等於把唯一的出口藏起來。
         content: [options.createDegradedNotice({

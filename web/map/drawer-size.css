@@ -1,6 +1,7 @@
 :root {
   --map-drawer-size-compact: min(36vh, 300px);
   --map-drawer-size-standard: min(44vh, 420px);
+  --map-drawer-size-nearby: var(--map-drawer-size-standard);
   --map-drawer-size-tall: min(56vh, 560px);
   --map-drawer-size-expanded: min(64vh, 680px);
 }
@@ -37,6 +38,14 @@
 .map-drawer[data-size="standard"] {
   height: var(--map-drawer-size-standard);
   max-height: var(--map-drawer-size-standard);
+}
+
+/* 附近站牌的矮版面是一個尺寸狀態,不是套在 standard 上的 view-scoped 覆寫。高度只能
+   有一個來源:覆寫版本讓同一個 data-size 在不同畫面下是不同高度,renderer 因此無法
+   保證「讀取中不改高度」——它比對的狀態沒變,實際高度卻少了 100px。 */
+.map-drawer[data-size="nearby"] {
+  height: var(--map-drawer-size-nearby);
+  max-height: var(--map-drawer-size-nearby);
 }
 
 .map-drawer[data-size="tall"] {
@@ -78,13 +87,6 @@
       42rem,
       var(--map-drawer-mobile-available-height)
     );
-  }
-
-  /* Nearby loading and settled results share one stable workspace, but twelve possible
-     rows do not justify reserving the full generic half-screen sheet before scrolling. */
-  .map-drawer[data-view^="nearby:"][data-size="standard"] {
-    height: var(--map-drawer-size-nearby);
-    max-height: var(--map-drawer-size-nearby);
   }
 }
 
