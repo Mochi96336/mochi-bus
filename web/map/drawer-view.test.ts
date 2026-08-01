@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createKeyboardActivationTracker,
   drawerMinHeightForTransition,
   drawerScrollTopForTransition,
   drawerSizeForView,
@@ -117,5 +118,75 @@ describe('drawer view transitions', () => {
     expect(shouldPreserveDrawerHeight(false, true, true, false)).toBe(false)
     expect(shouldPreserveDrawerHeight(true, true, false, true)).toBe(true)
     expect(shouldPreserveDrawerHeight(undefined, undefined, false, true)).toBe(false)
+  })
+})
+
+describe('keyboard activation tracker', () => {
+  type Listener = (event: { detail?: number }) => void
+
+  function fakeTarget() {
+    const listeners = new Map<string, Listener[]>()
+    return {
+      addEventListener(type: string, listener: Listener) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+      },
+      removeEventListener(type: string, listener: Listener) {
+        listeners.set(type, (listeners.get(type) ?? []).filter((entry) => entry !== listener))
+      },
+      emit(type: string, event: { detail?: number } = {}) {
+        for (const listener of [...(listeners.get(type) ?? [])]) listener(event)
+      },
+      count: () => [...listeners.values()].reduce((total, entries) => total + entries.length, 0),
+    }
+  }
+
+  function mount() {
+    const target = fakeTarget()
+    return {
+      target,
+      tracker: createKeyboardActivationTracker(
+        target as unknown as Pick<EventTarget, 'addEventListener' | 'removeEventListener'>,
+      ),
+    }
+  }
+
+  // Enter/Space 觸發的 click 在多數瀏覽器仍是 PointerEvent,只有 detail 分得出來。
+  it('reads detail 0 as keyboard and a click count as pointer', () => {
+    const { target, tracker } = mount()
+
+    target.emit('click', { detail: 0 })
+    expect(tracker.consume()).toBe(true)
+
+    target.emit('click', { detail: 1 })
+    expect(tracker.consume()).toBe(false)
+  })
+
+  it('only authorises one focus transfer per activation', () => {
+    const { target, tracker } = mount()
+
+    target.emit('click', { detail: 0 })
+    expect(tracker.consume()).toBe(true)
+    // 一次鍵盤操作之後的 popstate 或 URL hydration 不該再被當成鍵盤導覽。
+    expect(tracker.consume()).toBe(false)
+  })
+
+  it('lets a pointer press clear a stale keyboard flag', () => {
+    const { target, tracker } = mount()
+
+    target.emit('click', { detail: 0 })
+    target.emit('pointerdown')
+    expect(tracker.consume()).toBe(false)
+  })
+
+  it('reports no activation before anything happens', () => {
+    expect(mount().tracker.consume()).toBe(false)
+  })
+
+  it('removes both listeners on dispose', () => {
+    const { target, tracker } = mount()
+
+    expect(target.count()).toBe(2)
+    tracker.dispose()
+    expect(target.count()).toBe(0)
   })
 })

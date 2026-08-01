@@ -235,3 +235,43 @@ test('does not show a scrollbar when a short route detail drawer already fits', 
   }))
   expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight + 1)
 })
+
+test('drives service tabs from the keyboard with a single stop in the tab order', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockRoute(page)
+  await page.goto(`/map?city=ChiayiCounty&route=7211&variant=${encodeURIComponent(variant.variantKey)}`)
+
+  const drawer = page.locator('#map-drawer')
+  await drawer.getByRole('button', { name: '查看時刻表' }).click()
+
+  const tabs = drawer.locator('.timetable-tab')
+  const panel = drawer.locator('.timetable-content')
+  const range = drawer.locator('.timetable-overview strong')
+
+  // tablist 只佔一個 Tab 停留點,群組內才用方向鍵。
+  await expect(tabs.locator('[tabindex="0"]')).toHaveCount(0)
+  await expect(drawer.locator('.timetable-tab[tabindex="0"]')).toHaveCount(1)
+  await expect(drawer.locator('.timetable-tab[aria-selected="true"]')).toHaveText('每日')
+  await expect(range).toHaveText('06:00–22:00')
+
+  await expect(panel).toHaveAttribute('role', 'tabpanel')
+  const panelId = await panel.getAttribute('id')
+  await expect(drawer.locator('.timetable-tab').first()).toHaveAttribute('aria-controls', panelId!)
+  await expect(panel).toHaveAttribute(
+    'aria-labelledby',
+    (await drawer.locator('.timetable-tab[aria-selected="true"]').getAttribute('id'))!,
+  )
+
+  // ArrowRight 從最後一個環繞回第一個,內容必須跟著換。
+  await drawer.locator('.timetable-tab[aria-selected="true"]').focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(drawer.locator('.timetable-tab[aria-selected="true"]')).toHaveText('週六')
+  await expect(range).toHaveText('07:00–19:00')
+  await expect(drawer.locator('.timetable-tab[tabindex="0"]')).toHaveCount(1)
+
+  await page.keyboard.press('End')
+  await expect(drawer.locator('.timetable-tab[aria-selected="true"]')).toHaveText('每日')
+  await page.keyboard.press('Home')
+  await expect(drawer.locator('.timetable-tab[aria-selected="true"]')).toHaveText('週六')
+  await expect(range).toHaveText('07:00–19:00')
+})

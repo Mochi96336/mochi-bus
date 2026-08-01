@@ -52,7 +52,9 @@ export function renderETAPage(view: ETAView): string {
       <a class="brand" href="/">${brandWordmark}</a>
       <nav class="top-actions" aria-label="主要功能"><a class="icon-link" href="/map">地圖</a></nav>
     </header>
-    <section class="cover" aria-live="polite">
+    <!-- 看板整塊不是 live region:每 30 秒的自動刷新會 replaceChildren 整個 #bus-list,
+         容器級 aria-live 會把整面 ETA 重播一次。宣告改由 #notice 與 #refresh-status 各自負責。 -->
+    <section class="cover">
       <div class="onboard-sign" id="onboard-sign" hidden aria-hidden="true">
         <div class="onboard-sign-text"><span class="onboard-sign-track"><span>Understand the network first, then catch the bus.</span><span>Understand the network first, then catch the bus.</span></span></div>
       </div>
@@ -63,10 +65,11 @@ export function renderETAPage(view: ETAView): string {
         <a class="onboard-map" href="/map">地圖<span aria-hidden="true">→</span></a>
       </div>
       ${notice ? `<p class="notice service-notice">${escapeHTML(notice)}<br><a href="${escapeHTML(mapHref)}">打開地圖</a></p>` : ''}
-      <p class="notice" id="notice">${escapeHTML(resultNotice)}</p>
+      <p class="notice" id="notice" aria-live="polite">${escapeHTML(resultNotice)}</p>
     </section>
     <footer class="eta-footer">
       <span id="updated">${result ? `資料 ${formatTaipeiTime(result.dataTime ?? result.fetchedAt)}` : '尚未更新'}</span>
+      <span class="visually-hidden" id="refresh-status" role="status" aria-live="polite"></span>
       <span class="eta-footer-actions">
         <a class="footer-action" href="/setup">管理常用站牌</a>
         <button class="primary compact" id="refresh" type="button">重新整理</button>
@@ -269,8 +272,11 @@ const designRefinementStyles = `
 @keyframes eta-copy-out{from{opacity:1}to{opacity:0}}
 .bus-direction{grid-column:1/-1;overflow:hidden;color:var(--text-muted);font-size:13px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}
 .advanced-panel>summary,.glossary summary{color:var(--text-muted)}
+.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .eta-footer-actions{display:flex;align-items:center;gap:8px}
 .eta-footer-actions>.footer-action,.eta-footer-actions>.primary{display:inline-flex;min-height:var(--control-height-md);align-items:center;justify-content:center;padding:10px 16px;line-height:1.2}
+/* 重新整理/更新中/已更新/更新失敗 最長四個全形字;鎖住寬度,狀態切換才不會讓 footer 位移。 */
+#refresh{min-width:calc(4em + 32px)}
 .footer-action{border:1px solid var(--line);border-radius:999px;color:inherit;font-weight:750;text-decoration:none}
 .about-panel{margin-top:14px;padding-top:13px;border-top:1px solid var(--line-soft)}
 .about-panel p{color:var(--text-muted);font-size:13px;line-height:1.65}

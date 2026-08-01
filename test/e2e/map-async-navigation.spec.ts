@@ -253,3 +253,101 @@ test('late shared-trip hydration cannot replace the catalogue reached with Back'
   await expect(page).toHaveURL('/map?city=Tainan')
   await expect(page.locator('#map-drawer').getByRole('heading', { name: '臺南' })).toBeVisible()
 })
+
+const nearbyPlace = {
+  placeId: 'P1', name: '臺南火車站', latitude: 22.99, longitude: 120.21, distanceMeters: 20,
+}
+
+// 記錄 skeleton 進出畫面的時間點。因為要證明的其中一件事是「它從未出現」,
+// 只在事後查詢 DOM 是不夠的,必須全程觀察。
+async function watchSkeleton(page: Page) {
+  await page.addInitScript(() => {
+    const marks = { appearedAt: 0, clearedAt: 0 }
+    ;(window as unknown as { __skeleton: typeof marks }).__skeleton = marks
+    const attach = () => {
+      const drawer = document.getElementById('map-drawer')
+      if (!drawer) return requestAnimationFrame(attach)
+      new MutationObserver(() => {
+        const present = Boolean(drawer.querySelector('.map-loading-list'))
+        if (present && !marks.appearedAt) marks.appearedAt = performance.now()
+        if (!present && marks.appearedAt && !marks.clearedAt) marks.clearedAt = performance.now()
+      }).observe(drawer, { childList: true, subtree: true })
+    }
+    attach()
+  })
+}
+
+const skeletonMarks = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __skeleton: { appearedAt: number; clearedAt: number } }).__skeleton)
+
+test('a nearby lookup that resolves inside the delay window never flashes a skeleton', async ({ page }) => {
+  await mockBaseMap(page)
+  await watchSkeleton(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places: [nearbyPlace] } }))
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  expect((await skeletonMarks(page)).appearedAt).toBe(0)
+})
+
+test('a slow nearby lookup shows a skeleton and holds it past the minimum', async ({ page }) => {
+  await mockBaseMap(page)
+  await watchSkeleton(page)
+  const nearbyResponse = deferred()
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, async (route) => {
+    await nearbyResponse.promise
+    await safelyFulfill(route, { places: [nearbyPlace] })
+  })
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.locator('.map-loading-list')).toBeVisible()
+  nearbyResponse.release()
+
+  await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
+  const marks = await skeletonMarks(page)
+  expect(marks.appearedAt).toBeGreaterThan(0)
+  // 出現又立刻消失比從頭到尾不出現更像故障;留 50ms 給計時器抖動。
+  expect(marks.clearedAt - marks.appearedAt).toBeGreaterThanOrEqual(250)
+})
+
+// 連續導覽會一句蓋一句地寫狀態。可見的 toast 必須跟上每一步(gate 的延遲窗
+// 靠它填補),但朗讀要等最後一個狀態穩定下來,否則螢幕閱讀器一直被打斷。
+test('shows a status immediately but waits for it to settle before announcing', async ({ page }) => {
+  await page.clock.install()
+  await mockBaseMap(page)
+  const nearbyResponse = deferred()
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, async (route) => {
+    await nearbyResponse.promise
+    await safelyFulfill(route, { places: [nearbyPlace] })
+  })
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+  const status = page.locator('#map-status')
+  const announcer = page.locator('#map-announcer')
+
+  // 看得見的部分立刻更新,朗讀還在穩定窗裡等著。
+  await expect(status).toHaveText('正在找這附近的站牌…')
+  await expect(announcer).toBeEmpty()
+
+  await page.clock.runFor(600)
+  await expect(announcer).toHaveText('正在找這附近的站牌…')
+
+  nearbyResponse.release()
+})
+
+test('announces a failure at once instead of waiting out the settle window', async ({ page }) => {
+  await page.clock.install()
+  await mockBaseMap(page)
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ status: 500, json: {} }))
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+
+  // 時鐘凍結,穩定窗永遠不會到期——錯誤仍然必須馬上被唸出來。
+  await expect(page.locator('#map-announcer')).not.toBeEmpty()
+  await expect(page.locator('#map-status')).toHaveClass(/error/)
+})

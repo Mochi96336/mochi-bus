@@ -224,7 +224,63 @@ describe('ETA bootstrap', () => {
 
     expect(html).toContain('class="bus-eta urgent"')
     expect(html).toContain('<span class="eta-prefix">約</span><span class="eta-value">2</span><span class="eta-suffix">分</span>')
-    expect(html).toContain('id="notice"></p>')
+    expect(html).toContain('id="notice" aria-live="polite"></p>')
     expect(html).toContain('id="updated">資料 07:00:00</span>')
+  })
+})
+
+describe('live region contract', () => {
+  // 抽屜與封面看板都會整塊 replaceChildren。容器級 aria-live 會把整份內容重播一次,
+  // 也讓內部的 role="status" 變成巢狀 live region。宣告一律交給專屬的小節點。
+  const liveRegionPattern = /<([a-z]+)([^>]*\b(?:aria-live|role="status")[^>]*)>/g
+
+  function liveRegions(html: string): string[] {
+    return [...html.matchAll(liveRegionPattern)].map((match) => match[0])
+  }
+
+  // 可見的狀態列必須立即更新(loading gate 的延遲窗靠它填補),宣告卻要延後合併,
+  // 兩者無法共用同一個 aria-live 節點。
+  it('separates the visible map status from the node that announces it', () => {
+    const html = renderMapPage({ heading: '台北市公車地圖' })
+
+    expect(html).toContain('<aside id="map-drawer" class="map-drawer"></aside>')
+    expect(html).toContain('<div id="map-status" class="map-status">')
+    expect(html).not.toContain('class="map-status" aria-live')
+    expect(html).toContain('<div id="map-announcer" class="visually-hidden" role="status" aria-live="polite">')
+    expect(liveRegions(html)).toHaveLength(1)
+  })
+
+  it('keeps the cover section out of live regions but keeps the notice announcing', () => {
+    const html = renderETAPage({ query, useLocalBoard: true, requestUrl })
+
+    expect(html).toContain('<section class="cover">')
+    expect(html).not.toContain('class="cover" aria-live')
+    expect(html).toContain('id="notice" aria-live="polite"')
+  })
+
+  it('gives the homepage a dedicated refresh status node outside the cover', () => {
+    const html = renderETAPage({ query, useLocalBoard: true, requestUrl })
+    const footer = html.slice(html.indexOf('<footer class="eta-footer">'))
+
+    expect(footer).toContain('id="refresh-status" role="status" aria-live="polite"')
+    expect(html).toContain('.visually-hidden{position:absolute')
+  })
+
+  it('never nests a live region inside another live region', () => {
+    for (const html of [
+      renderMapPage({ heading: '台北市公車地圖' }),
+      renderETAPage({ query, useLocalBoard: true, requestUrl }),
+      renderETAPage({ query, useLocalBoard: false, requestUrl }),
+      renderSetupPage([['Taipei', '臺北市']], requestUrl),
+    ]) {
+      // 逐個 live region 開標籤往後掃到自身的結束標籤,確認區間內沒有第二個 live region。
+      for (const match of html.matchAll(liveRegionPattern)) {
+        const tag = match[1]
+        const start = (match.index ?? 0) + match[0].length
+        const end = html.indexOf(`</${tag}>`, start)
+        expect(end).toBeGreaterThan(-1)
+        expect(liveRegions(html.slice(start, end))).toEqual([])
+      }
+    }
   })
 })

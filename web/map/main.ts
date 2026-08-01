@@ -17,6 +17,7 @@ import { createNearbyPlacesController, type NearbyPreviewSource } from './nearby
 import { createNearbyPlacesMap } from './nearby-places-map'
 import { createNearbyResultsState } from './nearby-results-state'
 import { createNearbyPlacesView, nearbyPlacesFailureMessage } from './nearby-places-view'
+import { createLoadingHandoff } from '../lib/loading-gate'
 import { createPreviewStopDotManager, createSelectablePreviewLineRenderer } from './preview-map-primitives'
 import { createNavRequestCoordinator } from '../../src/domain/map/nav-request'
 import { captureMapCamera, restoreMapCamera, type MapCameraState } from '../../src/domain/map/journey-camera'
@@ -32,6 +33,7 @@ import { isTdxTokenRejectedError } from '../tdx/api-client'
 import { splitRouteDisplayName } from '../lib/route-display'
 import { createMapCameraController } from './camera-controller'
 import { createDrawerRenderer, type DrawerView } from './drawer-view'
+import { createMapStatus } from './map-status'
 import {
   buttonGrid,
   degradedNotice,
@@ -107,6 +109,7 @@ const drawer = requiredElement('map-drawer')
 const drawerRenderer = createDrawerRenderer(drawer)
 const renderDrawer = (view: DrawerView) => drawerRenderer.render(view)
 const statusNode = requiredElement('map-status')
+const mapStatus = createMapStatus(statusNode, requiredElement('map-announcer'))
 const mapFeatureDiscovery = createMapFeatureDiscovery(browserStorage())
 const networkButton = document.createElement('button')
 networkButton.className = 'network-toggle map-feature-button'
@@ -280,24 +283,28 @@ const nearbyPlacesView = createNearbyPlacesView({
   createTripModeButton: tripModeButton,
   onOpenPlace: (place) => void openNearbyPlace(place),
 })
+// Skeleton 的時機交給 gate,但 origin marker 與狀態列一律立即出現:延遲窗內畫面
+// 必須已經有「收到了」的證據。自動預覽不停在清單上,那條路徑沒有 skeleton,直接 abort。
+const nearbyLoading = createLoadingHandoff(nearbyPlacesView.renderLoading)
 const nearbyPlaces = createNearbyPlacesController({
   currentCityCode: () => activeCity?.code,
   beginRequest: beginNavRequest,
   isStaleRequest: isStaleNav,
   loadNearby: mapApi.nearby,
   onStart: ({ cityCode, origin, previewSource }) => {
-    if (!previewSource) {
-      nearbyPlacesView.renderLoading({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
+    if (previewSource) nearbyLoading.abort()
+    else {
+      nearbyLoading.start({ cityCode, origin, backLabel: '附近站牌', onBack: renderNearbyPlaces })
       nearbyResults.setOrigin(origin)
     }
     nearbyPlacesMap.renderLoadingOrigin(origin)
     setStatus('正在找這附近的站牌…')
   },
-  onPlaces: (presentation) => {
+  onPlaces: (presentation) => nearbyLoading.settle(() => {
     if (presentation.previewSource) enterNearbyView(presentation.origin[0], presentation.origin[1])
     nearbyResults.store(presentation)
     renderNearbyPlaces()
-  },
+  }),
   onAutoPreview: async (place, presentation) => {
     nearbyResults.storeAndRenderMap(presentation)
     if (presentation.previewSource === 'map') {
@@ -307,15 +314,17 @@ const nearbyPlaces = createNearbyPlacesController({
   },
   onError: ({ cityCode, origin, previewSource, error }) => {
     if (previewSource) {
+      nearbyLoading.abort()
       setStatus(nearbyPlacesFailureMessage(error), true)
       return
     }
-    setStatus(nearbyPlacesView.renderError({
+    nearbyLoading.settle(() => setStatus(nearbyPlacesView.renderError({
       cityCode, origin, error, backLabel: '附近站牌', onBack: renderNearbyPlaces,
-      onRetry: () => void findNearbyPlaces(origin[0], origin[1], previewSource, 'replace'),
-    }), true)
+      onRetry: () => findNearbyPlaces(origin[0], origin[1], previewSource, 'replace'),
+    }), true))
   },
 })
+const placeRoutesLoading = createLoadingHandoff(placeRoutesView.renderLoading)
 const placeRoutes = createPlaceRoutesController({
   currentCityCode: () => activeCity?.code,
   beginRequest: beginNavRequest,
@@ -333,19 +342,20 @@ const placeRoutes = createPlaceRoutesController({
   invalidateOtherPreviews: () => journeyPreview.cancel(),
   onStart: (start) => {
     routeDetail.close()
-    placeRoutesView.renderLoading(start)
+    placeRoutesLoading.start(start)
     setStatus(`正在讀取 ${start.place.name} 的路線…`)
   },
-  onRoutes: placeRoutesView.renderRoutes,
+  onRoutes: (presentation) => placeRoutesLoading.settle(() => placeRoutesView.renderRoutes(presentation)),
   renderPreview: renderPlaceRoutePreview,
   onComplete: completePlaceRoutes,
-  onError: (failure) => setStatus(placeRoutesView.renderError(failure), true),
+  onError: (failure) => placeRoutesLoading.settle(() => mapStatus.show(placeRoutesView.renderError(failure), true)),
 })
-cancelPlaceRoutes = () => placeRoutes.cancel()
+// Gate 的計時器要跟著這一輪請求一起作廢,否則尾端 render 會落在已經換掉的畫面上。
+cancelPlaceRoutes = () => { placeRoutesLoading.abort(); placeRoutes.cancel() }
 
 function invalidatePreviewRequests(): void {
   journeyPreview.cancel()
-  placeRoutes.cancel()
+  cancelPlaceRoutes()
 }
 
 function clearPreviewLayer(): void {
@@ -636,11 +646,7 @@ async function hydrateMapLocation() {
 function renderBootstrapError() {
   const message = '目前無法載入縣市資料，請檢查網路後再試一次。'
   setStatus('地圖初始化失敗，請稍後再試。', true)
-  const retry = retryButton(() => {
-    retry.disabled = true
-    retry.textContent = '重試中…'
-    void initialise()
-  })
+  const retry = retryButton(() => initialise())
   renderDrawer({
     key: 'initialization-error',
     mode: 'map-list',
@@ -911,7 +917,7 @@ async function chooseCity(city: MapCity) {
       content: [
         drawerBack('返回區域', returnToRegion),
         heading(city.name, '目前無法載入這個縣市的路線。'),
-        retryButton(() => void chooseCity(city)),
+        retryButton(() => chooseCity(city)),
       ],
     })
     camera.focusPoint(city.center, 11)
@@ -1426,8 +1432,8 @@ function renderVehiclePositions(response: VehiclePositionsResponse) {
   drawer.querySelector('.vehicle-degraded-notice')?.remove()
   if (response.warning) {
     const message = tdxWarningMessages[response.warning]
-    setStatus(message, true)
-    const notice = degradedNotice(message, () => void vehicleRefresh.refresh())
+    mapStatus.show(message, true)
+    const notice = degradedNotice({ message, onRetry: () => vehicleRefresh.refresh(), collapsible: true })
     notice.classList.add('vehicle-degraded-notice')
     drawer.appendChild(notice)
   }
@@ -1440,9 +1446,9 @@ function renderVehicleRefreshError(error: unknown) {
   const message = credentialRejected
     ? 'TDX 授權已失效；路線仍可使用，請到設定更新授權。'
     : '暫時無法更新車輛位置；路線與站牌仍可使用。'
-  setStatus(message, true)
+  mapStatus.show(message, true)
   drawer.querySelector('.vehicle-degraded-notice')?.remove()
-  const notice = degradedNotice(message, () => void vehicleRefresh.refresh(), credentialRejected)
+  const notice = degradedNotice({ message, onRetry: () => vehicleRefresh.refresh(), credentialRecovery: credentialRejected, collapsible: true })
   notice.classList.add('vehicle-degraded-notice')
   drawer.appendChild(notice)
 }
@@ -1494,6 +1500,7 @@ async function findNearbyPlaces(
 function renderNearbyPlaces() {
   const result = nearbyResults.current()
   if (!activeCity || !result) return
+  nearbyLoading.abort()
   nearbyPlaces.invalidate()
   cancelNavRequest()
   nearbyResults.renderMap()
@@ -1739,17 +1746,11 @@ function completePlaceRoutes({ cityCode, place }: PlaceRoutesPresentation): void
 }
 
 function setStatus(text: string, error = false) {
-  statusNode.textContent = text
-  statusNode.classList.remove('dismissed')
-  statusNode.classList.toggle('error', error)
-  statusNode.removeAttribute('aria-hidden')
+  mapStatus.set(text, error)
 }
 
 function clearStatus() {
-  statusNode.textContent = ''
-  statusNode.classList.add('dismissed')
-  statusNode.classList.remove('error')
-  statusNode.setAttribute('aria-hidden', 'true')
+  mapStatus.clear()
 }
 
 // 跟著畫面更新分頁標題:多分頁與瀏覽紀錄裡才認得出「哪一條路線、哪一站」。

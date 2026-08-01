@@ -2,6 +2,7 @@ import { formatJourneyWait } from '../../src/domain/eta-presentation'
 import { describeTransferEstimate } from '../../src/domain/map/transfer-estimate'
 import { tdxWarningMessages } from '../../src/domain/tdx-warning'
 import type { DirectRoute, NearbyPlace, TransferPlan } from './map-api-client'
+import type { DegradedNoticeOptions } from './drawer-primitives'
 import type { DrawerView } from './drawer-view'
 import type { TripResultsState } from './trip-state'
 
@@ -9,7 +10,7 @@ type TripResultsViewOptions = {
   renderDrawer: (view: DrawerView) => void
   createBackButton: (label: string, onClick: () => void) => HTMLButtonElement
   createHeading: (title: string, description: string) => HTMLElement
-  createDegradedNotice: (message: string, onRetry: () => void, credentialRecovery?: boolean) => HTMLElement
+  createDegradedNotice: (options: DegradedNoticeOptions) => HTMLElement
   createTripModeButton: () => HTMLButtonElement
   createMatchedControls: (compact?: boolean) => HTMLElement | undefined
   routeColor: (routeName: string) => string
@@ -37,8 +38,13 @@ export function createTripResultsView(options: TripResultsViewOptions): TripResu
   const now = options.now ?? (() => new Date())
 
   function warningContent(state: TripResultsState): HTMLElement[] {
+    // 行程結果本身可用,降級提示可以折疊。
     return state.warning
-      ? [options.createDegradedNotice(tdxWarningMessages[state.warning], options.onRetry)]
+      ? [options.createDegradedNotice({
+        message: tdxWarningMessages[state.warning],
+        onRetry: options.onRetry,
+        collapsible: true,
+      })]
       : []
   }
 
@@ -220,7 +226,12 @@ export function createTripResultsView(options: TripResultsViewOptions): TripResu
             '查詢失敗了',
             `${view.context.from.name} → ${view.context.to.name} 暫時查不到，稍等一下再試。`,
           ),
-          options.createDegradedNotice(view.message, options.onRetry, view.credentialRecovery),
+          // 查詢失敗時通知就是整個畫面的內容,不可折疊。
+          options.createDegradedNotice({
+            message: view.message,
+            onRetry: options.onRetry,
+            credentialRecovery: view.credentialRecovery,
+          }),
         ],
       })
     },

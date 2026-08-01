@@ -44,7 +44,7 @@ button, input { font: inherit; }
 button { cursor: pointer; }
 
 #map { background: #d8d4ca; }
-.map-page-title {
+.map-page-title, .visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -273,6 +273,12 @@ button { cursor: pointer; }
 .drawer-heading p, .drawer-copy { margin: 0 0 16px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
 .degraded-notice { margin: 0 0 14px; padding: 12px; border: 1px solid var(--accent); border-radius: var(--radius-control); background: var(--surface); }
 .degraded-notice .drawer-copy { margin-bottom: 10px; color: var(--ink); }
+/* 折疊只收起處理動作,問題敘述留在 summary 上一直看得見。 */
+.degraded-fold > summary { color: var(--ink); font-size: 13px; line-height: 1.5; cursor: pointer; list-style: none; }
+.degraded-fold > summary::-webkit-details-marker { display: none; }
+.degraded-fold > summary::before { content: '▸ '; color: var(--accent-deep); }
+.degraded-fold[open] > summary { margin-bottom: 10px; }
+.degraded-fold[open] > summary::before { content: '▾ '; }
 .degraded-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .degraded-actions .quiet-button { min-height: 38px; }
 .quiet-link { color: var(--accent-deep); font-size: 13px; font-weight: var(--weight-body); text-underline-offset: 3px; }

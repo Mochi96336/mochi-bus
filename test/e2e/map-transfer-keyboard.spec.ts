@@ -146,3 +146,85 @@ test('transfer cards isolate keyboard selection from inner route actions', async
   await expect.poll(() => routeCalls.length).toBe(15)
   await expect(page.locator('.transfer-plan').nth(0)).toHaveClass(/selected/)
 })
+
+const overviewCity = { code: 'Tainan', name: '臺南', region: 'south', center: [22.99, 120.21] }
+
+function overviewVariant(routeName: string) {
+  return {
+    variantKey: `TNN-${routeName}:0`, routeName, routeUid: `TNN-${routeName}`, direction: 0 as const,
+    label: '奇美醫院 → 大成路口', subRouteName: routeName, updatedAt: null,
+    shape: { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: [[120.2, 22.99], [120.24, 23.02]] } },
+    stops: { type: 'FeatureCollection' as const, features: [
+      { type: 'Feature' as const, properties: { stopUid: 'S1', stopName: '奇美醫院', sequence: 1 }, geometry: { type: 'Point' as const, coordinates: [120.2, 22.99] as [number, number] } },
+    ] },
+  }
+}
+
+async function mockCatalogue(page: import('./fixtures').Page) {
+  await page.route('https://tile.openstreetmap.org/**', (route) => route.fulfill({ status: 204 }))
+  await page.route('**/api/v1/map/cities', (route) => route.fulfill({ json: { cities: [overviewCity] } }))
+  await page.route(/\/api\/v1\/map\/routes(?:\?|$)/, (route) => route.fulfill({
+    json: { routes: [{ routeName: '15', category: '數字' }] },
+  }))
+  await page.route(/\/api\/v1\/map\/route(?:\?|$)/, (route) => route.fulfill({
+    json: { variants: [overviewVariant('15')] },
+  }))
+  await page.route('**/api/v1/map/timetable*', (route) => route.fulfill({ json: { timetable: { mode: 'none', services: [] } } }))
+  await page.route('**/api/v1/map/vehicles*', (route) => route.fulfill({ json: { vehicles: [] } }))
+}
+
+const activeElementInDrawer = (page: import('./fixtures').Page) => page.evaluate(() => {
+  const active = document.activeElement
+  return Boolean(active && document.getElementById('map-drawer')?.contains(active))
+})
+
+test('a keyboard-opened drawer view moves focus into the new content', async ({ page }) => {
+  await mockCatalogue(page)
+  await page.goto('/map?city=Tainan')
+
+  const drawer = page.locator('#map-drawer')
+  const routeButton = drawer.getByRole('button', { name: '15', exact: true })
+  await routeButton.focus()
+  await page.keyboard.press('Enter')
+
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+  expect(await activeElementInDrawer(page)).toBe(true)
+})
+
+// 點按鈕本來就會讓瀏覽器把焦點移到那顆按鈕上,所以「焦點留在 drawer 外」只在
+// 導覽不是由 drawer 內控制發起時才有意義——地圖點擊正是那個情形,也正是手機上
+// 搶焦點會叫出虛擬鍵盤、打斷地圖操作的那條路徑。
+test('a map click opens a view without pulling focus into the drawer', async ({ page }) => {
+  await mockCatalogue(page)
+  const place = { placeId: 'P1', name: '奇美醫院', latitude: 22.99, longitude: 120.21, distanceMeters: 20 }
+  await page.route(/\/api\/v1\/map\/nearby(?:\?|$)/, (route) => route.fulfill({ json: { places: [place] } }))
+  await page.route('**/api/v1/map/place/*/arrivals*', (route) => route.fulfill({ json: { routes: [] } }))
+
+  await page.goto('/map?city=Tainan&lat=22.99&lon=120.21')
+  const drawer = page.locator('#map-drawer')
+  await expect(drawer.getByRole('heading', { name: '附近站牌' })).toBeVisible()
+
+  await page.locator('#map-brand').focus()
+  await page.locator('#map').click({ position: { x: 200, y: 200 } })
+
+  await expect(drawer.getByRole('heading', { name: '奇美醫院' })).toBeVisible()
+  // 點地圖會把焦點交給地圖容器,那是瀏覽器的正常行為;要保證的是 drawer
+  // 不會反過來把焦點搶進去。
+  expect(await activeElementInDrawer(page)).toBe(false)
+})
+
+// loading 與 settled 共用 view key,settled 的 replaceChildren 會把剛聚焦的節點
+// 拔掉。焦點本來就在 drawer 裡時要接回來,不能讓它掉到 body。
+test('repairs focus the drawer itself orphaned during a re-render', async ({ page }) => {
+  await mockCatalogue(page)
+  await page.goto('/map?city=Tainan')
+
+  const drawer = page.locator('#map-drawer')
+  const search = drawer.getByRole('textbox', { name: '篩選路線，或搜尋站牌名稱' })
+  await search.focus()
+  await drawer.getByRole('button', { name: '15', exact: true }).click()
+
+  await expect(drawer.getByRole('heading', { name: '15' })).toBeVisible()
+  await expect(search).toHaveCount(0)
+  expect(await activeElementInDrawer(page)).toBe(true)
+})

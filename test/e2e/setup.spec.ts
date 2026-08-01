@@ -333,3 +333,40 @@ test.describe('/setup page', () => {
     await expect(page.locator('#add-board-button')).toBeFocused()
   })
 })
+
+test.describe('/setup picker focus boundary', () => {
+  test('makes the background inert so Tab cannot leave the picker (A11Y-002)', async ({ page }) => {
+    await page.goto('/setup')
+    await page.click('#add-board-button')
+    await expect(page.locator('#picker-panel')).toBeVisible()
+
+    // 背景真的退出 Tab 序,才不必自己寫 focus trap。
+    const background = page.locator('main.setup-page > :not(#picker-panel)')
+    expect(await background.count()).toBeGreaterThan(0)
+    for (const node of await background.all()) await expect(node).toHaveAttribute('inert', '')
+    await expect(page.locator('#picker-panel')).not.toHaveAttribute('inert', '')
+
+    // inert 的語意不是 focus trap:Tab 走到文件尾端仍會經過 body 再繞回來。
+    // 要保證的是焦點永遠不會落在背景的任何一個控制上。
+    for (let step = 0; step < 14; step += 1) {
+      await page.keyboard.press('Tab')
+      const landedInBackground = await page.evaluate(() => {
+        const active = document.activeElement
+        if (!active || active === document.body || active === document.documentElement) return false
+        return !document.getElementById('picker-panel')?.contains(active)
+      })
+      expect(landedInBackground).toBe(false)
+    }
+  })
+
+  test('lifts inert before returning focus to the trigger', async ({ page }) => {
+    await page.goto('/setup')
+    await page.click('#add-board-button')
+    await page.keyboard.press('Escape')
+
+    await expect(page.locator('#add-board-button')).toBeFocused()
+    for (const node of await page.locator('main.setup-page > :not(#picker-panel)').all()) {
+      await expect(node).not.toHaveAttribute('inert', '')
+    }
+  })
+})

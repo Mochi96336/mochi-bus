@@ -40,7 +40,17 @@ export type DrawerRenderer = {
   dispose(): void
 }
 
-export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
+export type DrawerRendererOptions = {
+  /** 注入以便測試;預設自行安裝在 document 上。 */
+  isKeyboardActivation?: () => boolean
+}
+
+export function createDrawerRenderer(
+  drawer: HTMLElement,
+  options: DrawerRendererOptions = {},
+): DrawerRenderer {
+  const tracker = options.isKeyboardActivation ? undefined : createKeyboardActivationTracker()
+  const isKeyboardActivation = options.isKeyboardActivation ?? (() => tracker?.consume() ?? false)
   let disposeCurrentView: (() => void) | undefined
   let currentViewKey: string | undefined
   let currentScrollRegion: HTMLDivElement | undefined
@@ -67,6 +77,10 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     let active = true
     let scrollRegion: HTMLDivElement | undefined
     const animateContent = shouldAnimateDrawerTransition(previousViewKey, view.key)
+    // 每次 render 都消耗掉旗標,否則一次鍵盤操作留下的 true 會被後面某個
+    // 非鍵盤觸發的 render(popstate、URL hydration、ETA 刷新)撿去用。
+    const keyboardEntry = isKeyboardActivation()
+    const hadFocusInside = drawer.contains(document.activeElement)
     currentViewKey = view.key
     rememberDrawerSize(sizesByViewKey, sizeKey, nextSize)
 
@@ -107,6 +121,16 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
       cleanups.push(attachScrollFade(scrollRegion))
     }
 
+    // 只有鍵盤導覽才主動轉移焦點。滑鼠與地圖點擊不搶焦點——手機上搶焦點會叫出
+    // 虛擬鍵盤,也會打斷正在進行的地圖操作。Drawer 不是 modal,不設 focus trap。
+    //
+    // 第二個條件是修復,不是搶奪:焦點本來就在 drawer 裡,是剛才的
+    // replaceChildren 把那個節點拔掉的。loading 與 settled 共用 view key,
+    // 所以這種情況很常見——不接回來的話焦點會掉到 body,下一次 Tab 就從
+    // 整頁最上面重來。焦點原本在 drawer 之外時一律不碰。
+    const orphanedFocus = hadFocusInside && !drawer.contains(document.activeElement)
+    if ((animateContent && keyboardEntry) || orphanedFocus) focusDrawerEntry(drawer)
+
     const disposeView = () => {
       if (!active) return
       active = false
@@ -128,7 +152,60 @@ export function createDrawerRenderer(drawer: HTMLElement): DrawerRenderer {
     }
   }
 
-  return { render, dispose }
+  return {
+    render,
+    dispose() {
+      dispose()
+      tracker?.dispose()
+    },
+  }
+}
+
+export type KeyboardActivationTracker = {
+  /** 一次性讀取:讀完歸零,一次鍵盤操作只授權一次焦點轉移。 */
+  consume(): boolean
+  dispose(): void
+}
+
+// 由 Enter 或 Space 觸發的 click 在多數瀏覽器仍然是 PointerEvent,
+// 用 instanceof KeyboardEvent 判斷不出鍵盤操作。可靠的訊號是 detail:
+// 滑鼠與觸控的 click 一定帶著點擊次數,鍵盤觸發的是 0。
+export function createKeyboardActivationTracker(
+  target: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> = document,
+): KeyboardActivationTracker {
+  let keyboard = false
+  const onClick = (event: Event) => { keyboard = (event as MouseEvent).detail === 0 }
+  const onPointerDown = () => { keyboard = false }
+  target.addEventListener('click', onClick, true)
+  target.addEventListener('pointerdown', onPointerDown, true)
+  return {
+    consume() {
+      const value = keyboard
+      keyboard = false
+      return value
+    },
+    dispose() {
+      target.removeEventListener('click', onClick, true)
+      target.removeEventListener('pointerdown', onPointerDown, true)
+    },
+  }
+}
+
+// 焦點移到第一個可聚焦控制(通常是返回鍵),不是標題:標題在 DOM 上排在返回鍵
+// 之後,聚焦標題會讓返回鍵只剩 Shift+Tab 才到得了。第一個控制則讓整個 drawer
+// 都還在往前的 Tab 序上。
+function focusDrawerEntry(drawer: HTMLElement): void {
+  const control = drawer.querySelector<HTMLElement>(
+    'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled])',
+  )
+  if (control) {
+    control.focus()
+    return
+  }
+  const heading = drawer.querySelector<HTMLElement>('h1')
+  if (!heading) return
+  heading.tabIndex = -1
+  heading.focus()
 }
 
 export function shouldAnimateDrawerTransition(previousKey: string | undefined, nextKey: string): boolean {

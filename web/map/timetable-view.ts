@@ -1,5 +1,8 @@
 import type { RouteTimetable, TimetableService } from './map-api-client'
 import { taipeiServiceClock, timetableMinutes } from '../../src/domain/map/service-clock'
+import { attachRovingTabs } from '../lib/roving-tabs'
+
+let timetablePanelSequence = 0
 
 export function timetableSummaryText(timetable: RouteTimetable): string | null {
   const service = currentTimetableService(timetable)
@@ -67,47 +70,51 @@ export function createTimetablePanel(
   const hasMultipleServices = timetable.services.length > 1
   const hasTodayService = timetable.services.some((service) => service.today)
   const hasKnownServiceDays = timetable.services.some((service) => service.days.length)
-  const renderService = (service: TimetableService, activeButton?: HTMLButtonElement) => {
-    if (activeButton) {
-      activeButton.parentElement?.querySelectorAll<HTMLButtonElement>('button').forEach((candidate) => {
-        const active = candidate === activeButton
-        candidate.classList.toggle('active', active)
-        candidate.setAttribute('aria-selected', String(active))
-        candidate.tabIndex = active ? 0 : -1
-      })
-    }
-    content.replaceChildren(timetableServiceContent(timetable, service, {
+  // 首次渲染由 drawer 的 view 進場動畫負責(design-system:只有 view identity 改變才播放),
+  // 這裡只在使用者實際換日期時補一段同樣 180ms/4px 的內容交接,避免同一次開啟播兩次。
+  let servicePainted = false
+  const renderService = (service: TimetableService) => {
+    const fragment = timetableServiceContent(timetable, service, {
       showServiceLabel: !hasMultipleServices,
       noteNoTodayService: !hasTodayService && hasKnownServiceDays,
-    }))
+    })
+    if (servicePainted) fragment.classList.add('drawer-content-enter')
+    servicePainted = true
+    content.replaceChildren(fragment)
   }
   const initialService = currentTimetableService(timetable)
   if (hasMultipleServices) {
     const tabs = document.createElement('div')
     tabs.className = 'timetable-tabs'
-    tabs.setAttribute('role', 'tablist')
     tabs.setAttribute('aria-label', '服務日期')
-    const serviceButtons = new Map<string, HTMLButtonElement>()
-    timetable.services.forEach((service) => {
+    const buttons = timetable.services.map((service) => {
       const button = document.createElement('button')
       button.type = 'button'
       button.className = 'timetable-tab'
-      button.setAttribute('role', 'tab')
-      button.setAttribute('aria-selected', 'false')
-      button.tabIndex = -1
       button.textContent = service.label
       button.setAttribute('aria-label', service.label)
       button.title = service.label
-      button.addEventListener('click', () => renderService(service, button))
       tabs.appendChild(button)
-      serviceButtons.set(service.id, button)
+      return button
     })
     panel.appendChild(tabs)
-    const initialButton = initialService ? serviceButtons.get(initialService.id) : undefined
-    if (initialService && initialButton) renderService(initialService, initialButton)
-  } else if (initialService) {
-    renderService(initialService)
+    panel.appendChild(content)
+    const initialIndex = initialService
+      ? timetable.services.findIndex((service) => service.id === initialService.id)
+      : 0
+    // role/aria-selected/tabIndex/aria-controls 與方向鍵一律交給共用工具,
+    // 這裡只負責「選到第幾個就換成哪一天的內容」。
+    attachRovingTabs({
+      tablist: tabs,
+      tabs: buttons,
+      panel: content,
+      idPrefix: `timetable-${timetablePanelSequence += 1}`,
+      initialIndex: Math.max(0, initialIndex),
+      onSelect: (index) => renderService(timetable.services[index]),
+    })
+    return panel
   }
+  if (initialService) renderService(initialService)
   panel.appendChild(content)
   return panel
 }

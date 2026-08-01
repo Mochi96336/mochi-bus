@@ -158,9 +158,14 @@ function validateStopTarget(
 }
 
 function updateStopEta(etaNode: HTMLElement, stop: RouteEtaStop): void {
-  etaNode.textContent = stop.etaLabel ?? ROUTE_UNKNOWN_ETA_LABEL
   etaNode.classList.remove('live', 'urgent', 'muted')
   etaNode.classList.add(stop.etaTone)
+  // 每 20 秒刷新一次,多數站牌的值根本沒變。所選站牌是 aria-live 節點,
+  // 無條件重寫 textContent 會讓螢幕閱讀器每 20 秒把同一句再唸一遍。
+  // 這跟首頁 eta-row-view 的 signature 檢查是同一條規則:值沒變就不重播。
+  const label = stop.etaLabel ?? ROUTE_UNKNOWN_ETA_LABEL
+  if (etaNode.textContent === label) return
+  etaNode.textContent = label
 }
 
 function clearRouteEta(page: HTMLElement): void {

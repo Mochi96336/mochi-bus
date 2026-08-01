@@ -17,6 +17,7 @@ import {
 import { requestMochiJson } from '../tdx/api-client'
 import { clearTdxAccessTokenCache, verifyTdxCredentials } from '../tdx/client'
 import { attachScrollFade } from '../lib/scroll-fade'
+import { createAsyncAction } from '../lib/async-action-state'
 
 type RouteItem = {
   routeName: string
@@ -204,16 +205,37 @@ function openPicker() {
   showRoutePicker()
 }
 
+// picker 展開時是整頁唯一可互動的區塊,行為上等同 modal:除了 Esc 關閉與焦點
+// 還回觸發按鈕之外,背景要真的退出 Tab 序。用 inert 就不必自己寫 focus trap。
+const pickerBackground = Array.from(pickerPanel.parentElement?.children ?? [])
+  .filter((node): node is HTMLElement => node instanceof HTMLElement && node !== pickerPanel)
+
+function setPickerBackgroundInert(inert: boolean): void {
+  for (const node of pickerBackground) node.inert = inert
+}
+
 function showRoutePicker() {
   pickerPanel.hidden = false
+  setPickerBackgroundInert(true)
   routePicker.hidden = false
   directionStep.hidden = true
   suggestionStep.hidden = true
   pickerPanel.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  // Esc 關閉、焦點還回觸發它的按鈕,picker 展開時是整頁唯一可互動的區塊,
-  // 行為上等同 modal。
   city.focus()
   if (!routes.length) void loadRoutes()
+}
+
+function stepControl(step: HTMLElement): HTMLElement | null {
+  return step.querySelector<HTMLElement>('button:not([disabled]), a[href], input, select')
+}
+
+// hidden 會讓步驟退出 Tab 序,但若焦點正好在被隱藏的步驟裡,焦點會掉回 body。
+// 背景已經 inert,所以下一次 Tab 至少還會回到 picker 內,但使用者會失去位置。
+// 同步的步驟切換直接把焦點接到新步驟的第一個控制;非同步載入的建議步驟不接,
+// 那裡的控制要等 fetch 回來才存在,中途搶焦點只會干擾使用者。
+function handOffStepFocus(from: readonly HTMLElement[], to: HTMLElement): void {
+  if (!from.some((step) => step.contains(document.activeElement))) return
+  stepControl(to)?.focus()
 }
 
 function hidePicker() {
@@ -227,6 +249,8 @@ function hidePicker() {
 
 function hidePickerView(focusTrigger = true) {
   pickerPanel.hidden = true
+  // 先解除 inert 再還焦點:addBoardButton 就在剛才被 inert 的背景裡。
+  setPickerBackgroundInert(false)
   selectedRoute = null
   if (focusTrigger) addBoardButton.focus()
   // 清掉 selectedRoute 的同時要搶新 epoch:不這樣做,還在等 fetch 的
@@ -243,6 +267,7 @@ function backToRoutes() {
   directionStep.hidden = true
   suggestionStep.hidden = true
   routePicker.hidden = false
+  handOffStepFocus([directionStep, suggestionStep], routePicker)
   selectedRoute = null
   requestId += 1
   routePicker.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -255,6 +280,7 @@ function backToStops() {
   }
   suggestionStep.hidden = true
   directionStep.hidden = false
+  handOffStepFocus([suggestionStep], directionStep)
   directionStep.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
@@ -369,8 +395,10 @@ async function chooseRoute(route: RouteItem) {
       { authenticated: true, fallback: '站牌載入失敗' },
     )
     if (id !== requestId) return
+    const focusWasInPicker = routePicker.contains(document.activeElement)
     routePicker.hidden = true
     renderDirections(body.groups ?? [])
+    if (focusWasInPicker) stepControl(directionStep)?.focus()
     pushSetupState({
       ...routeHistoryState(2),
       setupStep: 'stops',
@@ -605,6 +633,14 @@ function renderTdx(overrideMessage?: string) {
   setTdxFieldValidity([])
 }
 
+// 按鈕不跟著改文字:#tdx-message 已經是 aria-live,而且兩個輸入框都用
+// aria-describedby 指著它,狀態文字有一個表面就夠了。這裡取的是
+// createAsyncAction 的 pending 互斥與「pending 一定會結束」保證。
+const tdxSaveAction = createAsyncAction({
+  button: tdxSave,
+  labels: { idle: '儲存並測試', pending: '儲存並測試' },
+})
+
 tdxSave.onclick = async () => {
   const current = getTdxAuthState().auth
   const clientId = tdxId.value.trim()
@@ -618,20 +654,25 @@ tdxSave.onclick = async () => {
     showTdxError('Client Secret 不能空白', [tdxSecret])
     return
   }
-  tdxSave.disabled = true
   tdxMessage.textContent = '正在跟 TDX 打聲招呼…'
   tdxMessage.classList.remove('form-message-error')
   setTdxFieldValidity([])
-  try {
+  const persistence = tdxRemember.checked ? 'device' : 'session'
+  const result = await tdxSaveAction.run(async () => {
     await verifyTdxCredentials({ clientId, clientSecret })
-    const persistence = tdxRemember.checked ? 'device' : 'session'
     setTdxAuth({ clientId, clientSecret }, persistence)
-    tdxSecret.value = ''
-    renderTdx(persistence === 'device' ? '憑證有效，已記住於此裝置。' : '憑證有效，只保留在此分頁；關閉分頁後即移除。')
-  } catch (error) {
-    showTdxError(error instanceof Error && error.message ? error.message : '驗證失敗，稍後再試', [tdxId, tdxSecret])
+  })
+  if (result.status === 'skipped') return
+  if (result.status === 'rejected') {
+    // 錯誤訊息要用原本的 reason 產生,所以 run 必須把它原樣交回,不能吞成 undefined。
+    const { reason } = result
+    showTdxError(reason instanceof Error && reason.message ? reason.message : '驗證失敗，稍後再試', [tdxId, tdxSecret])
+    return
   }
-  tdxSave.disabled = false
+  // renderTdx 留在 action 外:它是渲染,不是驗證。渲染爆掉是真的程式錯誤,
+  // 不該被偽裝成「憑證驗證失敗」而讓使用者去查一組其實正確的憑證。
+  tdxSecret.value = ''
+  renderTdx(persistence === 'device' ? '憑證有效，已記住於此裝置。' : '憑證有效，只保留在此分頁；關閉分頁後即移除。')
 }
 
 tdxRemove.onclick = () => {
