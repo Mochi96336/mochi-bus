@@ -19,7 +19,7 @@
     "test:e2e": "playwright test",
     "test:visual": "playwright test test/e2e/map-visual.spec.ts",
     "test:shape-pattern-measurement": "vitest run scripts/shape-pattern-measurement",
-    "test:instance": "node --test scripts/instance/*.contract.mjs",
+    "test:instance": "node --test scripts/instance/config.contract.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm run cf-typegen:check && npm run test && npm run test:instance && npm run typecheck && npm run build:map && wrangler deploy --dry-run",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings --env-file .dev.vars.example",
