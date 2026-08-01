@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import css from './drawer-size.css?raw'
 import { drawerSizeForTransition } from './drawer-view'
 
 describe('drawer size states', () => {
@@ -25,5 +26,14 @@ describe('drawer size states', () => {
 
   it('leaves unrelated compact views content-sized', () => {
     expect(drawerSizeForTransition(undefined, 'compact', false, undefined)).toBe('content')
+  })
+
+  it('keeps mobile compact and nearby sheets below the generic standard workspace', () => {
+    const mobileBlock = css.match(/@media \(max-width: 640px\) \{[\s\S]*?\n\}/)?.[0]
+    expect(mobileBlock).toBeTruthy()
+    expect(mobileBlock).toContain('--map-drawer-size-compact: min(')
+    expect(mobileBlock).not.toContain('--map-drawer-size-compact: var(--map-drawer-size-standard)')
+    expect(mobileBlock).toContain('--map-drawer-size-nearby: min(')
+    expect(mobileBlock).toContain('.map-drawer[data-view^="nearby:"][data-size="standard"]')
   })
 })
