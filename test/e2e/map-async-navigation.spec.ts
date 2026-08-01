@@ -293,7 +293,7 @@ test('a nearby lookup that resolves inside the delay window never flashes a skel
   expect((await skeletonMarks(page)).appearedAt).toBe(0)
 })
 
-test('a slow nearby lookup shows a skeleton and holds it past the minimum', async ({ page }) => {
+test('a slow nearby lookup shows a skeleton and drops it the moment data arrives', async ({ page }) => {
   await mockBaseMap(page)
   await watchSkeleton(page)
   const nearbyResponse = deferred()
@@ -311,8 +311,10 @@ test('a slow nearby lookup shows a skeleton and holds it past the minimum', asyn
   await expect(drawer.locator('.nearby-place-button')).toHaveCount(1)
   const marks = await skeletonMarks(page)
   expect(marks.appearedAt).toBeGreaterThan(0)
-  // 出現又立刻消失比從頭到尾不出現更像故障;留 50ms 給計時器抖動。
-  expect(marks.clearedAt - marks.appearedAt).toBeGreaterThanOrEqual(250)
+  // 這裡是在 skeleton 已經出現之後才放行回應的。gate 曾經有 minVisibleMs,
+  // 會把結果扣住直到 skeleton 滿 300ms;現在資料到手就交接,抽屜的高度過渡
+  // 負責讓這個切換不刺眼。
+  expect(marks.clearedAt - marks.appearedAt).toBeLessThan(250)
 })
 
 // 連續導覽會一句蓋一句地寫狀態。可見的 toast 必須跟上每一步(gate 的延遲窗

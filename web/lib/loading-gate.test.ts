@@ -49,12 +49,11 @@ type Harness = {
   render: ReturnType<typeof vi.fn<() => void>>
 }
 
-function mount(overrides: { delayMs?: number; minVisibleMs?: number } = {}): Harness {
+function mount(overrides: { delayMs?: number } = {}): Harness {
   const clock = fakeClock()
   const showLoading = vi.fn<() => void>()
   const gate = createLoadingGate({
     showLoading,
-    now: clock.now,
     schedule: clock.schedule as unknown as NonNullable<Parameters<typeof createLoadingGate>[0]['schedule']>,
     cancelSchedule: clock.cancelSchedule as unknown as NonNullable<Parameters<typeof createLoadingGate>[0]['cancelSchedule']>,
     ...overrides,
@@ -75,38 +74,34 @@ describe('loading gate timing', () => {
     expect(clock.pending()).toBe(0)
   })
 
-  it('shows the skeleton once the delay elapses and holds it for the minimum', () => {
+  it('shows the skeleton once the delay elapses', () => {
+    const { gate, clock, showLoading } = mount()
+
+    gate.start()
+    clock.advanceTo(119)
+    expect(showLoading).not.toHaveBeenCalled()
+    clock.advanceTo(120)
+    expect(showLoading).toHaveBeenCalledOnce()
+  })
+
+  // 這是移除 minVisibleMs 的核心行為改變:資料到手就上畫面,不再為了「skeleton
+  // 至少要看得見多久」把已經拿到的結果扣住。
+  it('hands over as soon as the data arrives, however briefly the skeleton showed', () => {
     const { gate, clock, showLoading, render } = mount()
 
     gate.start()
     clock.advanceTo(120)
     expect(showLoading).toHaveBeenCalledOnce()
 
-    clock.advanceTo(200)
+    clock.advanceTo(130)
     gate.settle(render)
-    // 只顯示了 80ms,還欠 220ms 才滿足最短顯示時間。
-    expect(render).not.toHaveBeenCalled()
 
-    clock.advanceTo(419)
-    expect(render).not.toHaveBeenCalled()
-    clock.advanceTo(420)
-    expect(render).toHaveBeenCalledOnce()
-  })
-
-  it('renders immediately once the skeleton has already met the minimum', () => {
-    const { gate, clock, showLoading, render } = mount()
-
-    gate.start()
-    clock.advanceTo(500)
-    expect(showLoading).toHaveBeenCalledOnce()
-
-    gate.settle(render)
     expect(render).toHaveBeenCalledOnce()
     expect(clock.pending()).toBe(0)
   })
 
-  it('honours custom thresholds', () => {
-    const { gate, clock, showLoading, render } = mount({ delayMs: 50, minVisibleMs: 100 })
+  it('honours a custom delay', () => {
+    const { gate, clock, showLoading, render } = mount({ delayMs: 50 })
 
     gate.start()
     clock.advanceTo(49)
@@ -115,9 +110,6 @@ describe('loading gate timing', () => {
     expect(showLoading).toHaveBeenCalledOnce()
 
     gate.settle(render)
-    clock.advanceTo(149)
-    expect(render).not.toHaveBeenCalled()
-    clock.advanceTo(150)
     expect(render).toHaveBeenCalledOnce()
   })
 })
@@ -134,36 +126,35 @@ describe('loading gate cancellation', () => {
     expect(clock.pending()).toBe(0)
   })
 
-  // 這是 §5.3「舊計時器不得在新畫面觸發」的具體落點:min-visible 的尾端 render
-  // 已經排進計時器,view 卻已經換掉了。
-  it('drops an already scheduled tail render when aborted', () => {
-    const { gate, clock, render } = mount()
-
-    gate.start()
-    clock.advanceTo(120)
-    clock.advanceTo(200)
-    gate.settle(render)
-    gate.abort()
-    clock.advanceTo(1_000)
-
-    expect(render).not.toHaveBeenCalled()
-  })
-
-  it('clears every timer from the previous round when restarted', () => {
+  // 「舊計時器不得在新畫面觸發」在移除 minVisibleMs 後只剩一個落點:延遲窗內
+  // 排好的 skeleton。資料先回來就必須把它拆掉,否則 skeleton 會蓋在已經渲染
+  // 好的內容上面。
+  it('cancels a pending skeleton when the data settles first', () => {
     const { gate, clock, showLoading, render } = mount()
 
     gate.start()
-    clock.advanceTo(120)
-    clock.advanceTo(200)
+    clock.advanceTo(119)
     gate.settle(render)
-    expect(clock.pending()).toBe(1)
-
-    gate.start()
-    expect(clock.pending()).toBe(1)
     clock.advanceTo(1_000)
 
-    // 舊的尾端 render 不能落在新一輪的畫面上,而新一輪自己的 skeleton 照常出現。
-    expect(render).not.toHaveBeenCalled()
+    expect(render).toHaveBeenCalledOnce()
+    expect(showLoading).not.toHaveBeenCalled()
+    expect(clock.pending()).toBe(0)
+  })
+
+  it('leaves no timer behind once a round has settled', () => {
+    const { gate, clock, showLoading, render } = mount()
+
+    gate.start()
+    clock.advanceTo(200)
+    gate.settle(render)
+    expect(clock.pending()).toBe(0)
+
+    gate.start()
+    clock.advanceTo(1_000)
+
+    // 新一輪自己的 skeleton 照常出現,上一輪不會再補畫一次。
+    expect(render).toHaveBeenCalledOnce()
     expect(showLoading).toHaveBeenCalledTimes(2)
   })
 
