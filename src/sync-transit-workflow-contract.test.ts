@@ -20,4 +20,16 @@ describe('Sync transit snapshots workflow contract', () => {
     expect(supportedCities).toHaveLength(22)
     expect(workflowSource).toContain(`${expectedManualCityInput()}\n      force_publish:`)
   })
+
+  it('validates a manual choice against the instance before repair or publication', () => {
+    const validation = 'node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"'
+    const repairPreflight = 'npm run snapshot:repair-legacy-previous --'
+    const publication = 'npm run snapshot:window -- "$city"'
+
+    expect(workflowSource).toContain(validation)
+    expect(workflowSource).toContain(repairPreflight)
+    expect(workflowSource).toContain(publication)
+    expect(workflowSource.indexOf(validation)).toBeLessThan(workflowSource.indexOf(repairPreflight))
+    expect(workflowSource.indexOf(validation)).toBeLessThan(workflowSource.indexOf(publication))
+  })
 })
