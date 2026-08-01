@@ -65,9 +65,18 @@ test('uses a real touch profile and a wide invisible route hit target', async ({
   await expect(page.locator('.variant-list')).toBeVisible()
   const hitTarget = page.locator('.leaflet-routePreview-pane path[stroke-opacity="0"]').first()
   await expect(hitTarget).toHaveAttribute('stroke-width', '26')
-  const box = await hitTarget.boundingBox()
-  if (!box) throw new Error('touch route hit target has no layout box')
-  await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2)
+  const routePoint = await hitTarget.evaluate((path: SVGPathElement) => {
+    const matrix = path.getScreenCTM()
+    if (!matrix) return null
+    const point = path.getPointAtLength(path.getTotalLength() / 2)
+    const screenPoint = new DOMPoint(point.x, point.y).matrixTransform(matrix)
+    return { x: screenPoint.x, y: screenPoint.y }
+  })
+  if (!routePoint) throw new Error('touch route hit target has no screen transform')
+  // The center of an SVG path's bounding box is not guaranteed to lie on the
+  // stroke. Tap a point on the path itself so this still exercises real touch
+  // hit testing instead of occasionally falling through to the map canvas.
+  await page.touchscreen.tap(routePoint.x, routePoint.y)
 
   await expect(page.locator('.variant-list')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '← 更換方向' })).toBeVisible()
