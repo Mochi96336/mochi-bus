@@ -49,22 +49,23 @@ async function mockTouchMap(page: Page) {
   } }))
 }
 
-async function exposedPathPoint(pathLocator: Locator): Promise<{ x: number; y: number }> {
-  const point = await pathLocator.evaluate((path: SVGPathElement) => {
+async function exposedPathPosition(pathLocator: Locator): Promise<{ x: number; y: number }> {
+  const position = await pathLocator.evaluate((path: SVGPathElement) => {
     const matrix = path.getScreenCTM()
-    if (!matrix) return null
+    const bounds = path.getBoundingClientRect()
+    if (!matrix || bounds.width <= 0 || bounds.height <= 0) return null
     const length = path.getTotalLength()
     for (const fraction of [.5, .4, .6, .3, .7, .2, .8, .1, .9]) {
       const local = path.getPointAtLength(length * fraction)
       const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix)
       if (document.elementFromPoint(screen.x, screen.y) === path) {
-        return { x: screen.x, y: screen.y }
+        return { x: screen.x - bounds.left, y: screen.y - bounds.top }
       }
     }
     return null
   })
-  if (!point) throw new Error('touch route hit target has no exposed point')
-  return point
+  if (!position) throw new Error('touch route hit target has no exposed point')
+  return position
 }
 
 test('uses a real touch profile and a wide invisible route hit target', async ({ page }) => {
@@ -84,11 +85,11 @@ test('uses a real touch profile and a wide invisible route hit target', async ({
   await expect(page.locator('.variant-list')).toBeVisible()
   const hitTarget = page.locator('.leaflet-routePreview-pane path[stroke-opacity="0"]').first()
   await expect(hitTarget).toHaveAttribute('stroke-width', '26')
-  // The route may continue below the mobile drawer. Pick a point on the SVG
-  // stroke that hit testing confirms is actually exposed, rather than using a
-  // bounding-box center that can fall through to the map canvas.
-  const routePoint = await exposedPathPoint(hitTarget)
-  await page.touchscreen.tap(routePoint.x, routePoint.y)
+  // The route may continue below the mobile drawer. Use an exposed point on
+  // the SVG stroke, then let locator.tap wait for stable geometry and verify
+  // that this exact hit target still receives the real touch event.
+  const routePosition = await exposedPathPosition(hitTarget)
+  await hitTarget.tap({ position: routePosition })
 
   await expect(page.locator('.variant-list')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '← 更換方向' })).toBeVisible()
