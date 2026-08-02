@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
   main,
+  resolveReleaseSmokeTargets,
   selectCatalogueRouteSample,
   validateCatalogueRouteContract,
   waitForBrowserReleaseIdentity,
@@ -32,18 +33,72 @@ describe('post-deploy smoke CLI adapter', () => {
     expect(source).toContain('safeReleaseSmokeDiagnostic(error, expectedSha)')
   })
 
-  it('derives the fixed route-name sample from every current catalogue identity', () => {
+  it('preserves production city and demo-route coverage from runtime identity', () => {
+    expect(resolveReleaseSmokeTargets({
+      enabledCities: ['Taipei', 'NewTaipei', 'Taoyuan', 'Chiayi'],
+      defaultCity: 'Taipei',
+      demoQuery: { city: 'Taipei', routeName: '307' },
+    })).toEqual({
+      cities: ['Taipei', 'Chiayi'],
+      defaultCity: 'Taipei',
+      detailCity: 'Taipei',
+      routeName: '307',
+      pages: [
+        { path: '/', selector: '.eta-page' },
+        { path: '/setup', selector: '.setup-page #board-list' },
+        { path: '/map?city=Taipei', selector: '#map-app', bootSelector: '.leaflet-container' },
+      ],
+    })
+  })
+
+  it('scopes a no-demo single-city instance to its only enabled city', () => {
+    expect(resolveReleaseSmokeTargets({
+      enabledCities: ['Chiayi'],
+      defaultCity: 'Chiayi',
+      demoQuery: null,
+    })).toEqual({
+      cities: ['Chiayi'],
+      defaultCity: 'Chiayi',
+      detailCity: 'Chiayi',
+      routeName: null,
+      pages: [
+        { path: '/', selector: '.eta-page' },
+        { path: '/setup', selector: '.setup-page #board-list' },
+        { path: '/map?city=Chiayi', selector: '#map-app', bootSelector: '.leaflet-container' },
+      ],
+    })
+  })
+
+  it('falls back to enabled-city order when the cross-tier canary is unavailable', () => {
+    expect(resolveReleaseSmokeTargets({
+      enabledCities: ['Kaohsiung', 'PingtungCounty', 'TaitungCounty'],
+      defaultCity: 'Kaohsiung',
+      demoQuery: null,
+    }).cities).toEqual(['Kaohsiung', 'PingtungCounty'])
+    expect(() => resolveReleaseSmokeTargets({
+      enabledCities: ['Chiayi'],
+      defaultCity: 'Taipei',
+      demoQuery: null,
+    })).toThrowError(expect.objectContaining({ code: 'release_identity_invalid' }))
+  })
+
+  it('derives explicit and no-demo route samples without catalogue-order dependence', () => {
     const catalogue = {
       routes: [
-        { routeName: '0東', routeUid: 'TPE-FIRST' },
+        { routeName: '藍線', routeUid: 'CY-BLUE' },
         { routeName: '307', routeUid: 'TPE307-B' },
         { routeName: '307', routeUid: 'TPE307-A' },
         { routeName: '307', routeUid: 'TPE307-A' },
+        { routeName: '1', routeUid: 'CY-ONE' },
       ],
     }
     expect(selectCatalogueRouteSample(catalogue, '307')).toEqual({
       routeName: '307',
       routeUids: ['TPE307-A', 'TPE307-B'],
+    })
+    expect(selectCatalogueRouteSample(catalogue)).toEqual({
+      routeName: '1',
+      routeUids: ['CY-ONE'],
     })
     expect(() => selectCatalogueRouteSample(catalogue, 'missing'))
       .toThrowError(expect.objectContaining({ code: 'route_sample_missing' }))
@@ -76,14 +131,16 @@ describe('post-deploy smoke CLI adapter', () => {
     }, 'Taipei', sample)).toThrowError(expect.objectContaining({ code: 'route_contract_invalid' }))
   })
 
-  it('uses route name without catalogue order or a hardcoded UID in production requests', () => {
-    expect(source).toContain("const TAIPEI_ROUTE_SAMPLE = '307'")
-    expect(source).toContain('selectCatalogueRouteSample(taipei, TAIPEI_ROUTE_SAMPLE)')
+  it('uses target identity instead of fixed city URLs or a hardcoded route UID', () => {
+    expect(source).toContain('resolveReleaseSmokeTargets(resources)')
+    expect(source).toContain('for (const city of targets.cities)')
+    expect(source).toContain('selectCatalogueRouteSample(detailRoutes, targets.routeName)')
+    expect(source).toContain('encodeURIComponent(targets.detailCity)')
+    expect(source).not.toContain('const REPRESENTATIVE_CITIES')
+    expect(source).not.toContain('const TAIPEI_ROUTE_SAMPLE')
     expect(source).not.toContain('taipei.routes[0]')
     expect(source).not.toContain('TPE19108')
     expect(source).not.toMatch(/routeUid=\$\{encodeURIComponent\(route\./)
-    expect(source).toContain("'route_http_failed'")
-    expect(source).toContain("validateCatalogueRouteContract(detail, 'Taipei', route)")
   })
 
   it('waits for the expected release inside the fresh browser context', async () => {

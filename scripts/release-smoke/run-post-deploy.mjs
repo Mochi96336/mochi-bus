@@ -28,27 +28,27 @@ const BROWSER_RELEASE_TIMEOUT_MS = 60_000
 const BROWSER_RELEASE_POLL_MS = 5_000
 const FULL_RELEASE_SHA = /^[0-9a-f]{40}$/
 const SAFE_RELEASE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
-const PAGES = Object.freeze([
-  { path: '/', selector: '.eta-page' },
-  { path: '/setup', selector: '.setup-page #board-list' },
-  { path: '/map?city=Chiayi', selector: '#map-app', bootSelector: '.leaflet-container' },
+const SECONDARY_CITY_CANARIES = Object.freeze(['Chiayi'])
+const STATIC_PAGES = Object.freeze([
+  Object.freeze({ path: '/', selector: '.eta-page' }),
+  Object.freeze({ path: '/setup', selector: '.setup-page #board-list' }),
 ])
-const REPRESENTATIVE_CITIES = Object.freeze(['Taipei', 'Chiayi'])
-const TAIPEI_ROUTE_SAMPLE = '307'
 const HASHED_ASSET = /^\/assets\/[^/?]+-[A-Za-z0-9_-]{6,}\.(?:js|css)$/
 
 export async function main(env = process.env) {
   const expectedSha = env.EXPECTED_RELEASE_SHA
   const smokeStartedAt = Date.now()
   try {
-    const origin = productionOrigin(env.RELEASE_SMOKE_ORIGIN ?? loadOperationalResources().publicOrigin)
+    const resources = loadOperationalResources()
+    const targets = resolveReleaseSmokeTargets(resources)
+    const origin = productionOrigin(env.RELEASE_SMOKE_ORIGIN ?? resources.publicOrigin)
     const token = smokeToken(env, expectedSha)
     const report = await runPostDeploySmoke({
       expectedSha,
       readRelease: () => readRelease(origin, token),
-      probeHttp: ({ phase, releaseSha }) => probeHttpSurface({ origin, token, phase, releaseSha }),
+      probeHttp: ({ phase }) => probeHttpSurface({ origin, token, phase, targets }),
       probeBrowser: ({ releaseSha, workerVersionId }) => probeFreshBrowser({
-        origin, token, releaseSha, workerVersionId,
+        origin, token, releaseSha, workerVersionId, targets,
       }),
       propagationTimeoutMs: duration(env.RELEASE_SMOKE_PROPAGATION_MS, 300_000),
       pollIntervalMs: duration(env.RELEASE_SMOKE_POLL_MS, 10_000, false),
@@ -81,17 +81,65 @@ export async function main(env = process.env) {
   }
 }
 
-export function selectCatalogueRouteSample(routes, routeName) {
+export function resolveReleaseSmokeTargets(resources) {
+  const enabledCities = resources?.enabledCities
+  const defaultCity = resources?.defaultCity
+  const demoQuery = resources?.demoQuery
+  if (!Array.isArray(enabledCities) || enabledCities.length === 0
+    || enabledCities.some((city) => typeof city !== 'string' || city.length === 0)
+    || new Set(enabledCities).size !== enabledCities.length
+    || typeof defaultCity !== 'string' || !enabledCities.includes(defaultCity)
+    || !(demoQuery === null || (demoQuery && typeof demoQuery === 'object'
+      && typeof demoQuery.city === 'string' && enabledCities.includes(demoQuery.city)
+      && typeof demoQuery.routeName === 'string' && demoQuery.routeName.length > 0))) {
+    throw new ReleaseSmokeError('release_identity_invalid')
+  }
+
+  const detailCity = demoQuery?.city ?? defaultCity
+  const cities = []
+  for (const city of [
+    detailCity,
+    ...SECONDARY_CITY_CANARIES.filter((candidate) => enabledCities.includes(candidate)),
+    defaultCity,
+    ...enabledCities,
+  ]) {
+    if (!cities.includes(city)) cities.push(city)
+    if (cities.length === Math.min(2, enabledCities.length)) break
+  }
+  const pages = Object.freeze([
+    ...STATIC_PAGES,
+    Object.freeze({
+      path: `/map?city=${encodeURIComponent(defaultCity)}`,
+      selector: '#map-app',
+      bootSelector: '.leaflet-container',
+    }),
+  ])
+
+  return Object.freeze({
+    cities: Object.freeze(cities),
+    defaultCity,
+    detailCity,
+    routeName: demoQuery?.routeName ?? null,
+    pages,
+  })
+}
+
+export function selectCatalogueRouteSample(routes, routeName = null) {
   if (!routes || !Array.isArray(routes.routes)
-    || typeof routeName !== 'string' || routeName.length === 0) {
+    || !(routeName === null || (typeof routeName === 'string' && routeName.length > 0))) {
     throw new ReleaseSmokeError('route_sample_missing')
   }
-  const routeUids = [...new Set(routes.routes
-    .filter((candidate) => candidate?.routeName === routeName
-      && typeof candidate?.routeUid === 'string' && candidate.routeUid.length > 0)
+  const validRoutes = routes.routes.filter((candidate) => candidate
+    && typeof candidate.routeName === 'string' && candidate.routeName.length > 0
+    && typeof candidate.routeUid === 'string' && candidate.routeUid.length > 0)
+  const selectedRouteName = routeName
+    ?? [...new Set(validRoutes.map((candidate) => candidate.routeName))].sort()[0]
+  if (!selectedRouteName) throw new ReleaseSmokeError('route_sample_missing')
+  const routeUids = [...new Set(validRoutes
+    .filter((candidate) => candidate.routeName === selectedRouteName)
     .map((candidate) => candidate.routeUid))].sort()
   if (routeUids.length === 0) throw new ReleaseSmokeError('route_sample_missing')
-  return Object.freeze({ routeName, routeUids: Object.freeze(routeUids) })
+  return Object.freeze({ routeName: selectedRouteName, routeUids: Object.freeze(routeUids) })
 }
 
 export function validateCatalogueRouteContract(value, city, sample) {
@@ -155,10 +203,10 @@ async function readRelease(origin, token) {
   return readJson(origin, addProbe('/api/v1/health/release', token, 'release'), 65_536, 'release_observation_failed')
 }
 
-async function probeHttpSurface({ origin, token, phase }) {
+async function probeHttpSurface({ origin, token, phase, targets }) {
   const assetCache = new Map()
   const allAssets = new Set()
-  for (const page of PAGES) {
+  for (const page of targets.pages) {
     const response = await readText(origin, addProbe(page.path, token, phase), MAX_PAGE_BYTES, 'page_http_failed')
     if (!response.contentType.includes('text/html')
       || !/^<!doctype html>/i.test(response.body.trimStart())
@@ -182,7 +230,7 @@ async function probeHttpSurface({ origin, token, phase }) {
   }
 
   const routesByCity = new Map()
-  for (const city of REPRESENTATIVE_CITIES) {
+  for (const city of targets.cities) {
     const routes = validateRoutesContract(await readJson(
       origin,
       addProbe(`/api/v1/map/routes?city=${encodeURIComponent(city)}`, token, `${phase}-${city}`),
@@ -201,19 +249,19 @@ async function probeHttpSurface({ origin, token, phase }) {
     }
   }
 
-  const taipei = routesByCity.get('Taipei')
-  const route = selectCatalogueRouteSample(taipei, TAIPEI_ROUTE_SAMPLE)
+  const detailRoutes = routesByCity.get(targets.detailCity)
+  const route = selectCatalogueRouteSample(detailRoutes, targets.routeName)
   const detail = await readJson(
     origin,
-    addProbe(`/api/v1/map/route?city=Taipei&route=${encodeURIComponent(route.routeName)}`, token, `${phase}-route`),
+    addProbe(`/api/v1/map/route?city=${encodeURIComponent(targets.detailCity)}&route=${encodeURIComponent(route.routeName)}`, token, `${phase}-route`),
     MAX_JSON_BYTES,
     'route_http_failed',
   )
-  const variant = validateCatalogueRouteContract(detail, 'Taipei', route)
+  const variant = validateCatalogueRouteContract(detail, targets.detailCity, route)
   const stopUid = variant.stops.features[0].properties.stopUid
   const place = await readJson(
     origin,
-    addProbe(`/api/v1/map/stop-place?city=Taipei&stopUid=${encodeURIComponent(stopUid)}`, token, `${phase}-place`),
+    addProbe(`/api/v1/map/stop-place?city=${encodeURIComponent(targets.detailCity)}&stopUid=${encodeURIComponent(stopUid)}`, token, `${phase}-place`),
     MAX_JSON_BYTES,
     'degraded_contract_invalid',
   )
@@ -222,22 +270,22 @@ async function probeHttpSurface({ origin, token, phase }) {
   }
   const arrivals = validateArrivalsContract(await readJson(
     origin,
-    addProbe(`/api/v1/map/place/${encodeURIComponent(place.place.placeId)}/arrivals?city=Taipei`, token, `${phase}-arrivals`),
+    addProbe(`/api/v1/map/place/${encodeURIComponent(place.place.placeId)}/arrivals?city=${encodeURIComponent(targets.detailCity)}`, token, `${phase}-arrivals`),
     MAX_JSON_BYTES,
     'degraded_contract_invalid',
-  ), 'Taipei', taipei.snapshotVersion)
+  ), targets.detailCity, detailRoutes.snapshotVersion)
 
   return Object.freeze({
     phase,
-    pages: PAGES.length,
+    pages: targets.pages.length,
     assets: allAssets.size,
     hashedAssets: [...allAssets].filter((path) => HASHED_ASSET.test(path)).length,
-    cities: REPRESENTATIVE_CITIES.length,
+    cities: targets.cities.length,
     degradedObserved: arrivals.warning !== null,
   })
 }
 
-async function probeFreshBrowser({ origin, token, releaseSha, workerVersionId }) {
+async function probeFreshBrowser({ origin, token, releaseSha, workerVersionId, targets }) {
   let browser
   const totals = { pageErrors: 0, consoleErrors: 0, chunkFailures: 0 }
   const browserReleasePath = addProbe('/api/v1/health/release', token, 'browser-release')
@@ -248,7 +296,7 @@ async function probeFreshBrowser({ origin, token, releaseSha, workerVersionId })
       locale: 'zh-TW',
       serviceWorkers: 'block',
     })
-    for (const target of PAGES) {
+    for (const target of targets.pages) {
       const page = await context.newPage()
       await waitForBrowserReleaseIdentity({
         expectedSha: releaseSha,
@@ -310,7 +358,7 @@ async function probeFreshBrowser({ origin, token, releaseSha, workerVersionId })
   if (totals.pageErrors > 0) throw new ReleaseSmokeError('browser_page_error')
   if (totals.consoleErrors > 0) throw new ReleaseSmokeError('browser_console_error')
   if (totals.chunkFailures > 0) throw new ReleaseSmokeError('browser_chunk_load_failed')
-  return Object.freeze({ pages: PAGES.length, ...totals })
+  return Object.freeze({ pages: targets.pages.length, ...totals })
 }
 
 async function readStaticAsset(origin, path) {
