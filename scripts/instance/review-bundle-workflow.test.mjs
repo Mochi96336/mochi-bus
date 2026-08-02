@@ -151,7 +151,7 @@ describe('manual instance bundle review workflow', () => {
 
       const summary = await readFile(summaryPath, 'utf8')
       expect(summary).toContain('Manual instance bundle review')
-      expect(summary).toContain('NO CHANGES WERE APPLIED')
+      expect(summary).toContain('This workflow is review-only.')
       expect(summary).toContain('artifact verification')
       expect(summary).toContain(result.outputs.bundle_hash)
       expect(summary).toContain(result.outputs.artifact_hash)
