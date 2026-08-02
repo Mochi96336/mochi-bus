@@ -7,7 +7,7 @@ export const DEFAULT_WRANGLER_CONFIG_PATH = '.generated/instance/wrangler.instan
 
 const CLOUDFLARE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/
 const D1_DATABASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const RATE_LIMIT_NAMESPACE_ID = /^[1-9][0-9]{0,19}$/
+const RATE_LIMIT_NAMESPACE_ID = /^[0-9]{1,20}$/
 const INSTANCE_ID = /^[a-z][a-z0-9-]{2,62}$/
 const SUPPORTED_CITY_SET = new Set(SUPPORTED_CITY_CODES)
 const RESOURCE_ENVIRONMENT = Object.freeze([
@@ -152,7 +152,7 @@ function optionalRateLimitNamespace(entries, expectedName, path) {
   if (matches.length === 0) return null
   const namespaceId = matches[0].namespace_id
   if (typeof namespaceId !== 'string' || !RATE_LIMIT_NAMESPACE_ID.test(namespaceId)) {
-    throw new Error(`${path}.${expectedName}.namespace_id must be a positive integer string`)
+    throw new Error(`${path}.${expectedName}.namespace_id must be an integer string`)
   }
   return namespaceId
 }
