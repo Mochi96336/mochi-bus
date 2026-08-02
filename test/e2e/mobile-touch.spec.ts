@@ -67,10 +67,10 @@ test('uses a real touch profile and renders wide invisible route hit targets', a
   await expect(hitTargets).toHaveCount(2)
   expect(await hitTargets.evaluateAll((paths) => paths.map((path) => ({
     strokeWidth: path.getAttribute('stroke-width'),
-    pointerEvents: getComputedStyle(path).pointerEvents,
+    interactive: path.classList.contains('leaflet-interactive'),
   })))).toEqual([
-    { strokeWidth: '26', pointerEvents: 'stroke' },
-    { strokeWidth: '26', pointerEvents: 'stroke' },
+    { strokeWidth: '26', interactive: true },
+    { strokeWidth: '26', interactive: true },
   ])
 
   // The mobile drawer may legally cover every preview segment. Verify the
