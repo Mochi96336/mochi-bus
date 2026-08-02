@@ -10,7 +10,10 @@ import {
   checkInstanceBundleFreshnessFile,
   readCurrentInstanceManifest,
 } from './check-bundle-freshness.mjs'
-import { writeVerifiedManifestReplacement } from './atomic-manifest-write.mjs'
+import {
+  MAX_ATOMIC_MANIFEST_BYTES,
+  writeVerifiedManifestReplacement,
+} from './atomic-manifest-write.mjs'
 import { readInstanceBundleArtifact } from './verify-bundle.mjs'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -147,6 +150,9 @@ export async function buildInstanceBundleApply(options, {
 
   const format = detectJsonFormat(current.source)
   const targetSource = serializeManifest(artifact.bundle.proposal.manifest, format)
+  if (Buffer.byteLength(targetSource, 'utf8') > MAX_ATOMIC_MANIFEST_BYTES) {
+    return blockedPlan(freshness, 'prepared_target_exceeds_write_limit')
+  }
   const parsedTarget = parseStrictJson(targetSource)
   if (hashCanonical(parsedTarget) !== artifact.bundle.hashes.targetManifestHash) {
     return blockedPlan(freshness, 'prepared_target_hash_mismatch')
