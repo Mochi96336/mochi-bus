@@ -17,6 +17,8 @@ npm ci
 
 Smoke 只在 `Deploy Worker` 成功後執行。Workflow 使用既有 `deploy-production` concurrency，且不新增 auto-merge、deployment environment 或自動 rollback。
 
+Release smoke 的 origin、enabled cities、default city 與 demo route identity 都從同一次編譯產生的 instance runtime 讀取。呼叫端若以 `MOCHI_BUS_RUNTIME_CONFIG` 或 `MOCHI_BUS_WRANGLER_CONFIG` 指定其他 generated artifacts，target selection 也必須使用同一組 environment；不允許 origin 與城市範圍分別來自不同 instance。
+
 ## Release propagation gate
 
 Runner 輪詢：
@@ -40,20 +42,24 @@ GET /api/v1/health/release
 
 - `/`
 - `/setup`
-- `/map?city=Chiayi`
+- `/map?city=<defaultCity>`
 
-Fresh-browser map 使用較小的 Chiayi dataset，避免每次部署無必要下載雙北大型 network；Taipei 仍由代表性 API smoke 覆蓋。每個頁面必須回傳 2xx HTML、DOCTYPE 與非空 title。Runner 從 HTML 的同源 `src`／`href` 開始，遞迴讀取 JS static imports、dynamic imports、CSS `@import` 與 `url()`，因此不只檢查穩定 entry files，也會實際讀取 Vite hashed chunks。
+Map target 永遠跟隨 instance 的 `transit.defaultCity`，因此單城 fork 不會再請求未啟用的固定城市。每個頁面必須回傳 2xx HTML、DOCTYPE 與非空 title。Runner 從 HTML 的同源 `src`／`href` 開始，遞迴讀取 JS static imports、dynamic imports、CSS `@import` 與 `url()`，因此不只檢查穩定 entry files，也會實際讀取 Vite hashed chunks。
 
-Asset graph 有固定節點上限；response body 也有固定 byte limit。外部 origin、data URL 與 blob URL 不進入 graph。任一同源 asset 404／5xx、HTML masquerading as JS/CSS、graph 無 asset、沒有 hashed chunk或超過上限都使 smoke 失敗。
+Asset graph 有固定節點上限；response body 也有固定 byte limit。外部 origin、data URL 與 blob URL 不進入 graph。任一同源 asset 404／5xx、HTML masquerading as JS/CSS、graph 無 asset、沒有 hashed chunk 或超過上限都使 smoke 失敗。
 
 ## Representative API smoke
 
-固定驗證一個高量城市與一個較小城市：
+Runner 最多選兩個代表城市，順序固定為：
 
-- Taipei
-- Chiayi
+1. route detail city：有 `demoQuery` 時使用 `demoQuery.city`，否則使用 `defaultCity`
+2. 若與 detail city 不同，優先加入 `defaultCity`
+3. 若仍有空位且 Chiayi 已啟用，加入 Chiayi 作為既有 cross-tier canary
+4. 否則依 `enabledCities` 順序加入下一個城市
 
-兩城都必須通過：
+因此 production 仍驗證 Taipei 與 Chiayi；單城 instance 只驗證自身城市；而 demo city 與 default city 不同時，兩者都一定進入 API contract smoke。
+
+每個代表城市都必須通過：
 
 - `/api/v1/map/routes` schema 2
 - `source === snapshot`
@@ -61,7 +67,9 @@ Asset graph 有固定節點上限；response body 也有固定 byte limit。外�
 - 非空且有 `routeUid`／`routeName` 的 route catalogue
 - `/api/v1/map/network` 64 KiB bounded prefix 的 city/version 與 catalogue 一致
 
-Taipei 另外固定使用路線名 `307` 作為語意樣本，但不硬編 RouteUID。Runner 從已驗證的 catalogue 收集所有當期 `routeName === "307"` 的 RouteUID，去重並排序；route detail 必須至少有一個可用 snapshot variant，其 RouteUID 與該集合相交。這避免 deployment acceptance 依賴 catalogue 第一筆，也避免 TDX／snapshot 換版後沿用過期 UID。
+Route detail city 有設定 `demoQuery` 時使用其 `routeName`，但不硬編 RouteUID。Runner 從已驗證的 catalogue 收集所有同名 RouteUID，去重並排序；route detail 必須至少有一個可用 snapshot variant，其 RouteUID 與該集合相交。
+
+若 `demoQuery` 為 `null`，runner 會從 catalogue 中可被公開 route endpoint 接受的 route name 裡，以排序後第一個名稱作為 deterministic sample。Instance schema、operational loader 與 selector 都將 route name 限制為最多 40 字元，與 `/api/v1/map/route` 的輸入契約一致；過長名稱不會成為自動 sample。
 
 通過 route detail 後，runner 取該 variant 第一個 stop 的 canonical place，再讀取 place arrivals。Arrivals 無論當下 realtime healthy 或 degraded，都必須維持：
 
@@ -77,9 +85,9 @@ Smoke 不刻意製造 TDX 故障，也不新增 production test backdoor。若�
 
 ## Fresh-browser boot
 
-每次 deploy 使用新 Chromium browser context，`serviceWorkers: block`，依序驗證三個主要頁面。對每個目標，runner 先用即將載入該頁的同一個 Chromium page 導航至帶 synthetic probe token 的 release endpoint，最多等待 60 秒、每 5 秒一次；只有觀察到 exact release SHA 與同一 Worker version 後，才掛載 runtime error listeners並導航目標頁面。這避免舊頁面先載入、release endpoint 稍後變新時留下假陽性。
+每次 deploy 使用新 Chromium browser context，`serviceWorkers: block`，依序驗證三個主要頁面。對每個目標，runner 先用即將載入該頁的同一個 Chromium page 導航至帶 synthetic probe token 的 release endpoint，最多等待 60 秒、每 5 秒一次；只有觀察到 exact release SHA 與同一 Worker version 後，才掛載 runtime error listeners 並導航目標頁面。這避免舊頁面先載入、release endpoint 稍後變新時留下假陽性。
 
-browser context 先看到舊 SHA，或同一 SHA但 Worker version 尚未一致時，會留在該窗口內重試。持續不一致收斂為 `release_propagation_timeout`；endpoint 持續不可讀或結構無效則收斂為 `release_observation_failed`。低階 `release_not_observed` 不得直接成為最終 Deploy evidence。
+browser context 先看到舊 SHA，或同一 SHA 但 Worker version 尚未一致時，會留在該窗口內重試。持續不一致收斂為 `release_propagation_timeout`；endpoint 持續不可讀或結構無效則收斂為 `release_observation_failed`。低階 `release_not_observed` 不得直接成為最終 Deploy evidence。
 
 其他 hard failure 包含：
 
@@ -127,10 +135,11 @@ Workflow 永遠上傳 `release-smoke-report.json`，保留 14 天。
 
 ## Local contract verification
 
-Pure-domain contract由 Vitest 驗證，不需接觸 production：
+CLI target selection 與 instance runtime contract 由下列測試驗證，不需接觸 production：
 
 ```text
-npm run test -- scripts/release-smoke/post-deploy.test.mjs
+npm run test -- scripts/release-smoke/run-post-deploy.test.mjs scripts/instance/operational-resources.test.mjs
+npm run test:instance
 ```
 
 真正的 `npm run release:smoke` 預設會打 production origin；除 deploy workflow 或明確受控操作外，不應拿它當一般本機單元測試執行。
