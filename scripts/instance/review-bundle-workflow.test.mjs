@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -106,6 +106,9 @@ describe('manual instance bundle review workflow', () => {
     expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
       overrides: { INPUT_CHANGES_JSON: JSON.stringify(Array.from({ length: 65 }, () => 'x')) },
     }))).toThrow('at most 64')
+    expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
+      overrides: { INPUT_CHANGES_JSON: JSON.stringify(['--site-name', 'Island\nInjected']) },
+    }))).toThrow('line breaks')
     for (const forbidden of ['--write', '--config=instance.json', '--output', '--dry-run', '--expect-hash']) {
       expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
         overrides: { INPUT_CHANGES_JSON: JSON.stringify([forbidden]) },
@@ -119,8 +122,9 @@ describe('manual instance bundle review workflow', () => {
       await expect(resolveInstanceBundleReviewConfig(cwd, 'docs/example.json')).rejects.toThrow('inside instances')
       await writeFile(join(cwd, 'not-json.txt'), '{}', 'utf8')
       await expect(resolveInstanceBundleReviewConfig(cwd, 'not-json.txt')).rejects.toThrow('.json extension')
-      await symlink(join(cwd, 'instance.json'), join(cwd, 'instances-link.json'))
-      await expect(resolveInstanceBundleReviewConfig(cwd, 'instances-link.json')).rejects.toThrow('inside instances')
+      await mkdir(join(cwd, 'instances'))
+      await symlink(join(cwd, 'instance.json'), join(cwd, 'instances', 'linked.json'))
+      await expect(resolveInstanceBundleReviewConfig(cwd, 'instances/linked.json')).rejects.toThrow('symbolic link')
       const valid = await resolveInstanceBundleReviewConfig(cwd, 'instance.json')
       expect(valid.displayPath).toBe('instance.json')
     })
