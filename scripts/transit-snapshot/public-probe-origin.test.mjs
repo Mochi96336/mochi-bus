@@ -19,6 +19,19 @@ describe('public probe origin', () => {
     expect(readFile).toHaveBeenCalledWith('/repo/.generated/instance/instance-runtime.json', 'utf8')
   })
 
+  it('uses the operational runtime path and retains the legacy alias as fallback', () => {
+    const readFile = vi.fn(() => JSON.stringify({ site: { canonicalOrigin: 'https://bus.example' } }))
+    resolvePublicProbeBaseUrl({
+      cwd: '/repo',
+      env: {
+        MOCHI_BUS_RUNTIME_CONFIG: 'generated/runtime.json',
+        MOCHI_BUS_INSTANCE_RUNTIME: 'legacy/runtime.json',
+      },
+      readFile,
+    })
+    expect(readFile).toHaveBeenCalledWith('/repo/generated/runtime.json', 'utf8')
+  })
+
   it('fails closed when a request-derived instance has no explicit public URL', () => {
     expect(() => resolvePublicProbeBaseUrl({
       env: {},
