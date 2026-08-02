@@ -54,7 +54,7 @@
               "required": ["city", "routeName", "stopName", "stopUid", "routeUid", "direction"],
               "properties": {
                 "city": { "$ref": "#/$defs/cityCode" },
-                "routeName": { "type": "string", "minLength": 1, "maxLength": 160 },
+                "routeName": { "type": "string", "minLength": 1, "maxLength": 40 },
                 "stopName": { "type": "string", "minLength": 1, "maxLength": 160 },
                 "stopUid": { "type": "string", "minLength": 1, "maxLength": 160 },
                 "routeUid": { "type": "string", "minLength": 1, "maxLength": 160 },
