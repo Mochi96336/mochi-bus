@@ -97,6 +97,7 @@ export async function writeVerifiedManifestReplacement({
     await assertExpectedCurrentSource(configPath, expectedSource, sourceIdentity)
     await rename(temporaryPath, configPath)
     renamed = true
+    await syncParentDirectory(configPath)
     if (typeof afterRename === 'function') {
       await afterRename({ configPath, lockPath, targetManifestHash })
     }
@@ -149,6 +150,18 @@ export async function writeVerifiedManifestReplacement({
   }
 
   return result
+}
+
+async function syncParentDirectory(configPath) {
+  if (process.platform === 'win32') return false
+  let handle
+  try {
+    handle = await open(dirname(configPath), constants.O_RDONLY)
+    await handle.sync()
+    return true
+  } finally {
+    await handle?.close()
+  }
 }
 
 async function assertExpectedCurrentSource(configPath, expectedSource, sourceIdentity) {
