@@ -147,30 +147,40 @@ describe('manual instance bundle review workflow', () => {
     })
   })
 
-  test('creates and verifies one self-contained review directory', async () => {
+  test('creates, verifies and freshness-checks one self-contained review directory', async () => {
     await withWorkspace(async ({ cwd, summaryPath, outputPath }) => {
       const inputs = parseInstanceBundleReviewWorkflowInputs(workflowEnv({ summaryPath, outputPath }))
       const result = await runInstanceBundleReviewWorkflow(inputs, { cwd, env: {} })
       expect(result.verification.ok).toBe(true)
+      expect(result.freshness.status).toBe('fresh')
+      expect(result.freshness.applyAllowed).toBe(true)
       expect(result.artifact.bundle.proposal.manifest.site.name).toBe('Island Transit')
       expect(result.outputs.artifact_directory).toBe('.generated/review/workflow-123456789-2')
 
       const bundle = JSON.parse(await readFile(join(cwd, result.outputs.artifact_path), 'utf8'))
       const verification = JSON.parse(await readFile(join(cwd, result.outputs.verification_path), 'utf8'))
+      const freshness = JSON.parse(await readFile(join(cwd, result.outputs.freshness_path), 'utf8'))
       expect(bundle.integrity.artifactHash).toBe(result.outputs.artifact_hash)
       expect(verification.bundleHash).toBe(result.outputs.bundle_hash)
       expect(verification.summary.failed).toBe(0)
+      expect(freshness.status).toBe('fresh')
+      expect(freshness.source.matched).toBe(true)
+      expect(freshness.baseline.matched).toBe(true)
 
       const outputs = await readFile(outputPath, 'utf8')
       expect(outputs).toContain(`artifact_name=${result.outputs.artifact_name}`)
       expect(outputs).toContain(`bundle_hash=${result.outputs.bundle_hash}`)
       expect(outputs).toContain(`artifact_hash=${result.outputs.artifact_hash}`)
+      expect(outputs).toContain(`freshness_path=${result.outputs.freshness_path}`)
+      expect(outputs).toContain('freshness_status=fresh')
 
       const summary = await readFile(summaryPath, 'utf8')
       expect(summary).toContain('Manual instance bundle review')
       expect(summary).toContain('This workflow is review-only.')
       expect(summary).toContain('Offline verification')
       expect(summary).toContain('change-bundle artifact: VERIFIED')
+      expect(summary).toContain('Source freshness')
+      expect(summary).toContain('Instance change-bundle freshness')
       expect(summary).toContain(result.outputs.bundle_hash)
       expect(summary).toContain(result.outputs.artifact_hash)
     })
@@ -227,6 +237,7 @@ describe('manual instance bundle review workflow', () => {
       const evidence = [
         await readFile(join(cwd, result.outputs.artifact_path), 'utf8'),
         await readFile(join(cwd, result.outputs.verification_path), 'utf8'),
+        await readFile(join(cwd, result.outputs.freshness_path), 'utf8'),
         await readFile(summaryPath, 'utf8'),
         await readFile(outputPath, 'utf8'),
       ].join('\n')
@@ -234,7 +245,7 @@ describe('manual instance bundle review workflow', () => {
     })
   })
 
-  test('main prints only the verified identity after all files and summaries succeed', async () => {
+  test('main prints only the verified fresh identity after all evidence succeeds', async () => {
     await withWorkspace(async ({ cwd, summaryPath, outputPath }) => {
       let stdout = ''
       const result = await main({
@@ -246,6 +257,7 @@ describe('manual instance bundle review workflow', () => {
       expect(record.message).toBe('instance_bundle_review_verified')
       expect(record.bundleHash).toBe(result.outputs.bundle_hash)
       expect(record.artifactHash).toBe(result.outputs.artifact_hash)
+      expect(record.freshnessStatus).toBe('fresh')
     })
   })
 })
