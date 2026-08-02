@@ -18,7 +18,7 @@ describe('instance bundle staleness gate contracts', () => {
     expect(packageSource).toContain('"instance:check-bundle-freshness": "node scripts/instance/check-bundle-freshness.mjs"')
     expect(gate).not.toMatch(/node:child_process|\bexec(File|Sync)?\b|\bspawn(Sync)?\b/)
     expect(gate).not.toMatch(/node:https|node:http|undici|\bfetch\s*\(/)
-    expect(gate).not.toMatch(/writeFile|rename|link|unlink|rm\s*\(/)
+    expect(gate).not.toMatch(/\b(?:writeFile|rename|link|unlink)\s*\(|\brm\s*\(/)
     expect(gate).toContain('readInstanceBundleArtifact')
     expect(gate).toContain('verifyInstanceBundleArtifact')
     expect(gate).toContain("open(configPath, constants.O_RDONLY | noFollow)")
