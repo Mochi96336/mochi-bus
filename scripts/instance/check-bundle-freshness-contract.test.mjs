@@ -35,6 +35,9 @@ describe('instance bundle staleness gate contracts', () => {
     expect(gate).toContain("id: 'baseline-manifest'")
     expect(gate).toContain("id: 'instance-id'")
     expect(gate).toContain("id: 'config-path'")
+    expect(gate).toContain('lstat(configPath)')
+    expect(gate).toContain('sameFileIdentity(handleAfter, pathAfter)')
+    expect(gate).toContain("new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })")
     expect(gate).toContain("if (report.status !== 'fresh')")
   })
 
@@ -49,6 +52,13 @@ describe('instance bundle staleness gate contracts', () => {
     expect(gate).toContain('NO FILES WERE CHANGED')
   })
 
+  test('renders summaries with dynamic inert code spans', async () => {
+    const gate = await source(gateUrl)
+    expect(gate).toContain('function markdownCodeSpan(value)')
+    expect(gate).toContain("const fence = '`'.repeat")
+    expect(gate).not.toContain('function escapeInline(value)')
+  })
+
   test('review workflow persists verified freshness evidence', async () => {
     const [runner, tests] = await Promise.all([source(reviewRunnerUrl), source(reviewTestUrl)])
     expect(runner).toContain('checkInstanceBundleFreshnessFile')
@@ -60,7 +70,7 @@ describe('instance bundle staleness gate contracts', () => {
     expect(tests).toContain('freshness_path')
   })
 
-  test('documentation separates freshness from atomic apply and deployment readiness', async () => {
+  test('documentation separates freshness, apply eligibility and projected cutover state', async () => {
     const [documentation, reviewDocumentation] = await Promise.all([
       source(documentationUrl),
       source(reviewDocumentationUrl),
@@ -70,6 +80,7 @@ describe('instance bundle staleness gate contracts', () => {
     expect(documentation).toContain('blocked')
     expect(documentation).toContain('formatting_drift')
     expect(documentation).toContain('already_applied')
+    expect(documentation).toContain('projectedCutoverReady')
     expect(documentation).toContain('does not lock')
     expect(documentation).toContain('does not execute')
     expect(reviewDocumentation).toContain('freshness.json')
