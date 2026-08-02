@@ -110,8 +110,8 @@ describe('instance manifest initializer', () => {
     })
     expect(plan.instance).toMatchObject({ id: 'operator-bus', profile: 'operator' })
     expect(plan.nonDestructive).toBe(true)
-    expect(plan.steps.some((step) => step.id === 'd1' && step.status === 'action_required')).toBe(true)
-    expect(plan.steps.some((step) => step.id === 'rate-limits' && step.status === 'action_required')).toBe(true)
+    expect(plan.steps.some((step) => step.id === 'cloudflare-d1' && step.status === 'action_required')).toBe(true)
+    expect(plan.steps.some((step) => step.id === 'rate-limit-namespaces' && step.status === 'action_required')).toBe(true)
   })
 
   test('produces a strictly valid operator manifest when all provisioned IDs are supplied', () => {
