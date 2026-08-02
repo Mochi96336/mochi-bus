@@ -1,6 +1,6 @@
 # Instance bundle staleness gate
 
-A saved change-bundle artifact proves what was reviewed. Before using it, `instance:check-bundle-freshness` checks whether the repository manifest still has the exact source state that produced that artifact.
+A saved change-bundle artifact proves what was reviewed. Before using its apply command, `instance:check-bundle-freshness` checks whether the repository manifest still has the exact source state that produced that artifact.
 
 The command is read-only. It does not write the manifest, compile generated files, execute the reviewed apply command, invoke Wrangler or contact Cloudflare.
 
@@ -53,7 +53,7 @@ The report distinguishes:
 
 - `formatting_drift`: canonical manifest content still equals the baseline, but bytes, indentation, key order or line endings changed
 - `semantic_drift`: canonical content differs from both the reviewed baseline and target
-- `already_applied`: the current manifest already equals the reviewed target, so the apply operation must not run again
+- `already_applied`: the current manifest already equals the reviewed target, so the apply command must not run again
 
 Formatting-only drift is intentionally stale. Repository writes use optimistic source-state checks, so review evidence must match exact source bytes rather than only equivalent parsed JSON.
 
@@ -135,7 +135,7 @@ The manual review workflow also performs this gate immediately after creating an
 
 ## Apply the reviewed artifact
 
-A standalone freshness check does not lock or write the manifest. Use `instance:apply-bundle` when the reviewed proposal should be committed to the repository:
+A standalone freshness check does not lock or write the manifest. The gate does not execute the apply command. Use `instance:apply-bundle` when the reviewed proposal should be committed to the repository:
 
 ```sh
 npm run instance:apply-bundle -- \
