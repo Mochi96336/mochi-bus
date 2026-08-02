@@ -117,7 +117,7 @@ function completeEnv() {
     TDX_CLIENT_ID: 'tdx-id',
     TDX_CLIENT_SECRET: 'tdx-secret',
     R2_ACCESS_KEY_ID: 'r2-id',
-    R2_SECRET_ACCESS_KEY: 'r2-secret',
+    R2_SECRET_ACCESS_KEY: 'opaque-sensitive-value-7f3b91',
   }
 }
 
