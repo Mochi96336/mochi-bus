@@ -8,10 +8,10 @@ import {
   writeInstanceBundleArtifact,
 } from './bundle-artifact.mjs'
 import { parseStrictJson } from './bundle-integrity.mjs'
-import { renderInstanceChangeBundleMarkdown } from './change-bundle.mjs'
+import { renderInstanceChangeBundleText } from './change-bundle.mjs'
 import {
   parseInstanceBundleVerificationArguments,
-  renderInstanceBundleVerificationMarkdown,
+  renderInstanceBundleVerificationText,
   verifyInstanceBundleFile,
 } from './verify-bundle.mjs'
 
@@ -20,6 +20,7 @@ const MAX_CHANGE_ARGUMENTS = 64
 const MAX_CHANGE_ARGUMENT_BYTES = 2048
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/
+const UNSAFE_TEXT_PATTERN = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u
 const FORBIDDEN_CONFIG_DIRECTORIES = new Set(['.git', '.generated', 'node_modules'])
 const FORBIDDEN_CHANGE_OPTIONS = new Set([
   '--config',
@@ -39,7 +40,7 @@ export function parseInstanceBundleReviewWorkflowInputs(env = process.env) {
     throw new Error('The instance bundle review runner is available only inside GitHub Actions')
   }
 
-  const confirmation = requiredInput(env.INPUT_CONFIRMATION, 'confirmation')
+  const confirmation = requiredExactInput(env.INPUT_CONFIRMATION, 'confirmation')
   if (confirmation !== 'REVIEW') {
     throw new Error('Instance bundle review requires confirmation REVIEW')
   }
@@ -62,8 +63,8 @@ export function parseInstanceBundleReviewWorkflowInputs(env = process.env) {
     if (typeof argument !== 'string' || argument.length === 0) {
       throw new Error(`changes_json argument ${index + 1} must be a non-empty string`)
     }
-    if (/[\0\r\n]/.test(argument)) {
-      throw new Error(`changes_json argument ${index + 1} cannot contain NUL or line breaks`)
+    if (UNSAFE_TEXT_PATTERN.test(argument)) {
+      throw new Error(`changes_json argument ${index + 1} cannot contain control or bidirectional formatting characters`)
     }
     if (Buffer.byteLength(argument, 'utf8') > MAX_CHANGE_ARGUMENT_BYTES) {
       throw new Error(`changes_json argument ${index + 1} exceeds the ${MAX_CHANGE_ARGUMENT_BYTES}-byte limit`)
@@ -99,6 +100,10 @@ export function parseInstanceBundleReviewWorkflowInputs(env = process.env) {
 export async function resolveInstanceBundleReviewConfig(cwd, value) {
   const rootPath = resolve(cwd)
   if (isAbsolute(value)) throw new Error('config_path must be repository-relative')
+  const rawSegments = String(value).replaceAll('\\', '/').split('/')
+  if (rawSegments.some((segment) => segment === '.' || segment === '..')) {
+    throw new Error('config_path cannot contain traversal segments')
+  }
   const configPath = resolve(rootPath, value)
   const shown = displayPath(rootPath, configPath)
   if (shown === '..' || shown.startsWith('../')) {
@@ -190,23 +195,27 @@ export async function runInstanceBundleReviewWorkflow(inputs, {
 
 export function renderWorkflowSummary({ inputs, config, artifact, verification, outputs }) {
   const expected = inputs.expectedBundleHash
-    ? `\`${inputs.expectedBundleHash}\` (matched before artifact creation)`
+    ? `${markdownCodeSpan(inputs.expectedBundleHash)} (matched before artifact creation)`
     : 'not supplied'
   return `${[
     '## Manual instance bundle review',
     '',
-    `- Source commit: \`${inputs.sourceSha}\``,
-    `- Source ref: \`${escapeInline(inputs.sourceRef)}\``,
-    `- Config: \`${escapeInline(config.displayPath)}\``,
-    `- Artifact upload name: \`${escapeInline(outputs.artifact_name)}\``,
+    `- Source commit: ${markdownCodeSpan(inputs.sourceSha)}`,
+    `- Source ref: ${markdownCodeSpan(inputs.sourceRef)}`,
+    `- Config: ${markdownCodeSpan(config.displayPath)}`,
+    `- Artifact upload name: ${markdownCodeSpan(outputs.artifact_name)}`,
     `- Expected bundle hash: ${expected}`,
     `- Parsed change arguments: ${inputs.changes.length}`,
     '',
     '> This workflow is review-only. It did not write the manifest, compile generated instance files, read repository secrets, invoke Wrangler or contact Cloudflare.',
     '',
-    renderInstanceChangeBundleMarkdown(artifact.bundle).trimEnd(),
+    '### Change bundle',
     '',
-    renderInstanceBundleVerificationMarkdown(verification).trimEnd(),
+    indentCodeBlock(renderInstanceChangeBundleText(artifact.bundle).trimEnd()),
+    '',
+    '### Offline verification',
+    '',
+    indentCodeBlock(renderInstanceBundleVerificationText(verification).trimEnd()),
     '',
     'The uploaded `bundle.json` and `verification.json` are the complete review evidence for this run.',
     '',
@@ -253,6 +262,11 @@ async function appendWorkflowOutputs(path, outputs) {
   await appendFile(path, `${lines.join('\n')}\n`, 'utf8')
 }
 
+function requiredExactInput(value, name) {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`${name} is required`)
+  return value
+}
+
 function requiredInput(value, name) {
   const normalized = typeof value === 'string' ? value.trim() : ''
   if (!normalized) throw new Error(`${name} is required`)
@@ -261,7 +275,9 @@ function requiredInput(value, name) {
 
 function requiredSingleLine(value, name) {
   const normalized = requiredInput(value, name)
-  if (/[\0\r\n]/.test(normalized)) throw new Error(`${name} cannot contain NUL or line breaks`)
+  if (UNSAFE_TEXT_PATTERN.test(normalized)) {
+    throw new Error(`${name} cannot contain control or bidirectional formatting characters`)
+  }
   return normalized
 }
 
@@ -290,8 +306,16 @@ function displayPath(cwd, path) {
   return relative(resolve(cwd), path).split(sep).join('/') || '.'
 }
 
-function escapeInline(value) {
-  return String(value).replaceAll('`', '\\`').replaceAll('|', '\\|')
+function markdownCodeSpan(value) {
+  const text = String(value).replace(/\r\n?|\n/g, ' ')
+  const runs = text.match(/`+/g) ?? []
+  const fence = '`'.repeat(Math.max(0, ...runs.map((run) => run.length)) + 1)
+  const padded = text.startsWith('`') || text.endsWith('`') || text.startsWith(' ') || text.endsWith(' ')
+  return `${fence}${padded ? ` ${text} ` : text}${fence}`
+}
+
+function indentCodeBlock(value) {
+  return String(value).split(/\r?\n/).map((line) => `    ${line}`).join('\n')
 }
 
 function deepFreeze(value) {
