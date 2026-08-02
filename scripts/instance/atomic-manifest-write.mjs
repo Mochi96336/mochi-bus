@@ -126,7 +126,8 @@ export async function writeVerifiedManifestReplacement({
     await captureCleanup(cleanupErrors, 'remove temporary file', async () => remove(temporaryPath, { force: true }))
   }
   await captureCleanup(cleanupErrors, 'close apply lock', async () => lockHandle?.close())
-  if (ownsLock && lockPath) {
+  const preserveLock = renamed && !verified
+  if (ownsLock && lockPath && !preserveLock) {
     await captureCleanup(cleanupErrors, 'remove apply lock', async () => remove(lockPath, { force: true }))
   }
 
