@@ -1,6 +1,6 @@
 # Instance bundle staleness gate
 
-A saved change-bundle artifact proves what was reviewed. Before using its apply command, `instance:check-bundle-freshness` checks whether the repository manifest still has the exact source state that produced that artifact.
+A saved change-bundle artifact proves what was reviewed. Before using it, `instance:check-bundle-freshness` checks whether the repository manifest still has the exact source state that produced that artifact.
 
 The command is read-only. It does not write the manifest, compile generated files, execute the reviewed apply command, invoke Wrangler or contact Cloudflare.
 
@@ -41,7 +41,7 @@ npm run instance:check-bundle-freshness -- \
 - the current manifest has the exact UTF-8 source bytes stored in artifact evidence
 - the canonical current manifest equals the reviewed baseline manifest
 
-Only a fresh artifact with an effective proposal exposes the reviewed `instance:update --write` command in the report.
+Only a fresh artifact with an effective proposal exposes the reviewed apply metadata in the report.
 
 A fresh operator provisioning draft may still be written to the repository, but `deploymentReady` remains false until the separately projected resource and cutover blockers are resolved.
 
@@ -53,9 +53,9 @@ The report distinguishes:
 
 - `formatting_drift`: canonical manifest content still equals the baseline, but bytes, indentation, key order or line endings changed
 - `semantic_drift`: canonical content differs from both the reviewed baseline and target
-- `already_applied`: the current manifest already equals the reviewed target, so the apply command must not run again
+- `already_applied`: the current manifest already equals the reviewed target, so the apply operation must not run again
 
-Formatting-only drift is intentionally stale. The existing updater uses optimistic source-state checks, so review evidence must match exact source bytes rather than only equivalent parsed JSON.
+Formatting-only drift is intentionally stale. Repository writes use optimistic source-state checks, so review evidence must match exact source bytes rather than only equivalent parsed JSON.
 
 ### `blocked`
 
@@ -69,7 +69,7 @@ Formatting-only drift is intentionally stale. The existing updater uses optimist
 - instance identity mismatch
 - absolute paths, traversal or symlinked manifests
 
-A blocked report never exposes the apply command.
+A blocked report never exposes apply eligibility.
 
 ## Machine-readable and GitHub output
 
@@ -133,20 +133,33 @@ The manual review workflow also performs this gate immediately after creating an
 
 `freshness.json` proves that the artifact source evidence matched the checked-out manifest when the review package was created. It does not prove the repository remained unchanged after the workflow ended.
 
-## Important race boundary
+## Apply the reviewed artifact
 
-A freshness check does not lock the manifest. Another process can change the file after the gate finishes and before a human runs the reviewed command.
+A standalone freshness check does not lock or write the manifest. Use `instance:apply-bundle` when the reviewed proposal should be committed to the repository:
+
+```sh
+npm run instance:apply-bundle -- \
+  --input review/bundle.json \
+  --expect-hash <bundle-sha256> \
+  --expect-artifact-hash <artifact-sha256> \
+  --write
+```
+
+The apply command requires both review hashes. It repeats the complete freshness verification, independently rechecks the critical source, baseline and target identities, prepares a same-directory temporary file, checks the source again immediately before atomic rename, and verifies the written target afterward.
+
+See [Apply a reviewed instance bundle](./INSTANCE_BUNDLE_APPLY.md) for the lock, atomic-write and remaining race boundaries.
 
 Recommended sequence:
 
 ```text
-verify artifact hashes
-→ check freshness
-→ inspect the reviewed apply command
-→ run the updater separately
+verify artifact hashes through the review channel
+→ optionally inspect with instance:check-bundle-freshness
+→ preview instance:apply-bundle
+→ run instance:apply-bundle --write
+→ validate or finish provisioning
 → compile
 → run the live doctor
 → deploy through the normal release process
 ```
 
-The gate does not execute the apply command and does not provide an atomic apply operation. A future apply-from-artifact command would need to repeat the source hash check and perform the write in one operation.
+Neither freshness nor apply compiles generated files or deploys remote resources.
