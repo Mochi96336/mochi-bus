@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -13,6 +13,7 @@ import {
   main,
   parseInstanceBundleFreshnessArguments,
   readCurrentInstanceManifest,
+  renderInstanceBundleFreshnessMarkdown,
 } from './check-bundle-freshness.mjs'
 
 const BASE_MANIFEST = Object.freeze({
@@ -105,6 +106,7 @@ describe('instance change-bundle freshness gate', () => {
       expect(report.status).toBe('fresh')
       expect(report.currentState).toBe('baseline')
       expect(report.applyAllowed).toBe(true)
+      expect(report.projectedCutoverReady).toBe(true)
       expect(report.proposal.applyCommand).toContain('instance:update')
       expect(report.source.matched).toBe(true)
       expect(report.baseline.matched).toBe(true)
@@ -122,6 +124,19 @@ describe('instance change-bundle freshness gate', () => {
       expect(report.source.matched).toBe(false)
       expect(report.baseline.matched).toBe(true)
       expect(report.applyAllowed).toBe(false)
+    })
+  })
+
+  test('keeps no-op formatting drift distinct from already applied', async () => {
+    await withWorkspace(async (cwd) => {
+      await createArtifact(cwd, ['--site-name', 'Island Bus'])
+      await writeFile(join(cwd, 'instance.json'), `${JSON.stringify(BASE_MANIFEST)}\n`, 'utf8')
+      const report = await checkInstanceBundleFreshnessFile(freshnessOptions(), { cwd })
+      expect(report.status).toBe('stale')
+      expect(report.staleKind).toBe('formatting_drift')
+      expect(report.currentState).toBe('target')
+      expect(report.applyAllowed).toBe(false)
+      expect(report.projectedCutoverReady).toBe(true)
     })
   })
 
@@ -153,6 +168,7 @@ describe('instance change-bundle freshness gate', () => {
       expect(report.currentState).toBe('target')
       expect(report.target.currentMatched).toBe(true)
       expect(report.proposal.applyCommand).toBeNull()
+      expect(report.projectedCutoverReady).toBe(true)
     })
   })
 
@@ -208,18 +224,60 @@ describe('instance change-bundle freshness gate', () => {
       expect(report.status).toBe('fresh')
       expect(report.proposal.changed).toBe(false)
       expect(report.applyAllowed).toBe(false)
+      expect(report.projectedCutoverReady).toBe(true)
       expect(report.proposal.applyCommand).toBeNull()
     })
   })
 
-  test('bounds current manifest reads and rejects symlinks', async () => {
+  test('bounds reads, rejects invalid UTF-8 and blocks path replacement during the read', async () => {
     await withWorkspace(async (cwd) => {
       await writeFile(join(cwd, 'large.json'), '123456789', 'utf8')
       await expect(readCurrentInstanceManifest('large.json', { cwd, maxBytes: 8 })).rejects.toThrow('read limit')
+
+      await writeFile(
+        join(cwd, 'invalid.json'),
+        Buffer.from('{"instanceId":"bad\xff"}', 'latin1'),
+      )
+      await expect(readCurrentInstanceManifest('invalid.json', { cwd })).rejects.toThrow('valid UTF-8')
+
+      const replacement = join(cwd, 'replacement.json')
+      await writeFile(replacement, `${JSON.stringify(BASE_MANIFEST)}\n`, 'utf8')
+      await expect(readCurrentInstanceManifest('instance.json', {
+        cwd,
+        afterRead: async ({ configPath }) => rename(replacement, configPath),
+      })).rejects.toThrow('path or content changed')
+    })
+  })
+
+  test('rejects final symlinks and repository escapes without relying on O_NOFOLLOW', async () => {
+    await withWorkspace(async (cwd) => {
       await symlink(join(cwd, 'instance.json'), join(cwd, 'linked.json'))
-      await expect(readCurrentInstanceManifest('linked.json', { cwd })).rejects.toThrow()
+      await expect(readCurrentInstanceManifest('linked.json', { cwd })).rejects.toThrow('symbolic link')
       await expect(readCurrentInstanceManifest('../outside.json', { cwd })).rejects.toThrow('stay inside')
     })
+  })
+
+  test('renders operator-controlled Markdown as inert code spans', () => {
+    const markdown = renderInstanceBundleFreshnessMarkdown({
+      status: 'fresh',
+      currentState: 'baseline',
+      staleKind: null,
+      applyAllowed: true,
+      projectedCutoverReady: true,
+      artifactPath: 'review/`bundle`.json',
+      configPath: 'instances/`island`.json',
+      instanceId: 'island`test',
+      bundleHash: 'a'.repeat(64),
+      artifactHash: 'b'.repeat(64),
+      proposal: {
+        applyCommand: "npm run instance:update -- --site-name '`## injected`' --write",
+      },
+      errors: ['bad `value`\n## injected'],
+    })
+    expect(markdown).toContain('``island`test``')
+    expect(markdown).toContain("``npm run instance:update -- --site-name '`## injected`' --write``")
+    expect(markdown).toContain('``bad `value` ## injected``')
+    expect(markdown).not.toContain('\n## injected')
   })
 
   test('writes an explicit summary and then fails closed for stale evidence', async () => {
