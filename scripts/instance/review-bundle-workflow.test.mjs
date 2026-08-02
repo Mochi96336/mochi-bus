@@ -82,9 +82,11 @@ describe('manual instance bundle review workflow', () => {
     expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
       overrides: { GITHUB_ACTIONS: 'false' },
     }))).toThrow('only inside GitHub Actions')
-    expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
-      overrides: { INPUT_CONFIRMATION: 'review' },
-    }))).toThrow('confirmation REVIEW')
+    for (const invalid of ['review', ' REVIEW', 'REVIEW ', 'REVIEW\n', '\tREVIEW']) {
+      expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
+        overrides: { INPUT_CONFIRMATION: invalid },
+      }))).toThrow('confirmation REVIEW')
+    }
   })
 
   test('parses a bounded JSON argument array and an optional reviewed hash', () => {
@@ -106,9 +108,17 @@ describe('manual instance bundle review workflow', () => {
     expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
       overrides: { INPUT_CHANGES_JSON: JSON.stringify(Array.from({ length: 65 }, () => 'x')) },
     }))).toThrow('at most 64')
-    expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
-      overrides: { INPUT_CHANGES_JSON: JSON.stringify(['--site-name', 'Island\nInjected']) },
-    }))).toThrow('line breaks')
+    for (const unsafe of [
+      'Island\nInjected',
+      'Island\tInjected',
+      'Island\u001bInjected',
+      'Island\u007fInjected',
+      'Island\u202eInjected',
+    ]) {
+      expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
+        overrides: { INPUT_CHANGES_JSON: JSON.stringify(['--site-name', unsafe]) },
+      }))).toThrow('control or bidirectional')
+    }
     for (const forbidden of ['--write', '--config=instance.json', '--output', '--dry-run', '--expect-hash']) {
       expect(() => parseInstanceBundleReviewWorkflowInputs(workflowEnv({
         overrides: { INPUT_CHANGES_JSON: JSON.stringify([forbidden]) },
@@ -118,7 +128,14 @@ describe('manual instance bundle review workflow', () => {
 
   test('restricts config reads to regular repository instance JSON files', async () => {
     await withWorkspace(async ({ cwd }) => {
-      await expect(resolveInstanceBundleReviewConfig(cwd, '../outside.json')).rejects.toThrow('stay inside')
+      for (const traversal of [
+        '../outside.json',
+        './instance.json',
+        'instances/../instance.json',
+        'instances\\..\\instance.json',
+      ]) {
+        await expect(resolveInstanceBundleReviewConfig(cwd, traversal)).rejects.toThrow('traversal segments')
+      }
       await expect(resolveInstanceBundleReviewConfig(cwd, 'docs/example.json')).rejects.toThrow('inside instances')
       await writeFile(join(cwd, 'not-json.txt'), '{}', 'utf8')
       await expect(resolveInstanceBundleReviewConfig(cwd, 'not-json.txt')).rejects.toThrow('.json extension')
@@ -160,10 +177,32 @@ describe('manual instance bundle review workflow', () => {
       const summary = await readFile(summaryPath, 'utf8')
       expect(summary).toContain('Manual instance bundle review')
       expect(summary).toContain('This workflow is review-only.')
-      expect(summary).toContain('artifact verification')
+      expect(summary).toContain('Offline verification')
+      expect(summary).toContain('change-bundle artifact: VERIFIED')
+      expect(summary).toContain('Source freshness')
       expect(summary).toContain('Instance change-bundle freshness')
       expect(summary).toContain(result.outputs.bundle_hash)
       expect(summary).toContain(result.outputs.artifact_hash)
+    })
+  })
+
+  test('renders reviewed values as inert Markdown code', async () => {
+    await withWorkspace(async ({ cwd, summaryPath, outputPath }) => {
+      const inputs = parseInstanceBundleReviewWorkflowInputs(workflowEnv({
+        summaryPath,
+        outputPath,
+        overrides: {
+          GITHUB_REF: 'refs/heads/agent/re`view',
+          INPUT_CHANGES_JSON: JSON.stringify(['--site-name', 'Island `Transit`']),
+        },
+      }))
+      await runInstanceBundleReviewWorkflow(inputs, { cwd, env: {} })
+
+      const summary = await readFile(summaryPath, 'utf8')
+      expect(summary).toContain('- Source ref: ``refs/heads/agent/re`view``')
+      expect(summary).toContain('    ~ site.name: "Island Bus" → "Island `Transit`"')
+      expect(summary).toContain("    Preview: npm run instance:update -- --config 'instance.json' --site-name 'Island `Transit`'")
+      expect(summary).not.toContain('Island \\`Transit\\`')
     })
   })
 
