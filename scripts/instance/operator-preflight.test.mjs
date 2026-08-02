@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  inspectOperatorPreflight,
   parseOperatorPreflightArguments,
   resolveOperatorPreflight,
   runOperatorPreflight,
@@ -112,6 +113,30 @@ describe('instance operator preflight', () => {
     expect(caught.message).toContain('TDX_CLIENT_SECRET')
     expect(caught.message).toContain('R2_ACCESS_KEY_ID')
     expect(caught.message).not.toContain('highly-sensitive-value')
+  })
+
+  it('collects every local blocker for doctor-style diagnostics', () => {
+    const inspected = inspectOperatorPreflight({
+      operation: 'snapshot',
+      forceEnabled: true,
+      plan: plan({ profile: 'managed' }),
+      resources: resources({ d1DatabaseId: null, publicOrigin: null }),
+      env: {
+        CLOUDFLARE_ACCOUNT_ID: 'not-an-account',
+        CLOUDFLARE_API_TOKEN: 'do-not-print-me',
+        R2_ACCESS_KEY_ID: 'only-half-a-pair',
+      },
+    })
+
+    expect(inspected.blockers).toEqual([
+      'CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID',
+      'snapshot requires a provisioned D1 database ID',
+      'R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be configured together',
+      'A fixed public origin or SNAPSHOT_SMOKE_BASE_URL is required',
+      'Missing required operator configuration: TDX_CLIENT_ID, TDX_CLIENT_SECRET',
+    ])
+    expect(JSON.stringify(inspected)).not.toContain('do-not-print-me')
+    expect(JSON.stringify(inspected)).not.toContain('only-half-a-pair')
   })
 
   it('requires explicit public origins only for operations that use them', () => {
