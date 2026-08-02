@@ -56,7 +56,7 @@ describe('instance bundle staleness gate contracts', () => {
     expect(runner).toContain('freshness_path')
     expect(runner).toContain('renderInstanceBundleFreshnessMarkdown')
     expect(tests).toContain('freshness.status')
-    expect(tests).toContain('freshness.json')
+    expect(tests).toContain('freshness_path')
   })
 
   test('documentation separates freshness from atomic apply and deployment readiness', async () => {
