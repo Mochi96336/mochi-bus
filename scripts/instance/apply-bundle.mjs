@@ -11,6 +11,7 @@ import {
   readCurrentInstanceManifest,
 } from './check-bundle-freshness.mjs'
 import {
+  ManifestReplacementError,
   MAX_ATOMIC_MANIFEST_BYTES,
   writeVerifiedManifestReplacement,
 } from './atomic-manifest-write.mjs'
@@ -196,15 +197,19 @@ export async function buildInstanceBundleApply(options, {
   })
 }
 
-export async function writeInstanceBundleApply(plan) {
+export async function writeInstanceBundleApply(plan, writerOptions = {}) {
   if (!plan?.ready) throw new Error(`Bundle apply is not ready: ${plan?.reason ?? 'unknown blocker'}`)
-  await writeVerifiedManifestReplacement(plan.write)
+  await writeVerifiedManifestReplacement(plan.write, writerOptions)
   return true
 }
 
-export function renderInstanceBundleApplyText(plan, { written = false } = {}) {
+export function renderInstanceBundleApplyText(plan, {
+  written = false,
+  writeResult = null,
+} = {}) {
+  const outcome = normalizeWriteResult({ written, writeResult })
   const lines = [
-    `Mochi Bus change-bundle apply: ${plan.ready ? (written ? 'APPLIED' : 'READY') : 'BLOCKED'}`,
+    `Mochi Bus change-bundle apply: ${plan.ready ? applyStatus(outcome) : 'BLOCKED'}`,
     `Artifact: ${plan.artifactPath ?? 'unavailable'}`,
     `Config: ${plan.configPath ?? 'unavailable'}`,
     `Instance: ${plan.instanceId ?? 'unknown'}`,
@@ -232,22 +237,46 @@ export function renderInstanceBundleApplyText(plan, { written = false } = {}) {
     for (const warning of plan.warnings) lines.push(`- ${warning}`)
   }
 
-  if (!written) {
+  if (outcome.writeState === 'preview') {
     lines.push('', 'NO FILE WAS CHANGED')
     lines.push(`Apply: ${renderApplyCommand(plan)}`)
-  } else if (plan.provisioningDraft) {
-    lines.push('', `Next: npm run instance:provision-plan -- --config ${shellQuote(plan.configPath)}`)
+  } else if (outcome.writeState === 'written_verified') {
+    appendSuccessfulNextStep(lines, plan)
   } else {
-    lines.push('', `Next: npm run instance:validate -- --config ${shellQuote(plan.configPath)}`)
+    lines.push('', `Write state: ${outcome.writeState}`)
+    lines.push(`Manifest written: ${outcome.written ? 'yes' : 'no'}`)
+    lines.push(`Manifest verified: ${outcome.verified ? 'yes' : 'no'}`)
+    if (outcome.lockPath) lines.push(`Apply lock: ${outcome.lockPath}`)
+    if (outcome.error) lines.push(`x ${outcome.error}`)
+    for (const cleanupError of outcome.cleanupErrors) lines.push(`x ${cleanupError}`)
+
+    if (outcome.writeState === 'written_verified_cleanup_failed') {
+      lines.push('', 'THE REVIEWED TARGET WAS WRITTEN AND VERIFIED, BUT CLEANUP FAILED')
+      lines.push('Inspect the apply lock and repository state before retrying.')
+    } else if (outcome.writeState === 'written_unverified') {
+      lines.push('', 'THE MANIFEST MAY HAVE CHANGED')
+      lines.push('Inspect the current manifest hash and contents before retrying.')
+    } else {
+      lines.push('', 'NO FILE WAS CHANGED')
+    }
   }
   return `${lines.join('\n')}\n`
 }
 
-export function renderInstanceBundleApplyJson(plan, { written = false } = {}) {
+export function renderInstanceBundleApplyJson(plan, {
+  written = false,
+  writeResult = null,
+} = {}) {
+  const outcome = normalizeWriteResult({ written, writeResult })
   return {
     schemaVersion: 1,
     ready: plan.ready,
-    written,
+    written: outcome.written,
+    verified: outcome.verified,
+    writeState: outcome.writeState,
+    writeError: outcome.error,
+    cleanupErrors: outcome.cleanupErrors,
+    lockPath: outcome.lockPath,
     reason: plan.reason,
     details: plan.details ?? [],
     artifactPath: plan.artifactPath,
@@ -276,6 +305,7 @@ export async function main({
   argv = process.argv.slice(2),
   cwd = process.cwd(),
   stdout = process.stdout,
+  writerOptions = {},
 } = {}) {
   const options = parseInstanceBundleApplyArguments(argv)
   if (options.help) {
@@ -284,10 +314,23 @@ export async function main({
   }
 
   const plan = await buildInstanceBundleApply(options, { cwd })
-  const written = options.write && plan.ready ? await writeInstanceBundleApply(plan) : false
+  let writeResult = null
+  if (options.write && plan.ready) {
+    try {
+      await writeInstanceBundleApply(plan, writerOptions)
+      writeResult = successfulWriteResult(plan)
+    } catch (error) {
+      writeResult = failedWriteResult(error, plan)
+      stdout.write(options.json
+        ? `${JSON.stringify(renderInstanceBundleApplyJson(plan, { writeResult }), null, 2)}\n`
+        : renderInstanceBundleApplyText(plan, { writeResult }))
+      throw error
+    }
+  }
+
   stdout.write(options.json
-    ? `${JSON.stringify(renderInstanceBundleApplyJson(plan, { written }), null, 2)}\n`
-    : renderInstanceBundleApplyText(plan, { written }))
+    ? `${JSON.stringify(renderInstanceBundleApplyJson(plan, { writeResult }), null, 2)}\n`
+    : renderInstanceBundleApplyText(plan, { writeResult }))
   if (!plan.ready) throw new Error(`instance:apply-bundle blocked: ${plan.reason}`)
   return plan
 }
@@ -333,6 +376,67 @@ function renderApplyCommand(plan) {
     '--expect-artifact-hash', plan.artifactHash,
     '--write',
   ].join(' ')
+}
+
+function appendSuccessfulNextStep(lines, plan) {
+  if (plan.provisioningDraft) {
+    lines.push('', `Next: npm run instance:provision-plan -- --config ${shellQuote(plan.configPath)}`)
+  } else {
+    lines.push('', `Next: npm run instance:validate -- --config ${shellQuote(plan.configPath)}`)
+  }
+}
+
+function applyStatus(outcome) {
+  if (outcome.writeState === 'written_verified') return 'APPLIED'
+  if (outcome.writeState === 'written_verified_cleanup_failed') return 'APPLIED WITH CLEANUP FAILURE'
+  if (outcome.writeState === 'written_unverified') return 'WRITE STATE UNKNOWN'
+  if (outcome.writeState === 'not_written') return 'WRITE FAILED'
+  return 'READY'
+}
+
+function normalizeWriteResult({ written, writeResult }) {
+  if (writeResult) return writeResult
+  return Object.freeze({
+    writeState: written ? 'written_verified' : 'preview',
+    written: Boolean(written),
+    verified: Boolean(written),
+    error: null,
+    cleanupErrors: Object.freeze([]),
+    lockPath: null,
+  })
+}
+
+function successfulWriteResult(plan) {
+  return Object.freeze({
+    writeState: 'written_verified',
+    written: true,
+    verified: true,
+    error: null,
+    cleanupErrors: Object.freeze([]),
+    lockPath: `${plan.write.configPath}.apply.lock`,
+  })
+}
+
+function failedWriteResult(error, plan) {
+  if (error instanceof ManifestReplacementError) {
+    const written = error.writeState !== 'not_written'
+    return Object.freeze({
+      writeState: error.writeState,
+      written,
+      verified: error.writeState === 'written_verified_cleanup_failed',
+      error: error.message,
+      cleanupErrors: Object.freeze([...error.cleanupErrors]),
+      lockPath: error.lockPath,
+    })
+  }
+  return Object.freeze({
+    writeState: 'not_written',
+    written: false,
+    verified: false,
+    error: errorMessage(error),
+    cleanupErrors: Object.freeze([]),
+    lockPath: `${plan.write.configPath}.apply.lock`,
+  })
 }
 
 function normalizeHash(value, optionName) {
