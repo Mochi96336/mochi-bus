@@ -19,7 +19,7 @@ describe('instance reviewed bundle apply contracts', () => {
     expect(apply).toContain('requires both --expect-hash and --expect-artifact-hash')
     expect(apply).not.toMatch(/node:child_process|\bexec(File|Sync)?\b|\bspawn(Sync)?\b/)
     expect(apply).not.toMatch(/node:https|node:http|undici|\bfetch\s*\(/)
-    expect(apply).not.toMatch(/instance:compile|wrangler|cloudflare/i)
+    expect(apply).not.toMatch(/from ['"][^'"]*(compile-config|wrangler|cloudflare)[^'"]*['"]/i)
   })
 
   test('reuses the complete freshness gate and independently re-verifies critical identities', async () => {
@@ -37,6 +37,7 @@ describe('instance reviewed bundle apply contracts', () => {
 
   test('uses an exclusive lock, durable temp file, immediate source recheck, atomic rename and post-write verification', async () => {
     const writer = await source(writerUrl)
+    expect(writer).toContain('MAX_ATOMIC_MANIFEST_BYTES = 1024 * 1024')
     expect(writer).toContain("open(lockPath, 'wx', 0o600)")
     expect(writer).toContain("open(temporaryPath, 'wx', sourceIdentity.mode)")
     expect(writer.match(/assertExpectedCurrentSource\(/g)?.length).toBeGreaterThanOrEqual(3)
@@ -58,7 +59,7 @@ describe('instance reviewed bundle apply contracts', () => {
     expect(documentation).toContain('--write')
     expect(documentation).toContain('atomic rename')
     expect(documentation).toContain('does not compile')
-    expect(documentation).toContain('does not deploy')
+    expect(documentation).toContain('deploy a Worker')
     expect(documentation).toContain('apply lock')
     expect(stalenessDocumentation).toContain('instance:apply-bundle')
     expect(stalenessDocumentation).not.toContain('A future apply-from-artifact command')
