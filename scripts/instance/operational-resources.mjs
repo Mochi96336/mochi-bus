@@ -189,8 +189,8 @@ function releaseSmokeDemoQuery(value, enabledCities, path) {
   if (!isRecord(value)) throw new Error(`${path} must be null or an object`)
   const queryCity = city(value.city, `${path}.city`)
   if (!enabledCities.includes(queryCity)) throw new Error(`${path}.city must be enabled`)
-  if (typeof value.routeName !== 'string' || value.routeName.length === 0 || value.routeName.length > 160) {
-    throw new Error(`${path}.routeName must be a non-empty route name`)
+  if (typeof value.routeName !== 'string' || value.routeName.length === 0 || value.routeName.length > 40) {
+    throw new Error(`${path}.routeName must be a non-empty route name up to 40 characters`)
   }
   return Object.freeze({ city: queryCity, routeName: value.routeName })
 }
