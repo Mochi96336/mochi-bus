@@ -100,6 +100,7 @@ describe('instance reviewed bundle write recovery reporting', () => {
       expect(report.verified).toBe(false)
       expect(report.writeError).toContain('read limit')
       expect((await stat(join(cwd, 'instance.json'))).size).toBe(MAX_ATOMIC_MANIFEST_BYTES + 1)
+      expect(await readFile(join(cwd, 'instance.json.apply.lock'), 'utf8')).toContain(artifact.bundle.hashes.targetManifestHash)
     })
   })
 
