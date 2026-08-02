@@ -70,8 +70,15 @@ export function inspectOperatorPreflight({
   if (operation === 'publicProbe' || operation === 'snapshot'
     || (operation === 'deploy' && plan.checks.releaseSmoke)) {
     const overrideName = operation === 'deploy' ? 'RELEASE_SMOKE_ORIGIN' : 'SNAPSHOT_SMOKE_BASE_URL'
+    const suppliedOrigin = environmentValue(env, overrideName)
     try {
-      origin = validatePublicOrigin(resources.publicOrigin ?? environmentValue(env, overrideName), overrideName)
+      if (resources.publicOrigin && suppliedOrigin) {
+        const overrideOrigin = validatePublicOrigin(suppliedOrigin, overrideName)
+        if (overrideOrigin !== resources.publicOrigin) {
+          throw new Error(`${overrideName} must match generated public origin ${resources.publicOrigin}`)
+        }
+      }
+      origin = validatePublicOrigin(resources.publicOrigin ?? suppliedOrigin, overrideName)
     } catch (error) {
       blockers.push(errorMessage(error))
     }
