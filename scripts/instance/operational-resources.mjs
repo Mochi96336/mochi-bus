@@ -28,7 +28,9 @@ export function loadOperationalResources({
     readJson(wranglerPath, readFile),
     { runtimePath, wranglerPath },
   )
-  return validateOperationalEnvironment(resources, env)
+  validateOperationalEnvironment(resources, env)
+  validateOperationalOrigins(resources, env)
+  return resources
 }
 
 export function resolveOperationalResources(runtime, wrangler, {
@@ -97,15 +99,6 @@ export function validateOperationalEnvironment(resources, env = process.env) {
       : supplied === expected
     if (!matches) throw new Error(`${name} must match generated operational identity`)
   }
-
-  const snapshotOrigin = optionalEnvironmentValue(env.SNAPSHOT_SMOKE_BASE_URL)
-  if (snapshotOrigin !== null) {
-    resolveOperationalOrigin(resources, snapshotOrigin, 'SNAPSHOT_SMOKE_BASE_URL', { allowHttp: true })
-  }
-  const releaseOrigin = optionalEnvironmentValue(env.RELEASE_SMOKE_ORIGIN)
-  if (releaseOrigin !== null) {
-    resolveOperationalOrigin(resources, releaseOrigin, 'RELEASE_SMOKE_ORIGIN')
-  }
   return resources
 }
 
@@ -121,6 +114,17 @@ export function resolveOperationalOrigin(resources, value, label, { allowHttp = 
     throw new Error(`${label} must match generated public origin ${resources.publicOrigin}`)
   }
   return origin
+}
+
+function validateOperationalOrigins(resources, env) {
+  const snapshotOrigin = optionalEnvironmentValue(env.SNAPSHOT_SMOKE_BASE_URL)
+  if (snapshotOrigin !== null) {
+    resolveOperationalOrigin(resources, snapshotOrigin, 'SNAPSHOT_SMOKE_BASE_URL', { allowHttp: true })
+  }
+  const releaseOrigin = optionalEnvironmentValue(env.RELEASE_SMOKE_ORIGIN)
+  if (releaseOrigin !== null) {
+    resolveOperationalOrigin(resources, releaseOrigin, 'RELEASE_SMOKE_ORIGIN')
+  }
 }
 
 function readJson(path, readFile) {
