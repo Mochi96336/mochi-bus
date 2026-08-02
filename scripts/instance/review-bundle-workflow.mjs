@@ -10,6 +10,10 @@ import {
 import { parseStrictJson } from './bundle-integrity.mjs'
 import { renderInstanceChangeBundleMarkdown } from './change-bundle.mjs'
 import {
+  checkInstanceBundleFreshnessFile,
+  renderInstanceBundleFreshnessMarkdown,
+} from './check-bundle-freshness.mjs'
+import {
   parseInstanceBundleVerificationArguments,
   renderInstanceBundleVerificationMarkdown,
   verifyInstanceBundleFile,
@@ -139,6 +143,7 @@ export async function runInstanceBundleReviewWorkflow(inputs, {
   const artifactDirectory = `.generated/review/workflow-${inputs.runId}-${inputs.runAttempt}`
   const artifactPath = `${artifactDirectory}/bundle.json`
   const verificationPath = `${artifactDirectory}/verification.json`
+  const freshnessPath = `${artifactDirectory}/freshness.json`
   const argv = [
     '--config', config.displayPath,
     ...inputs.changes,
@@ -166,11 +171,24 @@ export async function runInstanceBundleReviewWorkflow(inputs, {
   }
   await writeExclusiveJson(resolve(cwd, verificationPath), verification)
 
+  const freshness = await checkInstanceBundleFreshnessFile({
+    inputPath: artifactPath,
+    configPath: config.displayPath,
+    expectedBundleHash: artifact.bundle.hashes.bundleHash,
+    expectedArtifactHash: artifact.integrity.artifactHash,
+  }, { cwd })
+  if (freshness.status !== 'fresh') {
+    throw new Error(`Saved bundle artifact failed source freshness check with status ${freshness.status}`)
+  }
+  await writeExclusiveJson(resolve(cwd, freshnessPath), freshness)
+
   const artifactName = `instance-bundle-review-${artifact.bundle.instance.id}-${inputs.runId}-${inputs.runAttempt}`
   const outputs = Object.freeze({
     artifact_directory: artifactDirectory,
     artifact_path: artifactPath,
     verification_path: verificationPath,
+    freshness_path: freshnessPath,
+    freshness_status: freshness.status,
     artifact_name: artifactName,
     instance_id: artifact.bundle.instance.id,
     bundle_hash: artifact.bundle.hashes.bundleHash,
@@ -182,13 +200,14 @@ export async function runInstanceBundleReviewWorkflow(inputs, {
     config,
     artifact,
     verification,
+    freshness,
     outputs,
   }), 'utf8')
 
-  return deepFreeze({ artifact, verification, outputs })
+  return deepFreeze({ artifact, verification, freshness, outputs })
 }
 
-export function renderWorkflowSummary({ inputs, config, artifact, verification, outputs }) {
+export function renderWorkflowSummary({ inputs, config, artifact, verification, freshness, outputs }) {
   const expected = inputs.expectedBundleHash
     ? `\`${inputs.expectedBundleHash}\` (matched before artifact creation)`
     : 'not supplied'
@@ -208,7 +227,9 @@ export function renderWorkflowSummary({ inputs, config, artifact, verification, 
     '',
     renderInstanceBundleVerificationMarkdown(verification).trimEnd(),
     '',
-    'The uploaded `bundle.json` and `verification.json` are the complete review evidence for this run.',
+    renderInstanceBundleFreshnessMarkdown(freshness).trimEnd(),
+    '',
+    'The uploaded `bundle.json`, `verification.json` and `freshness.json` are the complete review evidence for this run.',
     '',
   ].join('\n')}\n`
 }
@@ -226,6 +247,7 @@ export async function main({
     artifactDirectory: result.outputs.artifact_directory,
     bundleHash: result.outputs.bundle_hash,
     artifactHash: result.outputs.artifact_hash,
+    freshnessStatus: result.outputs.freshness_status,
   })}\n`)
   return result
 }
