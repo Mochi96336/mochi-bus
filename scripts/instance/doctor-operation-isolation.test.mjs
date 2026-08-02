@@ -32,7 +32,7 @@ const config = {
     rateLimits: { standardNamespaceId: '1001', expensiveNamespaceId: '1002' },
   },
   operations: {
-    profile: 'operator',
+    profile: 'managed',
     snapshotSchedule: 'daily',
     releaseSmoke: true,
     publicProbe: true,
