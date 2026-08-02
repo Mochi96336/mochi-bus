@@ -4,6 +4,8 @@ import { lstat, open, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { hashCanonical, parseStrictJson } from './bundle-integrity.mjs'
 
+export const MAX_ATOMIC_MANIFEST_BYTES = 1024 * 1024
+
 export async function writeVerifiedManifestReplacement({
   configPath,
   expectedSource,
@@ -161,6 +163,11 @@ function assertWriteInputs({
   if (typeof configPath !== 'string' || !configPath) throw new Error('A resolved configPath is required')
   if (typeof expectedSource !== 'string' || !expectedSource) throw new Error('Expected source bytes are required')
   if (typeof targetSource !== 'string' || !targetSource) throw new Error('Replacement source bytes are required')
+  const expectedBytes = Buffer.byteLength(expectedSource, 'utf8')
+  const targetBytes = Buffer.byteLength(targetSource, 'utf8')
+  if (expectedBytes > MAX_ATOMIC_MANIFEST_BYTES || targetBytes > MAX_ATOMIC_MANIFEST_BYTES) {
+    throw new Error(`Instance manifest replacement exceeds the ${MAX_ATOMIC_MANIFEST_BYTES}-byte write limit`)
+  }
   if (!isPlainObject(sourceIdentity)) throw new Error('Source file identity is required')
   if (!Number.isInteger(sourceIdentity.dev) || !Number.isInteger(sourceIdentity.ino)) {
     throw new Error('Source file identity must include numeric device and inode values')
