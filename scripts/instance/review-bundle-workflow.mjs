@@ -19,6 +19,7 @@ const MAX_CHANGES_JSON_BYTES = 16 * 1024
 const MAX_CHANGE_ARGUMENTS = 64
 const MAX_CHANGE_ARGUMENT_BYTES = 2048
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/
 const FORBIDDEN_CONFIG_DIRECTORIES = new Set(['.git', '.generated', 'node_modules'])
 const FORBIDDEN_CHANGE_OPTIONS = new Set([
   '--config',
@@ -43,7 +44,7 @@ export function parseInstanceBundleReviewWorkflowInputs(env = process.env) {
     throw new Error('Instance bundle review requires confirmation REVIEW')
   }
 
-  const configPath = requiredInput(env.INPUT_CONFIG_PATH, 'config_path')
+  const configPath = requiredSingleLine(env.INPUT_CONFIG_PATH, 'config_path')
   const changesSource = String(env.INPUT_CHANGES_JSON ?? '[]').trim() || '[]'
   if (Buffer.byteLength(changesSource, 'utf8') > MAX_CHANGES_JSON_BYTES) {
     throw new Error(`changes_json exceeds the ${MAX_CHANGES_JSON_BYTES}-byte limit`)
@@ -61,6 +62,9 @@ export function parseInstanceBundleReviewWorkflowInputs(env = process.env) {
     if (typeof argument !== 'string' || argument.length === 0) {
       throw new Error(`changes_json argument ${index + 1} must be a non-empty string`)
     }
+    if (/[\0\r\n]/.test(argument)) {
+      throw new Error(`changes_json argument ${index + 1} cannot contain NUL or line breaks`)
+    }
     if (Buffer.byteLength(argument, 'utf8') > MAX_CHANGE_ARGUMENT_BYTES) {
       throw new Error(`changes_json argument ${index + 1} exceeds the ${MAX_CHANGE_ARGUMENT_BYTES}-byte limit`)
     }
@@ -73,8 +77,8 @@ export function parseInstanceBundleReviewWorkflowInputs(env = process.env) {
   const expectedBundleHash = optionalHash(env.INPUT_EXPECTED_BUNDLE_HASH)
   const runId = requiredDigits(env.GITHUB_RUN_ID, 'GITHUB_RUN_ID')
   const runAttempt = requiredDigits(env.GITHUB_RUN_ATTEMPT, 'GITHUB_RUN_ATTEMPT')
-  const sourceSha = requiredHash(env.GITHUB_SHA, 'GITHUB_SHA')
-  const sourceRef = requiredInput(env.GITHUB_REF ?? env.GITHUB_REF_NAME, 'GITHUB_REF')
+  const sourceSha = requiredGitCommit(env.GITHUB_SHA, 'GITHUB_SHA')
+  const sourceRef = requiredSingleLine(env.GITHUB_REF ?? env.GITHUB_REF_NAME, 'GITHUB_REF')
   const summaryPath = requiredInput(env.GITHUB_STEP_SUMMARY, 'GITHUB_STEP_SUMMARY')
   const outputPath = requiredInput(env.GITHUB_OUTPUT, 'GITHUB_OUTPUT')
 
@@ -255,15 +259,21 @@ function requiredInput(value, name) {
   return normalized
 }
 
+function requiredSingleLine(value, name) {
+  const normalized = requiredInput(value, name)
+  if (/[\0\r\n]/.test(normalized)) throw new Error(`${name} cannot contain NUL or line breaks`)
+  return normalized
+}
+
 function requiredDigits(value, name) {
   const normalized = requiredInput(value, name)
   if (!/^\d+$/.test(normalized)) throw new Error(`${name} must contain only decimal digits`)
   return normalized
 }
 
-function requiredHash(value, name) {
+function requiredGitCommit(value, name) {
   const normalized = requiredInput(value, name).toLowerCase()
-  if (!SHA256_PATTERN.test(normalized)) throw new Error(`${name} must be a 64-character SHA-256 hex digest`)
+  if (!GIT_COMMIT_PATTERN.test(normalized)) throw new Error(`${name} must be a 40-character Git commit SHA`)
   return normalized
 }
 
