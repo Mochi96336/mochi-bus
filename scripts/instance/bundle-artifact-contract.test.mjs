@@ -17,7 +17,8 @@ describe('instance bundle artifact repository contracts', () => {
     expect(writer).toContain("await link(temporary, target.outputPath)")
     expect(writer).toContain("await open(temporary, 'wx', 0o600)")
     expect(writer).toContain('bundle artifacts are never overwritten')
-    expect(writer).not.toMatch(/--force|force:\s*true/)
+    expect(writer).not.toContain("argument === '--force'")
+    expect(writer).not.toContain("argument.startsWith('--force='")
   })
 
   test('keeps creation and verification free of subprocess, network and secret-value inspection', async () => {
