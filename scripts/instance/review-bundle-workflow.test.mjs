@@ -180,7 +180,7 @@ describe('manual instance bundle review workflow', () => {
       expect(summary).toContain('Offline verification')
       expect(summary).toContain('change-bundle artifact: VERIFIED')
       expect(summary).toContain('Source freshness')
-      expect(summary).toContain('Instance change-bundle freshness')
+      expect(summary).toContain('Mochi Bus change-bundle freshness: FRESH')
       expect(summary).toContain(result.outputs.bundle_hash)
       expect(summary).toContain(result.outputs.artifact_hash)
     })
