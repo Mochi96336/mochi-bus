@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import publicProbeWorkflow from '../.github/workflows/public-probe.yml?raw'
 import watchdogWorkflow from '../.github/workflows/snapshot-window-watchdog.yml?raw'
 import packageSource from '../package.json?raw'
+import releaseSmokeEntrypointSource from '../scripts/release-smoke/run-authoritative-post-deploy.mjs?raw'
 import releaseSmokeSource from '../scripts/release-smoke/run-post-deploy.mjs?raw'
 import snapshotPublisherSource from '../scripts/sync-transit-snapshot.mjs?raw'
 import publicProbeSource from '../scripts/transit-snapshot/run-public-probe.mjs?raw'
@@ -35,12 +36,25 @@ describe('instance operational workflow contracts', () => {
     for (const name of ['dev', 'deploy', 'check']) {
       expect(scripts[name], name).toContain('.generated/instance/wrangler.instance.jsonc')
     }
+    expect(scripts['release:smoke']).toContain('run-authoritative-post-deploy.mjs')
     expect(scripts['cf-typegen']).not.toContain('.generated/instance/wrangler.instance.jsonc')
     expect(scripts['cf-typegen:check']).not.toContain('.generated/instance/wrangler.instance.jsonc')
   })
 
+  it('validates release-smoke overrides before entering the probe implementation', () => {
+    expect(releaseSmokeEntrypointSource).toContain('loadOperationalResources({ env })')
+    expect(releaseSmokeEntrypointSource).toContain('resolveOperationalOrigin(')
+    expect(releaseSmokeEntrypointSource).toContain("'RELEASE_SMOKE_ORIGIN'")
+  })
+
   it('does not retain Mochi production fallbacks in operational entrypoints', () => {
-    for (const source of [snapshotPublisherSource, publicProbeSource, rollbackSource, releaseSmokeSource]) {
+    for (const source of [
+      snapshotPublisherSource,
+      publicProbeSource,
+      rollbackSource,
+      releaseSmokeEntrypointSource,
+      releaseSmokeSource,
+    ]) {
       expect(source).toContain('operational-resources.mjs')
       expect(source).not.toContain("const DATABASE = 'mochi-transit'")
       expect(source).not.toContain("const BUCKET = 'mochi-transit-shapes'")
