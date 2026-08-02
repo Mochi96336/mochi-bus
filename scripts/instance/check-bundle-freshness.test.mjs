@@ -201,9 +201,9 @@ describe('instance change-bundle freshness gate', () => {
     })
   })
 
-  test('keeps a no-op artifact fresh without claiming that apply is needed', async () => {
+  test('keeps an explicit same-value proposal fresh without claiming that apply is needed', async () => {
     await withWorkspace(async (cwd) => {
-      await createArtifact(cwd, [])
+      await createArtifact(cwd, ['--site-name', 'Island Bus'])
       const report = await checkInstanceBundleFreshnessFile(freshnessOptions(), { cwd })
       expect(report.status).toBe('fresh')
       expect(report.proposal.changed).toBe(false)
