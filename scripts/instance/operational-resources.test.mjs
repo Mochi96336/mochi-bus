@@ -131,5 +131,8 @@ describe('instance operational resources', () => {
       enabledCities: ['Chiayi'],
       demoQuery: { city: 'Taipei', routeName: '307' },
     }), wrangler())).toThrow('demoQuery.city must be enabled')
+    expect(() => resolveOperationalResources(runtime('https://bus.example', {
+      demoQuery: { city: 'Chiayi', routeName: 'x'.repeat(41) },
+    }), wrangler())).toThrow('up to 40 characters')
   })
 })
