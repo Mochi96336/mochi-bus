@@ -38,12 +38,12 @@ npm run instance:check-bundle-freshness -- \
 - optional expected bundle and artifact hashes match
 - the current manifest path equals the reviewed config path
 - the current instance ID equals the reviewed instance ID
-- the current manifest has the exact UTF-8 source bytes stored in artifact evidence
+- the current manifest contains valid UTF-8 and has the exact source bytes stored in artifact evidence
 - the canonical current manifest equals the reviewed baseline manifest
 
-Only a fresh artifact with an effective proposal exposes the reviewed apply metadata in the report.
+Only a fresh artifact with an effective proposal exposes the reviewed `instance:update --write` command in the report.
 
-A fresh operator provisioning draft may still be written to the repository, but `deploymentReady` remains false until the separately projected resource and cutover blockers are resolved.
+`applyAllowed` describes only whether this exact reviewed command may still be applied. `projectedCutoverReady` independently reports whether the reviewed target had no known migration blocker and was not an operator provisioning draft. It is a deterministic projection, not proof that generated files, the environment or remote resources are ready.
 
 ### `stale`
 
@@ -53,9 +53,11 @@ The report distinguishes:
 
 - `formatting_drift`: canonical manifest content still equals the baseline, but bytes, indentation, key order or line endings changed
 - `semantic_drift`: canonical content differs from both the reviewed baseline and target
-- `already_applied`: the current manifest already equals the reviewed target, so the apply command must not run again
+- `already_applied`: an effective proposal's target is already present, so the apply command must not run again
 
-Formatting-only drift is intentionally stale. Repository writes use optimistic source-state checks, so review evidence must match exact source bytes rather than only equivalent parsed JSON.
+A no-op proposal whose bytes later change remains `formatting_drift`; matching identical baseline and target hashes alone does not imply that anything was applied.
+
+Formatting-only drift is intentionally stale. The existing updater uses optimistic source-state checks, so review evidence must match exact source bytes rather than only equivalent parsed JSON.
 
 ### `blocked`
 
@@ -63,13 +65,14 @@ Formatting-only drift is intentionally stale. Repository writes use optimistic s
 
 - invalid or tampered artifact hashes
 - expected hash mismatch
-- unsafe or unreadable current manifest
+- unsafe, unreadable or invalid-UTF-8 current manifest
 - duplicate JSON keys
 - path mismatch
 - instance identity mismatch
 - absolute paths, traversal or symlinked manifests
+- manifest path replacement while the file is being opened or read
 
-A blocked report never exposes apply eligibility.
+A blocked report never exposes the apply command.
 
 ## Machine-readable and GitHub output
 
@@ -82,15 +85,15 @@ npm run instance:check-bundle-freshness -- \
 The JSON report contains:
 
 ```text
-status                 fresh | stale | blocked
-currentState           baseline | target | diverged | unavailable
-staleKind              formatting_drift | semantic_drift | already_applied | null
+status                   fresh | stale | blocked
+currentState             baseline | target | diverged | unavailable
+staleKind                formatting_drift | semantic_drift | already_applied | null
 applyAllowed
-deploymentReady
-source                  exact byte hash comparison
-baseline                canonical baseline comparison
-target                  current target comparison
-proposal                reviewed preview/apply metadata
+projectedCutoverReady
+source                    exact byte hash comparison
+baseline                  canonical baseline comparison
+target                    current target comparison
+proposal                  reviewed preview/apply metadata
 checks
 errors
 ```
@@ -103,6 +106,8 @@ npm run instance:check-bundle-freshness -- \
   --github-summary
 ```
 
+Operator-controlled paths, identities, commands and errors are rendered with dynamically sized Markdown code spans so embedded backticks remain inert.
+
 Fresh exits successfully. Stale or blocked prints the complete report and then exits nonzero so CI can act as a gate.
 
 ## Read safety
@@ -112,11 +117,12 @@ The command:
 - reads artifacts through the existing strict 8 MiB artifact reader
 - independently verifies every artifact integrity layer
 - reads at most 1 MiB from the current manifest
-- rejects duplicate JSON object keys
-- opens files without following final symlinks where supported
+- rejects invalid UTF-8 and duplicate JSON object keys
+- rejects final symlinks with `lstat` on every platform and also uses no-follow opens where supported
 - rejects `.git`, `.generated` and `node_modules` manifest paths
 - verifies that the manifest parent resolves inside the repository
-- compares file identity and size before and after reading
+- compares the path identity with the opened handle before and after reading
+- rejects atomic path replacement as well as in-place changes observed during the read
 - performs no subprocess or network operation
 - changes no file unless `--github-summary` explicitly appends a report
 
@@ -135,7 +141,9 @@ The manual review workflow also performs this gate immediately after creating an
 
 ## Apply the reviewed artifact
 
-A standalone freshness check does not lock or write the manifest. The gate does not execute the apply command. Use `instance:apply-bundle` when the reviewed proposal should be committed to the repository:
+The freshness reader detects replacement or mutation observed while it opens and reads the manifest, but it does not lock the path after its final identity check. The gate also does not execute the apply command.
+
+Use `instance:apply-bundle` when the reviewed proposal should be committed to the repository:
 
 ```sh
 npm run instance:apply-bundle -- \
@@ -145,7 +153,7 @@ npm run instance:apply-bundle -- \
   --write
 ```
 
-The apply command requires both review hashes. It repeats the complete freshness verification, independently rechecks the critical source, baseline and target identities, prepares a same-directory temporary file, checks the source again immediately before atomic rename, and verifies the written target afterward.
+The apply command requires both trusted review hashes. It repeats the complete freshness verification using the current UTF-8 and path-identity rules, independently rechecks the source, baseline and target identities, prepares a same-directory temporary file, checks the source again immediately before atomic rename, and verifies the written target afterward.
 
 See [Apply a reviewed instance bundle](./INSTANCE_BUNDLE_APPLY.md) for the lock, atomic-write and remaining race boundaries.
 
@@ -162,4 +170,4 @@ verify artifact hashes through the review channel
 → deploy through the normal release process
 ```
 
-Neither freshness nor apply compiles generated files or deploys remote resources.
+Neither freshness nor apply compiles generated files or deploys remote resources. `projectedCutoverReady` remains a deterministic projection rather than proof of deployment readiness.
