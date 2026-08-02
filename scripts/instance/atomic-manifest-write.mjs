@@ -6,6 +6,25 @@ import { hashCanonical, parseStrictJson } from './bundle-integrity.mjs'
 
 export const MAX_ATOMIC_MANIFEST_BYTES = 1024 * 1024
 
+export class ManifestReplacementError extends Error {
+  constructor(message, {
+    writeState = 'not_written',
+    configPath = null,
+    lockPath = null,
+    targetManifestHash = null,
+    cleanupErrors = [],
+    cause = null,
+  } = {}) {
+    super(message, cause ? { cause } : undefined)
+    this.name = 'ManifestReplacementError'
+    this.writeState = writeState
+    this.configPath = configPath
+    this.lockPath = lockPath
+    this.targetManifestHash = targetManifestHash
+    this.cleanupErrors = Object.freeze([...cleanupErrors])
+  }
+}
+
 export async function writeVerifiedManifestReplacement({
   configPath,
   expectedSource,
@@ -13,35 +32,45 @@ export async function writeVerifiedManifestReplacement({
   targetSource,
   targetManifestHash,
   expectedInstanceId,
-}) {
-  assertWriteInputs({
-    configPath,
-    expectedSource,
-    sourceIdentity,
-    targetSource,
-    targetManifestHash,
-    expectedInstanceId,
-  })
-
-  const targetManifest = parseStrictJson(targetSource)
-  if (!isPlainObject(targetManifest)) throw new Error('Replacement manifest must parse to a JSON object')
-  if (targetManifest.instanceId !== expectedInstanceId) {
-    throw new Error(`Replacement manifest instanceId must remain ${expectedInstanceId}`)
-  }
-  const calculatedTargetHash = hashCanonical(targetManifest)
-  if (calculatedTargetHash !== targetManifestHash) {
-    throw new Error(`Replacement manifest hash mismatch: expected ${targetManifestHash}, received ${calculatedTargetHash}`)
-  }
-  if (targetSource === expectedSource) {
-    throw new Error('Replacement manifest must differ from the current source bytes')
-  }
-
-  const lockPath = `${configPath}.apply.lock`
-  const temporaryPath = `${configPath}.tmp-${process.pid}-${randomUUID()}`
+}, {
+  afterRename = null,
+  remove = rm,
+} = {}) {
+  const lockPath = typeof configPath === 'string' && configPath ? `${configPath}.apply.lock` : null
+  const temporaryPath = typeof configPath === 'string' && configPath
+    ? `${configPath}.tmp-${process.pid}-${randomUUID()}`
+    : null
   let lockHandle
   let ownsLock = false
   let temporaryHandle
+  let renamed = false
+  let verified = false
+  let result = null
+  let operationError = null
+
   try {
+    assertWriteInputs({
+      configPath,
+      expectedSource,
+      sourceIdentity,
+      targetSource,
+      targetManifestHash,
+      expectedInstanceId,
+    })
+
+    const targetManifest = parseStrictJson(targetSource)
+    if (!isPlainObject(targetManifest)) throw new Error('Replacement manifest must parse to a JSON object')
+    if (targetManifest.instanceId !== expectedInstanceId) {
+      throw new Error(`Replacement manifest instanceId must remain ${expectedInstanceId}`)
+    }
+    const calculatedTargetHash = hashCanonical(targetManifest)
+    if (calculatedTargetHash !== targetManifestHash) {
+      throw new Error(`Replacement manifest hash mismatch: expected ${targetManifestHash}, received ${calculatedTargetHash}`)
+    }
+    if (targetSource === expectedSource) {
+      throw new Error('Replacement manifest must differ from the current source bytes')
+    }
+
     try {
       lockHandle = await open(lockPath, 'wx', 0o600)
       ownsLock = true
@@ -60,43 +89,72 @@ export async function writeVerifiedManifestReplacement({
     await temporaryHandle.writeFile(targetSource, 'utf8')
     await temporaryHandle.chmod(sourceIdentity.mode)
     await temporaryHandle.sync()
+    const replacementIdentity = identityFromMetadata(await temporaryHandle.stat())
     await temporaryHandle.close()
     temporaryHandle = null
 
     // Re-check after the replacement bytes are fully durable and immediately before rename.
     await assertExpectedCurrentSource(configPath, expectedSource, sourceIdentity)
     await rename(temporaryPath, configPath)
+    renamed = true
+    if (typeof afterRename === 'function') {
+      await afterRename({ configPath, lockPath, targetManifestHash })
+    }
 
     const written = await readVerifiedReplacement(configPath, {
       targetManifestHash,
       expectedInstanceId,
       targetSource,
+      replacementIdentity,
     })
-    return Object.freeze({
+    verified = true
+    result = Object.freeze({
       written: true,
+      verified: true,
+      writeState: 'written_verified',
       configPath,
       targetManifestHash,
       bytes: Buffer.byteLength(written.source, 'utf8'),
     })
-  } finally {
-    await temporaryHandle?.close()
-    await rm(temporaryPath, { force: true })
-    await lockHandle?.close()
-    if (ownsLock) await rm(lockPath, { force: true })
+  } catch (error) {
+    operationError = error
   }
+
+  const cleanupErrors = []
+  await captureCleanup(cleanupErrors, 'close temporary file', async () => temporaryHandle?.close())
+  if (temporaryPath) {
+    await captureCleanup(cleanupErrors, 'remove temporary file', async () => remove(temporaryPath, { force: true }))
+  }
+  await captureCleanup(cleanupErrors, 'close apply lock', async () => lockHandle?.close())
+  if (ownsLock && lockPath) {
+    await captureCleanup(cleanupErrors, 'remove apply lock', async () => remove(lockPath, { force: true }))
+  }
+
+  if (operationError || cleanupErrors.length > 0) {
+    const writeState = verified
+      ? 'written_verified_cleanup_failed'
+      : renamed
+        ? 'written_unverified'
+        : 'not_written'
+    const details = [errorMessage(operationError), ...cleanupErrors].filter(Boolean)
+    throw new ManifestReplacementError(details.join('; ') || 'Instance manifest replacement failed', {
+      writeState,
+      configPath,
+      lockPath,
+      targetManifestHash,
+      cleanupErrors,
+      cause: operationError,
+    })
+  }
+
+  return result
 }
 
 async function assertExpectedCurrentSource(configPath, expectedSource, sourceIdentity) {
-  const metadata = await lstat(configPath)
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error('Refusing to replace a non-regular or symbolic-link instance manifest')
-  }
-  if (
-    metadata.dev !== sourceIdentity.dev
-    || metadata.ino !== sourceIdentity.ino
-    || (metadata.mode & 0o777) !== sourceIdentity.mode
-    || metadata.size !== Buffer.byteLength(expectedSource, 'utf8')
-  ) {
+  const expectedBytes = Buffer.byteLength(expectedSource, 'utf8')
+  const pathBefore = await lstat(configPath)
+  assertRegularManifestPath(pathBefore)
+  if (!sameIdentity(pathBefore, sourceIdentity) || pathBefore.size !== expectedBytes) {
     throw new Error('Instance manifest changed after review; rebuild the proposal before writing')
   }
 
@@ -104,18 +162,24 @@ async function assertExpectedCurrentSource(configPath, expectedSource, sourceIde
   let handle
   try {
     handle = await open(configPath, constants.O_RDONLY | noFollow)
-    const before = await handle.stat()
-    const source = await handle.readFile('utf8')
-    const after = await handle.stat()
+    const handleBefore = await handle.stat()
+    assertRegularManifestPath(handleBefore)
+    assertBoundedExpectedSize(handleBefore, expectedBytes, 'Current instance manifest')
+    if (!sameIdentity(handleBefore, sourceIdentity) || !sameIdentity(pathBefore, handleBefore)) {
+      throw new Error('Instance manifest changed after review; rebuild the proposal before writing')
+    }
+
+    const source = await readBoundedUtf8(handle, expectedBytes, 'Current instance manifest')
+    const handleAfter = await handle.stat()
+    const pathAfter = await lstat(configPath)
+    assertRegularManifestPath(pathAfter)
     if (
-      before.dev !== after.dev
-      || before.ino !== after.ino
-      || before.size !== after.size
-      || before.dev !== sourceIdentity.dev
-      || before.ino !== sourceIdentity.ino
-      || (before.mode & 0o777) !== sourceIdentity.mode
+      !sameIdentity(handleBefore, handleAfter)
+      || !sameIdentity(handleAfter, pathAfter)
+      || !sameIdentity(pathAfter, sourceIdentity)
+      || handleBefore.size !== handleAfter.size
+      || handleAfter.size !== pathAfter.size
       || source !== expectedSource
-      || Buffer.byteLength(source, 'utf8') !== before.size
     ) {
       throw new Error('Instance manifest changed after review; rebuild the proposal before writing')
     }
@@ -128,14 +192,40 @@ async function readVerifiedReplacement(configPath, {
   targetManifestHash,
   expectedInstanceId,
   targetSource,
+  replacementIdentity,
 }) {
+  const expectedBytes = Buffer.byteLength(targetSource, 'utf8')
+  const pathBefore = await lstat(configPath)
+  assertRegularManifestPath(pathBefore, 'Written instance manifest')
+  assertBoundedExpectedSize(pathBefore, expectedBytes, 'Written instance manifest')
+  if (!sameIdentity(pathBefore, replacementIdentity)) {
+    throw new Error('Written instance manifest path no longer points to the prepared replacement')
+  }
+
   const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0
   let handle
   try {
     handle = await open(configPath, constants.O_RDONLY | noFollow)
-    const metadata = await handle.stat()
-    if (!metadata.isFile()) throw new Error('Written instance manifest is not a regular file')
-    const source = await handle.readFile('utf8')
+    const handleBefore = await handle.stat()
+    assertRegularManifestPath(handleBefore, 'Written instance manifest')
+    assertBoundedExpectedSize(handleBefore, expectedBytes, 'Written instance manifest')
+    if (!sameIdentity(pathBefore, handleBefore) || !sameIdentity(handleBefore, replacementIdentity)) {
+      throw new Error('Written instance manifest path changed before verification')
+    }
+
+    const source = await readBoundedUtf8(handle, expectedBytes, 'Written instance manifest')
+    const handleAfter = await handle.stat()
+    const pathAfter = await lstat(configPath)
+    assertRegularManifestPath(pathAfter, 'Written instance manifest')
+    if (
+      !sameIdentity(handleBefore, handleAfter)
+      || !sameIdentity(handleAfter, pathAfter)
+      || !sameIdentity(pathAfter, replacementIdentity)
+      || handleBefore.size !== handleAfter.size
+      || handleAfter.size !== pathAfter.size
+    ) {
+      throw new Error('Written instance manifest path or content changed during verification')
+    }
     if (source !== targetSource) throw new Error('Written instance manifest bytes do not match the prepared replacement')
     const manifest = parseStrictJson(source)
     if (!isPlainObject(manifest)) throw new Error('Written instance manifest must parse to a JSON object')
@@ -149,6 +239,70 @@ async function readVerifiedReplacement(configPath, {
     return Object.freeze({ source, manifest })
   } finally {
     await handle?.close()
+  }
+}
+
+async function readBoundedUtf8(handle, expectedBytes, label) {
+  const bytes = Buffer.allocUnsafe(expectedBytes + 1)
+  let offset = 0
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+    if (bytesRead === 0) break
+    offset += bytesRead
+  }
+  if (offset > expectedBytes) {
+    throw new Error(`${label} exceeds the ${MAX_ATOMIC_MANIFEST_BYTES}-byte read limit or changed during verification`)
+  }
+  if (offset !== expectedBytes) {
+    throw new Error(`${label} changed during verification`)
+  }
+  let source
+  try {
+    source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, offset))
+  } catch {
+    throw new Error(`${label} must contain valid UTF-8`)
+  }
+  if (Buffer.byteLength(source, 'utf8') !== offset) {
+    throw new Error(`${label} UTF-8 bytes did not round-trip exactly`)
+  }
+  return source
+}
+
+function assertBoundedExpectedSize(metadata, expectedBytes, label) {
+  if (metadata.size > MAX_ATOMIC_MANIFEST_BYTES) {
+    throw new Error(`${label} exceeds the ${MAX_ATOMIC_MANIFEST_BYTES}-byte read limit`)
+  }
+  if (metadata.size !== expectedBytes) {
+    throw new Error(`${label} changed during verification`)
+  }
+}
+
+function assertRegularManifestPath(metadata, label = 'Instance manifest') {
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error(`${label} is not a regular file or is a symbolic link`)
+  }
+}
+
+function sameIdentity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && (left.mode & 0o777) === (right.mode & 0o777)
+}
+
+function identityFromMetadata(metadata) {
+  return Object.freeze({
+    dev: metadata.dev,
+    ino: metadata.ino,
+    mode: metadata.mode & 0o777,
+    size: metadata.size,
+  })
+}
+
+async function captureCleanup(errors, label, action) {
+  try {
+    await action()
+  } catch (error) {
+    errors.push(`${label}: ${errorMessage(error)}`)
   }
 }
 
@@ -176,6 +330,10 @@ function assertWriteInputs({
   if (!/^[a-f0-9]{64}$/.test(targetManifestHash ?? '')) throw new Error('A lowercase target manifest SHA-256 is required')
   if (typeof expectedInstanceId !== 'string' || !expectedInstanceId) throw new Error('Expected instanceId is required')
   if (dirname(configPath) === configPath) throw new Error('Refusing to write a filesystem root as an instance manifest')
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : error == null ? '' : String(error)
 }
 
 function isPlainObject(value) {
