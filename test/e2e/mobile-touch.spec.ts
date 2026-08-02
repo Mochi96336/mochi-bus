@@ -49,23 +49,60 @@ async function mockTouchMap(page: Page) {
   } }))
 }
 
-async function exposedPathPosition(pathLocator: Locator): Promise<{ x: number; y: number }> {
-  const position = await pathLocator.evaluate((path: SVGPathElement) => {
-    const matrix = path.getScreenCTM()
-    const bounds = path.getBoundingClientRect()
-    if (!matrix || bounds.width <= 0 || bounds.height <= 0) return null
-    const length = path.getTotalLength()
-    for (const fraction of [.5, .4, .6, .3, .7, .2, .8, .1, .9]) {
-      const local = path.getPointAtLength(length * fraction)
-      const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix)
-      if (document.elementFromPoint(screen.x, screen.y) === path) {
-        return { x: screen.x - bounds.left, y: screen.y - bounds.top }
+async function stableExposedPathPoint(pathLocators: Locator): Promise<{ x: number; y: number }> {
+  const point = await pathLocators.evaluateAll(async (elements) => {
+    const paths = elements as SVGPathElement[]
+    const fractions = [.5, .4, .6, .3, .7, .2, .8, .1, .9]
+
+    const sample = () => {
+      for (const [index, path] of paths.entries()) {
+        const matrix = path.getScreenCTM()
+        const bounds = path.getBoundingClientRect()
+        if (!matrix || bounds.width <= 0 || bounds.height <= 0) continue
+        const length = path.getTotalLength()
+        for (const fraction of fractions) {
+          const local = path.getPointAtLength(length * fraction)
+          const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix)
+          if (document.elementFromPoint(screen.x, screen.y) === path) {
+            return {
+              index,
+              x: screen.x,
+              y: screen.y,
+              left: bounds.left,
+              top: bounds.top,
+              width: bounds.width,
+              height: bounds.height,
+            }
+          }
+        }
       }
+      return null
+    }
+
+    const stable = (left: ReturnType<typeof sample>, right: ReturnType<typeof sample>) => {
+      if (!left || !right || left.index !== right.index) return false
+      return Math.abs(left.x - right.x) < .5
+        && Math.abs(left.y - right.y) < .5
+        && Math.abs(left.left - right.left) < .5
+        && Math.abs(left.top - right.top) < .5
+        && Math.abs(left.width - right.width) < .5
+        && Math.abs(left.height - right.height) < .5
+    }
+
+    const deadline = performance.now() + 5_000
+    let previous: ReturnType<typeof sample> = null
+    let stableFrames = 0
+    while (performance.now() < deadline) {
+      const current = sample()
+      stableFrames = stable(previous, current) ? stableFrames + 1 : 0
+      previous = current
+      if (current && stableFrames >= 4) return { x: current.x, y: current.y }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     }
     return null
   })
-  if (!position) throw new Error('touch route hit target has no exposed point')
-  return position
+  if (!point) throw new Error('touch route hit targets never exposed a stable point')
+  return point
 }
 
 test('uses a real touch profile and a wide invisible route hit target', async ({ page }) => {
@@ -83,13 +120,15 @@ test('uses a real touch profile and a wide invisible route hit target', async ({
 
   await page.locator('#map-drawer').getByRole('button', { name: '15', exact: true }).click()
   await expect(page.locator('.variant-list')).toBeVisible()
-  const hitTarget = page.locator('.leaflet-routePreview-pane path[stroke-opacity="0"]').first()
-  await expect(hitTarget).toHaveAttribute('stroke-width', '26')
-  // The route may continue below the mobile drawer. Use an exposed point on
-  // the SVG stroke, then let locator.tap wait for stable geometry and verify
-  // that this exact hit target still receives the real touch event.
-  const routePosition = await exposedPathPosition(hitTarget)
-  await hitTarget.tap({ position: routePosition })
+  const hitTargets = page.locator('.leaflet-routePreview-pane path[stroke-opacity="0"]')
+  await expect(hitTargets).toHaveCount(2)
+  expect(await hitTargets.evaluateAll((paths) => paths.map((path) => path.getAttribute('stroke-width'))))
+    .toEqual(['26', '26'])
+  // The drawer and Leaflet camera can move immediately after the picker opens.
+  // Wait until any preview stroke is both exposed and stable for several
+  // animation frames, then send one real touchscreen tap to that exact point.
+  const routePoint = await stableExposedPathPoint(hitTargets)
+  await page.touchscreen.tap(routePoint.x, routePoint.y)
 
   await expect(page.locator('.variant-list')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '← 更換方向' })).toBeVisible()
