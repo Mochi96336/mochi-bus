@@ -18,6 +18,17 @@ describe('instance doctor workflow', () => {
     expect(workflow.slice(0, doctorIndex)).not.toContain('secrets.')
   })
 
+  it('runs protected code from the default branch before exposing secrets', () => {
+    expect(workflow).toContain("if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)")
+    expect(workflow).toContain('environment: instance-doctor')
+    expect(workflow).toContain('ref: ${{ github.event.repository.default_branch }}')
+
+    const checkoutIndex = workflow.indexOf('Check out default branch')
+    const doctorIndex = workflow.indexOf('Diagnose instance readiness')
+    expect(checkoutIndex).toBeGreaterThan(-1)
+    expect(doctorIndex).toBeGreaterThan(checkoutIndex)
+  })
+
   it('always writes the GitHub summary and makes remote verification opt-in', () => {
     expect(workflow).toContain('args=(--github-summary)')
     expect(workflow).toContain('if [[ "${{ inputs.remote }}" == "true" ]]')
