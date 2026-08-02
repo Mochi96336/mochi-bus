@@ -6,6 +6,11 @@ export const DEFAULT_WRANGLER_CONFIG_PATH = '.generated/instance/wrangler.instan
 
 const CLOUDFLARE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/
 const D1_DATABASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const RESOURCE_ENVIRONMENT = Object.freeze([
+  ['TRANSIT_D1_DATABASE_NAME', 'd1DatabaseName'],
+  ['TRANSIT_DATABASE_ID', 'd1DatabaseId'],
+  ['TRANSIT_R2_BUCKET_NAME', 'r2BucketName'],
+])
 
 export function loadOperationalResources({
   cwd = process.cwd(),
@@ -14,11 +19,12 @@ export function loadOperationalResources({
 } = {}) {
   const runtimePath = resolve(cwd, env.MOCHI_BUS_RUNTIME_CONFIG?.trim() || DEFAULT_RUNTIME_CONFIG_PATH)
   const wranglerPath = resolve(cwd, env.MOCHI_BUS_WRANGLER_CONFIG?.trim() || DEFAULT_WRANGLER_CONFIG_PATH)
-  return resolveOperationalResources(
+  const resources = resolveOperationalResources(
     readJson(runtimePath, readFile),
     readJson(wranglerPath, readFile),
     { runtimePath, wranglerPath },
   )
+  return validateOperationalEnvironment(resources, env)
 }
 
 export function resolveOperationalResources(runtime, wrangler, {
@@ -45,6 +51,42 @@ export function resolveOperationalResources(runtime, wrangler, {
     r2BucketName,
     publicOrigin,
   })
+}
+
+export function validateOperationalEnvironment(resources, env = process.env) {
+  for (const [name, property] of RESOURCE_ENVIRONMENT) {
+    const supplied = optionalEnvironmentValue(env[name])
+    if (supplied === null) continue
+    const expected = resources[property]
+    const matches = property === 'd1DatabaseId'
+      ? typeof expected === 'string' && supplied.toLowerCase() === expected.toLowerCase()
+      : supplied === expected
+    if (!matches) throw new Error(`${name} must match generated operational identity`)
+  }
+
+  const snapshotOrigin = optionalEnvironmentValue(env.SNAPSHOT_SMOKE_BASE_URL)
+  if (snapshotOrigin !== null) {
+    resolveOperationalOrigin(resources, snapshotOrigin, 'SNAPSHOT_SMOKE_BASE_URL', { allowHttp: true })
+  }
+  const releaseOrigin = optionalEnvironmentValue(env.RELEASE_SMOKE_ORIGIN)
+  if (releaseOrigin !== null) {
+    resolveOperationalOrigin(resources, releaseOrigin, 'RELEASE_SMOKE_ORIGIN')
+  }
+  return resources
+}
+
+export function resolveOperationalOrigin(resources, value, label, { allowHttp = false } = {}) {
+  const supplied = optionalEnvironmentValue(value)
+  if (supplied === null) {
+    if (resources.publicOrigin) return resources.publicOrigin
+    throw new Error(`${label} is required when the instance canonical origin is request-derived`)
+  }
+
+  const origin = explicitOrigin(supplied, label, { allowHttp })
+  if (resources.publicOrigin && origin !== resources.publicOrigin) {
+    throw new Error(`${label} must match generated public origin ${resources.publicOrigin}`)
+  }
+  return origin
 }
 
 function readJson(path, readFile) {
@@ -96,6 +138,26 @@ function canonicalPublicOrigin(value, path) {
     throw new Error(`${path} must be request or a fixed HTTPS origin`)
   }
   return url.origin
+}
+
+function explicitOrigin(value, label, { allowHttp }) {
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`${label} must be an absolute ${allowHttp ? 'HTTP' : 'HTTPS'} origin`)
+  }
+  const supportedProtocol = url.protocol === 'https:' || (allowHttp && url.protocol === 'http:')
+  if (!supportedProtocol || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+    throw new Error(`${label} must be an absolute ${allowHttp ? 'HTTP' : 'HTTPS'} origin`)
+  }
+  return url.origin
+}
+
+function optionalEnvironmentValue(value) {
+  if (value === undefined || value === null) return null
+  const text = String(value).trim()
+  return text === '' ? null : text
 }
 
 function isRecord(value) {
