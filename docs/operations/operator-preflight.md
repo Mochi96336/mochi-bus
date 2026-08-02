@@ -13,6 +13,8 @@ Operational workflows run `npm run instance:preflight -- <operation>` before the
 
 All workflows also require `CLOUDFLARE_ACCOUNT_ID`. Snapshot publication additionally requires TDX credentials. Managed and operator snapshot profiles require both R2 S3 credential fields; a manually forced starter snapshot may use the slower Wrangler fallback when both fields are absent.
 
+Keep deployment and recurring operational tokens separate when possible. The deploy token needs read access only for the D1/R2 identity checks in addition to its existing Worker deployment permissions; snapshot and monitoring workflows retain their own migration/query permissions.
+
 The preflight reports missing variable names, HTTP status classes and resource identity mismatches. It does not print secret values or Cloudflare response bodies.
 
 ## Ordering guarantees
