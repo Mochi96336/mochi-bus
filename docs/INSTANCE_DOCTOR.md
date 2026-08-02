@@ -14,7 +14,7 @@ The local report checks:
 - required GitHub/local environment names for deploy, snapshot publication, public probe and watchdog operations
 - fixed public origins and operator rate-limit namespace identity
 
-Secret values are never included in terminal, JSON or GitHub step-summary output. Only missing variable names and safe resource identity are reported.
+Secret values are never included in terminal, JSON or GitHub step-summary output. Only missing variable names and safe resource identity are reported. Origin overrides are evaluated only for the operations that consume them, so an invalid release-smoke origin does not block snapshots and an invalid snapshot origin does not block deploy or watchdog readiness.
 
 ## Remote verification
 
@@ -40,9 +40,9 @@ Machine-readable output is available through `--json`.
 
 ## GitHub Actions
 
-Run the **Instance doctor** workflow manually from GitHub Actions. The workflow compiles the selected instance, writes a Markdown report to the run summary and optionally performs remote verification.
+Run the **Instance doctor** workflow manually from GitHub Actions. The workflow only accepts the repository default branch, explicitly checks out that branch, writes a Markdown report to the run summary and optionally performs remote verification.
 
-A fork may set the repository variable `MOCHI_BUS_INSTANCE_CONFIG` to select its committed manifest. The diagnostic step reads these secrets when the corresponding operation needs them:
+Before using the workflow, create a GitHub Environment named `instance-doctor` and restrict its deployment branches to the default branch or another protected branch policy. Store the diagnostic credentials in that environment rather than in an unprotected branch-scoped workflow. The diagnostic step reads these secrets only after the environment protection has passed:
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
@@ -51,4 +51,4 @@ A fork may set the repository variable `MOCHI_BUS_INSTANCE_CONFIG` to select its
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 
-Request-derived instances may additionally set `SNAPSHOT_SMOKE_BASE_URL` and `RELEASE_SMOKE_ORIGIN` as repository variables.
+A fork may set the repository variable `MOCHI_BUS_INSTANCE_CONFIG` to select its committed manifest. Request-derived instances may additionally set `SNAPSHOT_SMOKE_BASE_URL` and `RELEASE_SMOKE_ORIGIN` as repository variables.
