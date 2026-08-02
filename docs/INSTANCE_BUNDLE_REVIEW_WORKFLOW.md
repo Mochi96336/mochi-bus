@@ -75,11 +75,14 @@ A successful run writes one isolated directory:
 .generated/review/workflow-<run-id>-<attempt>/
   bundle.json
   verification.json
+  freshness.json
 ```
 
 `bundle.json` is the complete self-contained artifact from `instance:bundle-artifact`.
 
 `verification.json` records the result of immediately reopening that file and independently checking the source, baseline, target, proposal, migration, provisioning, doctor, bundle and artifact hashes.
+
+`freshness.json` compares the verified artifact against the exact manifest bytes in the checked-out repository. The workflow succeeds only when the result is `fresh`; path, instance identity, source bytes and canonical baseline must all match.
 
 The directory is uploaded as:
 
@@ -96,7 +99,10 @@ Artifacts are retained for 14 days. The job summary includes:
 - exact bundle SHA-256
 - exact artifact SHA-256
 - offline verification result
-- the separately reviewable `instance:update --write` apply command
+- source freshness result
+- whether manifest apply is currently allowed
+- whether deployment cutover is projected ready
+- the separately reviewable `instance:update --write` apply command when freshness permits it
 
 ## Safety boundary
 
@@ -121,13 +127,16 @@ GitHub checkout, job-summary writing and artifact upload are the only platform s
 ```text
 1. Dispatch with REVIEW, config_path and changes_json
 2. Inspect the change table, warnings and projected plans
-3. Record the bundle and artifact hashes
-4. Download bundle.json and verification.json when independent review is needed
-5. Run instance:verify-bundle locally with both expected hashes
-6. Dispatch again with expected_bundle_hash when a pinned confirmation is useful
-7. Apply later through the separately reviewed instance:update --write command
-8. Compile and run the live instance doctor
-9. Deploy only through the normal release process
+3. Confirm verification.json has no failed integrity checks
+4. Confirm freshness.json reports fresh
+5. Record the bundle and artifact hashes
+6. Download all three JSON files when independent review is needed
+7. Run instance:verify-bundle locally with both expected hashes
+8. Run instance:check-bundle-freshness against the current checkout
+9. Dispatch again with expected_bundle_hash when a pinned confirmation is useful
+10. Apply later through the separately reviewed instance:update --write command
+11. Compile and run the live instance doctor
+12. Deploy only through the normal release process
 ```
 
-Artifact verification proves that the uploaded review package is internally intact and matches the proposal shown in the workflow. It does not prove that the proposal has been applied, compiled or deployed.
+Artifact verification proves that the uploaded review package is internally intact. Freshness proves that its reviewed baseline matched the workflow checkout when the evidence was created. Neither check proves that the proposal has been applied, compiled or deployed, and freshness does not lock the manifest against later changes.
