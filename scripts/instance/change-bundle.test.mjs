@@ -191,7 +191,7 @@ describe('instance change bundle', () => {
       ]), { cwd, env: {} })
       const remoteMigration = bundle.migrationPlan.steps.filter((step) => step.phase === 'remote-resources')
       expect(remoteMigration.every((step) => step.status === 'not_applicable')).toBe(true)
-      expect(bundle.risk).toBe('low')
+      expect(bundle.risk).toBe('medium')
     })
   })
 
