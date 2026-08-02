@@ -110,6 +110,7 @@ async function fixture(config, { compile = true } = {}) {
 
 function completeEnv() {
   return {
+    MOCHI_BUS_INSTANCE_CONFIG: 'instance.json',
     CLOUDFLARE_DEPLOY_API_TOKEN: 'deploy-secret',
     CLOUDFLARE_API_TOKEN: 'operations-secret',
     CLOUDFLARE_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
@@ -188,7 +189,10 @@ describe('instance provisioning plan', () => {
     expect(plan.ready).toBe(true)
 
     const rendered = `${JSON.stringify(plan)}\n${renderProvisioningPlanText(plan)}\n${renderProvisioningPlanMarkdown(plan)}`
-    for (const secret of Object.values(env)) expect(rendered).not.toContain(secret)
+    for (const [name, secret] of Object.entries(env)) {
+      if (name === 'MOCHI_BUS_INSTANCE_CONFIG') continue
+      expect(rendered).not.toContain(secret)
+    }
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
