@@ -84,6 +84,18 @@ jobs:
       - name: Resolve snapshot operation scope
         id: operation
         run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Preflight snapshot resources
+        if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
+        run: npm run instance:preflight -- snapshot
+        env:
+          MOCHI_BUS_PREFLIGHT_FORCE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
       - name: Apply transit database migrations
         if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
         env:

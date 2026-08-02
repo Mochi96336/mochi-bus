@@ -7,6 +7,7 @@ export const DEFAULT_WRANGLER_CONFIG_PATH = '.generated/instance/wrangler.instan
 
 const CLOUDFLARE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/
 const D1_DATABASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const RATE_LIMIT_NAMESPACE_ID = /^[1-9][0-9]{0,19}$/
 const INSTANCE_ID = /^[a-z][a-z0-9-]{2,62}$/
 const SUPPORTED_CITY_SET = new Set(SUPPORTED_CITY_CODES)
 const RESOURCE_ENVIRONMENT = Object.freeze([
@@ -59,6 +60,18 @@ export function resolveOperationalResources(runtime, wrangler, {
   const r2BucketName = cloudflareName(r2.bucket_name, `${wranglerPath}.r2_buckets.TRANSIT_SHAPES.bucket_name`)
   const d1DatabaseId = nullableDatabaseId(d1.database_id, `${wranglerPath}.d1_databases.TRANSIT_DB.database_id`)
   const publicOrigin = canonicalPublicOrigin(runtime.site.canonicalOrigin, `${runtimePath}.site.canonicalOrigin`)
+  const rateLimitNamespaceIds = Object.freeze({
+    standard: optionalRateLimitNamespace(
+      wrangler.ratelimits,
+      'API_STANDARD_RATE_LIMITER',
+      `${wranglerPath}.ratelimits`,
+    ),
+    expensive: optionalRateLimitNamespace(
+      wrangler.ratelimits,
+      'API_EXPENSIVE_RATE_LIMITER',
+      `${wranglerPath}.ratelimits`,
+    ),
+  })
 
   return Object.freeze({
     instanceId,
@@ -70,6 +83,7 @@ export function resolveOperationalResources(runtime, wrangler, {
     d1DatabaseId,
     r2BucketName,
     publicOrigin,
+    rateLimitNamespaceIds,
   })
 }
 
@@ -128,6 +142,19 @@ function binding(entries, expectedBinding, path) {
   const matches = entries.filter((entry) => isRecord(entry) && entry.binding === expectedBinding)
   if (matches.length !== 1) throw new Error(`${path} must contain exactly one ${expectedBinding} binding`)
   return matches[0]
+}
+
+function optionalRateLimitNamespace(entries, expectedName, path) {
+  if (entries === undefined) return null
+  if (!Array.isArray(entries)) throw new Error(`${path} must be an array when present`)
+  const matches = entries.filter((entry) => isRecord(entry) && entry.name === expectedName)
+  if (matches.length > 1) throw new Error(`${path} must not contain duplicate ${expectedName} bindings`)
+  if (matches.length === 0) return null
+  const namespaceId = matches[0].namespace_id
+  if (typeof namespaceId !== 'string' || !RATE_LIMIT_NAMESPACE_ID.test(namespaceId)) {
+    throw new Error(`${path}.${expectedName}.namespace_id must be a positive integer string`)
+  }
+  return namespaceId
 }
 
 function instanceIdentifier(value, path) {
