@@ -122,10 +122,10 @@ describe('instance operational resources', () => {
     expect(resources.rateLimitNamespaceIds).toEqual({ standard: null, expensive: null })
   })
 
-  it('preserves generated integer namespace identity for operation-specific validation', () => {
-    expect(resolveOperationalResources(runtime(), wrangler({
+  it('rejects zero namespace identity before operation-specific validation', () => {
+    expect(() => resolveOperationalResources(runtime(), wrangler({
       ratelimits: [{ name: 'API_STANDARD_RATE_LIMITER', namespace_id: '0' }],
-    })).rateLimitNamespaceIds).toEqual({ standard: '0', expensive: null })
+    }))).toThrow('positive integer string')
   })
 
   it('fails closed on ambiguous bindings and malformed resource identity', () => {

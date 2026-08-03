@@ -8,7 +8,7 @@ const POSITIVE_INTEGER = /^[1-9][0-9]{0,19}$/
 const API_BASE = 'https://api.cloudflare.com/client/v4/'
 const API_TIMEOUT_MS = 15_000
 
-export function resolveOperatorPreflight({
+export function inspectOperatorPreflight({
   operation,
   forceEnabled = false,
   plan = loadOperationsPlan(),
@@ -24,27 +24,29 @@ export function resolveOperatorPreflight({
       ? forceEnabled || plan.snapshotSchedule !== 'manual'
       : Boolean(plan.checks[operation]))
   if (!enabled) {
-    return Object.freeze({
+    return freezeInspection({
       operation,
       enabled: false,
       profile: plan.profile,
       origin: null,
-      remoteChecks: Object.freeze([]),
-      warnings: Object.freeze([]),
+      remoteChecks: [],
+      warnings: [],
+      blockers: [],
     })
   }
 
   const missing = []
   const warnings = []
+  const blockers = []
   requireEnvironment(env, 'CLOUDFLARE_API_TOKEN', missing)
   requireEnvironment(env, 'CLOUDFLARE_ACCOUNT_ID', missing)
   if (hasEnvironment(env, 'CLOUDFLARE_ACCOUNT_ID')
     && !CLOUDFLARE_ACCOUNT_ID.test(env.CLOUDFLARE_ACCOUNT_ID.trim())) {
-    throw new Error('CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID')
+    blockers.push('CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID')
   }
 
   if (!resources.d1DatabaseId) {
-    throw new Error(`${operation} requires a provisioned D1 database ID`)
+    blockers.push(`${operation} requires a provisioned D1 database ID`)
   }
 
   if (operation === 'snapshot') {
@@ -53,9 +55,9 @@ export function resolveOperatorPreflight({
     const hasR2AccessKey = hasEnvironment(env, 'R2_ACCESS_KEY_ID')
     const hasR2Secret = hasEnvironment(env, 'R2_SECRET_ACCESS_KEY')
     if (hasR2AccessKey !== hasR2Secret) {
-      throw new Error('R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be configured together')
+      blockers.push('R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be configured together')
     }
-    if (!hasR2AccessKey) {
+    if (!hasR2AccessKey && !hasR2Secret) {
       if (plan.profile === 'starter') {
         warnings.push('R2 S3 credentials are absent; the manual starter snapshot will use the slow Wrangler fallback')
       } else {
@@ -68,12 +70,16 @@ export function resolveOperatorPreflight({
   if (operation === 'publicProbe' || operation === 'snapshot'
     || (operation === 'deploy' && plan.checks.releaseSmoke)) {
     const overrideName = operation === 'deploy' ? 'RELEASE_SMOKE_ORIGIN' : 'SNAPSHOT_SMOKE_BASE_URL'
-    origin = resolveOperationalOrigin(
-      resources,
-      environmentValue(env, overrideName),
-      overrideName,
-      { allowHttp: operation !== 'deploy' },
-    )
+    try {
+      origin = resolveOperationalOrigin(
+        resources,
+        environmentValue(env, overrideName),
+        overrideName,
+        { allowHttp: operation !== 'deploy' },
+      )
+    } catch (error) {
+      blockers.push(errorMessage(error))
+    }
   }
 
   if (operation === 'deploy' && plan.profile === 'operator') {
@@ -82,30 +88,49 @@ export function resolveOperatorPreflight({
     if (!POSITIVE_INTEGER.test(String(standard ?? ''))
       || !POSITIVE_INTEGER.test(String(expensive ?? ''))
       || standard === expensive) {
-      throw new Error('Operator deployment requires two distinct positive rate-limit namespace IDs')
+      blockers.push('Operator deployment requires two distinct positive rate-limit namespace IDs')
     }
   }
 
   if (missing.length > 0) {
-    throw new Error(`Missing required operator configuration: ${[...new Set(missing)].join(', ')}`)
+    blockers.push(`Missing required operator configuration: ${[...new Set(missing)].join(', ')}`)
   }
 
-  const remoteChecks = [{
-    kind: 'd1',
-    id: resources.d1DatabaseId,
-    name: resources.d1DatabaseName,
-  }]
+  const remoteChecks = []
+  if (resources.d1DatabaseId) {
+    remoteChecks.push({
+      kind: 'd1',
+      id: resources.d1DatabaseId,
+      name: resources.d1DatabaseName,
+    })
+  }
   if (operation === 'deploy' || operation === 'snapshot') {
     remoteChecks.push({ kind: 'r2', name: resources.r2BucketName })
   }
 
-  return Object.freeze({
+  return freezeInspection({
     operation,
     enabled: true,
     profile: plan.profile,
     origin,
-    remoteChecks: Object.freeze(remoteChecks.map((check) => Object.freeze(check))),
-    warnings: Object.freeze(warnings),
+    remoteChecks,
+    warnings,
+    blockers,
+  })
+}
+
+export function resolveOperatorPreflight(options = {}) {
+  const inspected = inspectOperatorPreflight(options)
+  if (inspected.blockers.length > 0) {
+    throw new Error(inspected.blockers[0])
+  }
+  return Object.freeze({
+    operation: inspected.operation,
+    enabled: inspected.enabled,
+    profile: inspected.profile,
+    origin: inspected.origin,
+    remoteChecks: inspected.remoteChecks,
+    warnings: inspected.warnings,
   })
 }
 
@@ -120,22 +145,50 @@ export async function runOperatorPreflight({
   const resolved = resolveOperatorPreflight({ operation, forceEnabled, plan, resources, env })
   if (!resolved.enabled) return resolved
 
-  const accountId = env.CLOUDFLARE_ACCOUNT_ID.trim()
-  const apiToken = env.CLOUDFLARE_API_TOKEN.trim()
+  const checkedResources = await verifyOperatorResources({
+    remoteChecks: resolved.remoteChecks,
+    env,
+    fetchImpl,
+  })
+
+  return Object.freeze({
+    ...resolved,
+    checkedResources,
+  })
+}
+
+export async function verifyOperatorResources({
+  remoteChecks,
+  env = process.env,
+  fetchImpl = fetch,
+} = {}) {
+  if (!Array.isArray(remoteChecks)) {
+    throw new Error('Operator resource verification requires a remote check list')
+  }
+  const accountId = environmentValue(env, 'CLOUDFLARE_ACCOUNT_ID')
+  const apiToken = environmentValue(env, 'CLOUDFLARE_API_TOKEN')
+  if (!accountId || !apiToken) {
+    const missing = []
+    if (!apiToken) missing.push('CLOUDFLARE_API_TOKEN')
+    if (!accountId) missing.push('CLOUDFLARE_ACCOUNT_ID')
+    throw new Error(`Missing required operator configuration: ${missing.join(', ')}`)
+  }
+  if (!CLOUDFLARE_ACCOUNT_ID.test(accountId)) {
+    throw new Error('CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID')
+  }
+
   const checkedResources = []
-  for (const check of resolved.remoteChecks) {
+  for (const check of remoteChecks) {
     if (check.kind === 'd1') {
       await verifyD1Database({ accountId, apiToken, check, fetchImpl })
     } else if (check.kind === 'r2') {
       await verifyR2Bucket({ accountId, apiToken, check, fetchImpl })
+    } else {
+      throw new Error(`Unsupported Cloudflare resource check: ${check.kind || '<empty>'}`)
     }
     checkedResources.push(Object.freeze({ kind: check.kind, name: check.name }))
   }
-
-  return Object.freeze({
-    ...resolved,
-    checkedResources: Object.freeze(checkedResources),
-  })
+  return Object.freeze(checkedResources)
 }
 
 export function parseOperatorPreflightArguments(argv = process.argv.slice(2), env = process.env) {
@@ -220,6 +273,18 @@ async function cloudflareJson(url, apiToken, resource, fetchImpl) {
   return body
 }
 
+function freezeInspection(value) {
+  return Object.freeze({
+    operation: value.operation,
+    enabled: value.enabled,
+    profile: value.profile,
+    origin: value.origin,
+    remoteChecks: Object.freeze(value.remoteChecks.map((check) => Object.freeze({ ...check }))),
+    warnings: Object.freeze([...value.warnings]),
+    blockers: Object.freeze([...value.blockers]),
+  })
+}
+
 function requireEnvironment(env, name, missing) {
   if (!hasEnvironment(env, name)) missing.push(name)
 }
@@ -232,11 +297,15 @@ function environmentValue(env, name) {
   return hasEnvironment(env, name) ? env[name].trim() : null
 }
 
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     await main()
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
+    console.error(errorMessage(error))
     process.exitCode = 1
   }
 }
