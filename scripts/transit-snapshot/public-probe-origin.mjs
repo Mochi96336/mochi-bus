@@ -11,7 +11,8 @@ export function resolvePublicProbeBaseUrl({
   const explicit = env.SNAPSHOT_SMOKE_BASE_URL?.trim()
   if (explicit) return validOrigin(explicit, 'SNAPSHOT_SMOKE_BASE_URL')
 
-  const configuredPath = env.MOCHI_BUS_INSTANCE_RUNTIME?.trim()
+  const configuredPath = env.MOCHI_BUS_RUNTIME_CONFIG?.trim()
+    || env.MOCHI_BUS_INSTANCE_RUNTIME?.trim()
   const runtimePath = resolve(cwd, configuredPath || DEFAULT_INSTANCE_RUNTIME_PATH)
   let source
   try {

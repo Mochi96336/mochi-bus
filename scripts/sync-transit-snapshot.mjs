@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { loadOperationalResources } from './instance/operational-resources.mjs'
 import { validateSnapshot } from './transit-snapshot/validate.mjs'
 import { createStopPlaceRegistry } from './transit-snapshot/stop-place-registry.mjs'
 import { patternStopPlaceMismatchQuery } from './transit-snapshot/snapshot-invariants.mjs'
@@ -17,11 +18,16 @@ import {
   readBoundedResponseJson,
   readBoundedResponseText,
 } from './transit-snapshot/active-probe.mjs'
-import { queryD1 as queryD1Rest, TRANSIT_D1_DATABASE_ID } from './transit-snapshot/window-d1.mjs'
+import { queryD1 as queryD1Rest } from './transit-snapshot/window-d1.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
-const DATABASE = 'mochi-transit'
-const BUCKET = 'mochi-transit-shapes'
+const operationalResources = loadOperationalResources()
+const DATABASE = process.env.TRANSIT_D1_DATABASE_NAME ?? operationalResources.d1DatabaseName
+const DATABASE_ID = process.env.TRANSIT_DATABASE_ID ?? operationalResources.d1DatabaseId
+const BUCKET = process.env.TRANSIT_R2_BUCKET_NAME ?? operationalResources.r2BucketName
+const PUBLIC_ORIGIN = process.env.SNAPSHOT_SMOKE_BASE_URL ?? operationalResources.publicOrigin
+if (!DATABASE_ID) throw new Error('Snapshot publisher requires a provisioned D1 database ID')
+if (!PUBLIC_ORIGIN) throw new Error('Snapshot publisher requires a fixed public origin or SNAPSHOT_SMOKE_BASE_URL')
 const outputRoot = join('.transit-snapshot', CITY)
 const workerVars = await readVars('.dev.vars')
 const snapshotVars = await readVars('.snapshot.env')
@@ -777,18 +783,17 @@ async function validateRemoteSnapshot(targetVersion, expectedCounts, expectedQua
   console.log(JSON.stringify({ city: CITY, version: targetVersion, phase: 'remote-validation', counts: actual, quality: expectedQuality }))
 }
 async function smokePublishedSnapshot(targetVersion, target) {
-  const baseUrl = process.env.SNAPSHOT_SMOKE_BASE_URL ?? 'https://bus.moc96336.com'
   const cacheBust = `snapshot=${encodeURIComponent(targetVersion)}`
   let lastError
   for (let attempt = 1; attempt <= 12; attempt += 1) {
     try {
-      const routes = await fetchPublicJson(`${baseUrl}/api/v1/map/routes?city=${encodeURIComponent(CITY)}&${cacheBust}`)
+      const routes = await fetchPublicJson(`${PUBLIC_ORIGIN}/api/v1/map/routes?city=${encodeURIComponent(CITY)}&${cacheBust}`)
       if (routes.source !== 'snapshot' || routes.snapshotVersion !== targetVersion
         || !Array.isArray(routes.routes) || routes.routes.length !== target.counts.routes) {
         throw new Error(`unexpected route catalogue for active snapshot ${routes.snapshotVersion ?? 'missing'}`)
       }
 
-      const route = await fetchPublicJson(`${baseUrl}/api/v1/map/route?city=${encodeURIComponent(CITY)}&route=${encodeURIComponent(target.routeName)}&${cacheBust}`)
+      const route = await fetchPublicJson(`${PUBLIC_ORIGIN}/api/v1/map/route?city=${encodeURIComponent(CITY)}&route=${encodeURIComponent(target.routeName)}&${cacheBust}`)
       const variant = Array.isArray(route.variants)
         ? route.variants.find((item) => item.variantKey === target.patternId)
         : undefined
@@ -796,12 +801,12 @@ async function smokePublishedSnapshot(targetVersion, target) {
         throw new Error(`public route detail is missing pattern ${target.patternId}`)
       }
 
-      const place = await fetchPublicJson(`${baseUrl}/api/v1/map/place/${encodeURIComponent(target.placeId)}/routes?city=${encodeURIComponent(CITY)}&${cacheBust}`)
+      const place = await fetchPublicJson(`${PUBLIC_ORIGIN}/api/v1/map/place/${encodeURIComponent(target.placeId)}/routes?city=${encodeURIComponent(CITY)}&${cacheBust}`)
       if (!Array.isArray(place.routes) || !place.routes.some((item) => item.variantKey === target.patternId)) {
         throw new Error(`public place bundle is missing pattern ${target.patternId}`)
       }
 
-      await assertPublicNetworkVersion(`${baseUrl}/api/v1/map/network?city=${encodeURIComponent(CITY)}&${cacheBust}`, targetVersion)
+      await assertPublicNetworkVersion(`${PUBLIC_ORIGIN}/api/v1/map/network?city=${encodeURIComponent(CITY)}&${cacheBust}`, targetVersion)
       console.log(JSON.stringify({
         city: CITY, version: targetVersion, phase: 'public-smoke',
         routes: routes.routes.length, patternId: target.patternId, placeId: target.placeId,
@@ -812,7 +817,7 @@ async function smokePublishedSnapshot(targetVersion, target) {
       if (attempt < 12) await new Promise((resolve) => setTimeout(resolve, 10_000))
     }
   }
-  throw new Error('Public snapshot smoke failed')
+  throw new Error(`Public snapshot smoke failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
 }
 
 async function fetchPublicJson(url) {
@@ -824,8 +829,7 @@ async function fetchPublicJson(url) {
   return await readBoundedResponseJson(response, 2 * 1024 * 1024)
 }
 async function fetchProbePublicJson(path) {
-  const baseUrl = process.env.SNAPSHOT_SMOKE_BASE_URL ?? 'https://bus.moc96336.com'
-  const response = await fetch(new URL(path, baseUrl), {
+  const response = await fetch(new URL(path, PUBLIC_ORIGIN), {
     signal: AbortSignal.timeout(15_000),
     cache: 'no-store',
   })
@@ -1006,7 +1010,7 @@ async function queryActiveProbeD1(sql, params) {
     return queryD1Rest({
       accountId,
       apiToken,
-      databaseId: TRANSIT_D1_DATABASE_ID,
+      databaseId: DATABASE_ID,
       fetchImpl: fetch,
       sql,
       params,
