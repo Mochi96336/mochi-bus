@@ -84,6 +84,23 @@ jobs:
       - name: Resolve snapshot operation scope
         id: operation
         run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Validate manual snapshot city
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_CITY: ${{ inputs.city }}
+        run: node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"
+      - name: Preflight snapshot resources
+        if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
+        run: npm run instance:preflight -- snapshot
+        env:
+          MOCHI_BUS_PREFLIGHT_FORCE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
       - name: Apply transit database migrations
         if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
         env:
@@ -121,7 +138,6 @@ jobs:
 
           if [ -n "$INPUT_CITY" ]; then
             cities="$INPUT_CITY"
-            node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"
             if [ "$INPUT_FORCE_PUBLISH" = "true" ]; then
               export SNAPSHOT_FORCE=1
             fi

@@ -30,6 +30,12 @@ jobs:
       - name: Resolve release verification scope
         id: operation
         run: node scripts/instance/operation-scope.mjs releaseSmoke
+      - name: Preflight deployment resources
+        run: npm run instance:preflight -- deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin || vars.RELEASE_SMOKE_ORIGIN }}
       - name: Verify release candidate
         run: npm run check
       - name: Deploy Worker

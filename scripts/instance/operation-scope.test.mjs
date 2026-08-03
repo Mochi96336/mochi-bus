@@ -54,11 +54,15 @@ describe('instance operation workflow scope', () => {
     expect(resolveOperationScope('releaseSmoke', plan(), resources({ publicOrigin: null })).enabled).toBe(true)
   })
 
-  it('fails closed when enabled snapshot operations lack a provisioned D1 ID', () => {
-    expect(() => resolveOperationScope('snapshot', plan(), resources({ d1DatabaseId: null })))
-      .toThrow('snapshot requires a provisioned D1 database ID')
-    expect(() => resolveOperationScope('publicProbe', plan(), resources({ d1DatabaseId: null })))
-      .toThrow('publicProbe requires a provisioned D1 database ID')
+  it('reports operation intent before the dedicated provisioning preflight', () => {
+    expect(resolveOperationScope('snapshot', plan(), resources({ d1DatabaseId: null }))).toMatchObject({
+      enabled: true,
+      d1DatabaseId: null,
+    })
+    expect(resolveOperationScope('publicProbe', plan(), resources({ d1DatabaseId: null }))).toMatchObject({
+      enabled: true,
+      d1DatabaseId: null,
+    })
   })
 
   it('writes validated resource identity to GitHub outputs', () => {

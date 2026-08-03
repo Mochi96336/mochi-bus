@@ -28,6 +28,10 @@ function wrangler(overrides = {}) {
       database_id: '123e4567-e89b-42d3-a456-426614174000',
     }],
     r2_buckets: [{ binding: 'TRANSIT_SHAPES', bucket_name: 'chiayi-transit-shapes' }],
+    ratelimits: [
+      { name: 'API_STANDARD_RATE_LIMITER', namespace_id: '1001' },
+      { name: 'API_EXPENSIVE_RATE_LIMITER', namespace_id: '1002' },
+    ],
     ...overrides,
   }
 }
@@ -57,6 +61,7 @@ describe('instance operational resources', () => {
       d1DatabaseId: '123e4567-e89b-42d3-a456-426614174000',
       r2BucketName: 'chiayi-transit-shapes',
       publicOrigin: 'https://bus.example',
+      rateLimitNamespaceIds: { standard: '1001', expensive: '1002' },
     })
   })
 
@@ -111,8 +116,16 @@ describe('instance operational resources', () => {
       .toThrow('RELEASE_SMOKE_ORIGIN is required')
   })
 
-  it('keeps request-derived origins unavailable to unattended operations', () => {
-    expect(resolveOperationalResources(runtime('request'), wrangler()).publicOrigin).toBeNull()
+  it('keeps request-derived origins and omitted rate-limit bindings explicit', () => {
+    const resources = resolveOperationalResources(runtime('request'), wrangler({ ratelimits: undefined }))
+    expect(resources.publicOrigin).toBeNull()
+    expect(resources.rateLimitNamespaceIds).toEqual({ standard: null, expensive: null })
+  })
+
+  it('preserves generated integer namespace identity for operation-specific validation', () => {
+    expect(resolveOperationalResources(runtime(), wrangler({
+      ratelimits: [{ name: 'API_STANDARD_RATE_LIMITER', namespace_id: '0' }],
+    })).rateLimitNamespaceIds).toEqual({ standard: '0', expensive: null })
   })
 
   it('fails closed on ambiguous bindings and malformed resource identity', () => {
@@ -121,6 +134,15 @@ describe('instance operational resources', () => {
     expect(() => resolveOperationalResources(runtime(), wrangler({
       r2_buckets: [{ binding: 'TRANSIT_SHAPES', bucket_name: 'Invalid_Name' }],
     }))).toThrow('valid Cloudflare resource name')
+    expect(() => resolveOperationalResources(runtime(), wrangler({
+      ratelimits: [{ name: 'API_STANDARD_RATE_LIMITER', namespace_id: 'not-an-id' }],
+    }))).toThrow('integer string')
+    expect(() => resolveOperationalResources(runtime(), wrangler({
+      ratelimits: [
+        { name: 'API_STANDARD_RATE_LIMITER', namespace_id: '1001' },
+        { name: 'API_STANDARD_RATE_LIMITER', namespace_id: '1002' },
+      ],
+    }))).toThrow('must not contain duplicate API_STANDARD_RATE_LIMITER')
     expect(() => resolveOperationalResources(runtime('http://bus.example'), wrangler()))
       .toThrow('fixed HTTPS origin')
     expect(() => resolveOperationalResources(runtime('https://bus.example', {

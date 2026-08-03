@@ -29,6 +29,13 @@ jobs:
       - name: Resolve public probe scope
         id: operation
         run: node scripts/instance/operation-scope.mjs publicProbe
+      - name: Preflight public probe resources
+        if: steps.operation.outputs.enabled == 'true'
+        run: npm run instance:preflight -- publicProbe
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
       - name: Apply transit database migrations
         if: steps.operation.outputs.enabled == 'true'
         env:

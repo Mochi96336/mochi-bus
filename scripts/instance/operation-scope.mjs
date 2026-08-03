@@ -15,11 +15,6 @@ export function resolveOperationScope(
     ? plan.snapshotSchedule !== 'manual'
     : plan.checks[operation]
 
-  if (enabled && ['snapshot', 'publicProbe', 'windowWatchdog'].includes(operation)
-    && !resources.d1DatabaseId) {
-    throw new Error(`${operation} requires a provisioned D1 database ID`)
-  }
-
   return Object.freeze({
     operation,
     enabled,

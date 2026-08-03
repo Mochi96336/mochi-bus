@@ -28,6 +28,12 @@ jobs:
       - name: Resolve watchdog scope
         id: operation
         run: node scripts/instance/operation-scope.mjs windowWatchdog
+      - name: Preflight watchdog resources
+        if: steps.operation.outputs.enabled == 'true'
+        run: npm run instance:preflight -- windowWatchdog
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply transit database migrations
         if: steps.operation.outputs.enabled == 'true'
         env:
