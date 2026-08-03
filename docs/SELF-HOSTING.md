@@ -1,16 +1,14 @@
 # 部署自己的 Mochi Bus
 
-`bus.moc96336.com` 是 Mochi 維護的公開參考實例。這一頁會帶你從零開始，架出一套屬於自己的 Mochi Bus。
+`bus.moc96336.com` 是 Mochi 維護的公開參考實例。這份教學會帶你從零開始，架出一套屬於自己的 Mochi Bus。
 
-不需要先會寫程式，但會接觸終端機、Node.js、npm、Cloudflare 和 TDX。每個工具第一次出現時，都有可以展開的小教學。
+不需要先會寫程式。這篇會從安裝工具、打開專案、編輯設定，一路做到取得公開網址與發布嘉義市公車資料。
 
-這篇先走最小、最容易檢查的一條路：
+這次只走一條最容易檢查的路：
 
 - 一個縣市：`Chiayi`（嘉義市）
 - 一個 Cloudflare `workers.dev` 公開網址
 - 手動更新公車資料
-
-完成後，你會有自己的 Worker、D1、R2 和公開網址；網站不需要連回 `bus.moc96336.com` 才能運作。
 
 ```text
 取得程式碼
@@ -43,16 +41,16 @@
 >
 > 不希望加入付款方式時，可以使用本機模式體驗 Mochi Bus，但無法完成這篇的公開部署流程。
 
-啟用位置：
+先到 Cloudflare Dashboard 完成：
 
 ```text
-Cloudflare Dashboard
-        │
-        ▼
 Storage & databases
         │
         ▼
-R2 → Overview → 完成 checkout
+R2 → Overview
+        │
+        ▼
+完成 checkout
 ```
 
 <details>
@@ -87,61 +85,63 @@ Worker 是網站程式；D1 和 R2 保存網站需要的公車資料。
 <details>
 <summary><strong>Worker、D1 和 R2 分別是什麼？</strong></summary>
 
-### Worker
-
-Mochi Bus 真正上線執行的程式。它接收瀏覽器請求、查詢資料，再把網站或 API 結果回傳給使用者。
-
-### D1
-
-Cloudflare 的 SQL 資料庫。Mochi Bus 用它保存路線、站牌、路線經過哪些站，以及目前使用的資料版本。
-
-### R2
-
-Cloudflare 的物件儲存空間，可以把它想成給程式使用的雲端硬碟。Mochi Bus 用它保存地圖線形、時刻表和城市快照等較大的資料檔案。
+- **Worker**：Mochi Bus 真正上線執行的程式，負責網站和 API。
+- **D1**：Cloudflare 的 SQL 資料庫，保存路線、站牌和資料版本等表格資料。
+- **R2**：Cloudflare 的物件儲存空間，可以想成程式使用的雲端硬碟，保存地圖線形、時刻表和城市快照。
 
 </details>
 
-### 公車資料從哪裡來？
+### 繼續前確認
 
-```text
-交通部 TDX
-    │
-    │ 下載嘉義市資料
-    ▼
-Mochi Bus 快照工具
-    │
-    ├── 路線與站牌 ──→ D1
-    └── 線形與時刻表 → R2
-```
-
-TDX 提供原始公車資料。Mochi Bus 會先下載、整理並驗證，再發布到你自己的 Cloudflare 資源。
-
-## 準備
-
-### 需要的帳號
-
-- [Cloudflare 帳號](https://dash.cloudflare.com/sign-up)
-- TDX 帳號、Client ID 與 Client Secret
-- GitHub 帳號只有在你打算 fork 專案時才需要
+- [ ] 已建立 Cloudflare 帳號
+- [ ] 已完成 R2 checkout
+- [ ] 已取得 TDX Client ID 與 Client Secret
+- [ ] 電腦可以安裝 Git、Node.js 和文字編輯器
 
 TDX 憑證可以從[會員中心](https://tdx.transportdata.tw/)取得；還沒有帳號可先[註冊](https://tdx.transportdata.tw/register/general)。位置在「會員中心 → 資料服務 → API 金鑰」。
 
-### 電腦需要的工具
+## 1. 安裝需要的工具
 
-- [Node.js 22 以上](https://nodejs.org/)
+需要：
+
 - [Git](https://git-scm.com/downloads)
-- 終端機
+- [Node.js 22 以上](https://nodejs.org/)
+- [Visual Studio Code](https://code.visualstudio.com/Download)（建議，但不是強制）
 
-Windows 可以使用 PowerShell；macOS 和 Linux 可以使用 Terminal。後面灰色指令框中的文字都是貼進終端機，再按 Enter 執行。
+建議使用 VS Code，因為後面可以在同一個畫面：
 
-確認 Node.js 和 npm 已安裝：
+- 看見所有專案檔案
+- 編輯 `.dev.vars` 和 `instance.json`
+- 打開內建終端機執行指令
+- 避免 Windows 把 `.dev.vars` 存成 `.dev.vars.txt`
+
+不需要安裝任何 VS Code extension。
+
+安裝完成後，先關閉再重新開啟 VS Code，讓剛安裝的 Git 和 Node.js 可以被找到。
+
+### 打開 VS Code 終端機
+
+1. 開啟 VS Code。
+2. 從上方選單選擇 **Terminal → New Terminal**。
+3. 畫面下方會出現可以輸入指令的區域。
+
+後面灰色指令框中的文字，都是貼進這個終端機，再按 Enter 執行。
+
+確認工具已安裝：
 
 ```sh
+git --version
 node --version
 npm --version
 ```
 
-第一個指令應顯示 `v22` 或更新版本。第二個指令只要能顯示版本號即可。
+應看到：
+
+- Git 顯示版本號
+- Node.js 顯示 `v22` 或更新版本
+- npm 顯示版本號
+
+若出現「找不到指令」，先完全關閉 VS Code再重新開啟。
 
 ```text
 Node.js
@@ -155,42 +155,54 @@ npm
 <details>
 <summary><strong>Node.js 和 npm 是什麼？</strong></summary>
 
-瀏覽器可以執行 JavaScript；Node.js 則讓電腦也能直接執行 JavaScript 程式。
+Node.js 讓電腦可以執行 Mochi Bus 的建置和資料處理程式。
 
-Mochi Bus 使用 Node.js 來建置網站、檢查設定、整理 TDX 資料和執行部署工具。
+npm 會隨 Node.js 一起安裝。這篇主要使用：
 
-npm 會隨 Node.js 一起安裝。這篇主要使用兩種 npm 指令：
-
-- `npm install`：安裝這個專案需要的工具
-- `npm run ...`：執行 Mochi Bus 已經準備好的工作
+- `npm install`：安裝專案需要的工具
+- `npm run ...`：執行 Mochi Bus 已準備好的工作
 
 你不需要自己撰寫 Node.js 程式。
 
 </details>
 
-## 1. 取得程式碼
+## 2. 取得程式碼
 
-只想跟著教學測試，可以直接 clone Mochi Bus：
+先在 VS Code 的終端機查看目前位置：
+
+```sh
+pwd
+```
+
+Mochi Bus 會下載到這個位置。接著執行：
 
 ```sh
 git clone https://github.com/Mochi96336/mochi-bus.git
 cd mochi-bus
 ```
 
-打算長期維護、修改自己的版本或之後接 GitHub Actions，建議先在 GitHub fork，再把網址換成自己的帳號：
+從現在開始，除非教學另外說明，**所有指令都要在 `mochi-bus` 資料夾中執行**。
+
+執行：
 
 ```sh
-git clone https://github.com/<你的 GitHub 帳號>/mochi-bus.git
-cd mochi-bus
+pwd
 ```
 
-接著安裝專案需要的工具：
+最後一段路徑應該是 `mochi-bus`。
 
-```sh
-npm install
-```
+### 用 VS Code 開啟專案資料夾
 
-這個指令只會在目前資料夾安裝工具，不會部署網站，也不會建立 Cloudflare 資源。通常可以安全重跑。
+1. 選擇 **File → Open Folder**。
+2. 找到剛才下載的 `mochi-bus` 資料夾。
+3. 選擇 **Select Folder** 或 **開啟**。
+4. 若 VS Code 詢問是否信任作者，確認網址是 `Mochi96336/mochi-bus` 後選擇信任。
+5. 再選擇 **Terminal → New Terminal**。
+
+左側 Explorer 現在應該會看到 `README.md`、`package.json`、`docs` 等檔案。新終端機的目前位置也應該是 `mochi-bus`。
+
+> [!NOTE]
+> 之後若關閉再重開 VS Code，請用 **File → Open Recent** 重新開啟 `mochi-bus`，不要只開一個單獨檔案。
 
 <details>
 <summary><strong>repository、clone 和 fork 是什麼？</strong></summary>
@@ -199,20 +211,26 @@ npm install
 - **clone**：把 repository 下載到自己的電腦
 - **fork**：在自己的 GitHub 帳號建立一份可獨立維護的副本
 
-只想測試時不一定需要 fork。
+第一次跟著教學時直接 clone 官方 repository 最簡單。完成部署後，再研究 fork 和同步 upstream。
 
 </details>
 
-<details>
-<summary><strong>npm install 結尾看到 Mochi production 名稱正常嗎？</strong></summary>
+### 安裝專案工具
 
-正常。第一次安裝時，repository 還沒有你的 `instance.json`，因此可能先用 upstream 的預設設定產生本機檔案。
+```sh
+npm install
+```
 
-這不會連線或部署到 `bus.moc96336.com`。後面建立自己的 `instance.json` 並重新 compile 後，這些檔案會被替換成你的設定。
+這個指令只會在目前資料夾安裝工具，不會部署網站，也不會建立 Cloudflare 資源。
 
-</details>
+完成時：
 
-## 2. 登入 Cloudflare
+- 終端機會回到可以再次輸入指令的狀態
+- 沒有出現 `npm ERR!`
+- `npm WARN` 通常只是警告，不代表安裝失敗
+- 結尾可能出現 Mochi production 名稱，這是第一次安裝的預設編譯，不代表連線或部署到正式站
+
+## 3. 登入 Cloudflare
 
 接下來會使用 Cloudflare 官方工具 Wrangler：
 
@@ -226,36 +244,33 @@ Wrangler
  └── 操作你的 Cloudflare 帳號
 ```
 
-登入並確認目前帳號：
+登入：
 
 ```sh
 npx wrangler login
+```
+
+這通常會開啟瀏覽器。登入 Cloudflare，確認授權後回到 VS Code。
+
+再確認目前登入的帳號：
+
+```sh
 npx wrangler whoami
 ```
 
-第一個指令通常會開啟瀏覽器，請你授權 Wrangler 存取 Cloudflare 帳號。第二個指令只會顯示目前登入的帳號。
-
-`whoami` 顯示的帳號，就是稍後建立 D1、R2 和 Worker 的帳號。有多個 Cloudflare 帳號時，先在這裡確認清楚。
+完成時應顯示你的 Cloudflare 帳號資訊。稍後的 D1、R2 和 Worker 都會建立在這個帳號。
 
 <details>
 <summary><strong>npx 和 Wrangler 是什麼？</strong></summary>
 
-- **Wrangler** 是 Cloudflare 官方提供的終端機工具
-- **npx** 負責執行目前專案已安裝的 Wrangler
-- 不需要另外在整台電腦全域安裝 Wrangler
+- **Wrangler**：Cloudflare 官方提供的終端機工具
+- **npx**：執行目前專案已安裝的 Wrangler
 
 之後看到 `npx wrangler ...`，可以理解成：「請 Cloudflare 官方工具執行後面的操作。」
 
 </details>
 
-## 3. 放入 TDX 憑證
-
-```text
-TDX Client ID + Client Secret
-              │
-              ▼
-Mochi Bus 可以向 TDX 取得公車資料
-```
+## 4. 放入 TDX 憑證
 
 先複製範例檔，建立 `.dev.vars`。
 
@@ -271,7 +286,13 @@ Windows PowerShell：
 Copy-Item .dev.vars.example .dev.vars
 ```
 
-用任何文字編輯器打開 `.dev.vars`，Windows 記事本也可以。把範例文字換成自己的值：
+### 用 VS Code 編輯 `.dev.vars`
+
+1. 在左側 Explorer 找到 `.dev.vars`。
+2. 點一下檔名開啟。
+3. 把兩個範例值換成自己的 TDX 憑證。
+4. 保留左右的引號。
+5. 按 `Ctrl+S`；macOS 按 `Command+S` 儲存。
 
 ```dotenv
 TDX_CLIENT_ID="你的 Client ID"
@@ -281,7 +302,7 @@ TDX_CLIENT_SECRET="你的 Client Secret"
 > [!WARNING]
 > `.dev.vars` 內含密碼性質的資料。不要把內容貼到 issue、PR、公開聊天或截圖，也不要提交到 repository。
 
-`.dev.vars` 已被 Git 忽略。它稍後會同時用於 Worker secrets 和本機快照發布。
+`.dev.vars` 已被 Git 忽略，不會正常出現在 Git commit 裡。
 
 <details>
 <summary><strong>Client ID、Client Secret 和 secret 是什麼？</strong></summary>
@@ -292,17 +313,17 @@ Secret 不應放在 `instance.json` 等公開設定，也不應提交到 GitHub�
 
 </details>
 
-## 4. 建立自己的 instance 設定
+## 5. 建立自己的 instance 設定
 
-建立一套名為 `my-chiayi-bus`、只啟用嘉義市的設定。這個指令在 PowerShell、macOS 和 Linux 都相同：
+建立一套名為 `my-chiayi-bus`、只啟用嘉義市的設定：
 
 ```sh
 npm run instance:init -- my-chiayi-bus --cities Chiayi --site-name "My Chiayi Bus"
 ```
 
-這個指令只會在本機建立 `instance.json`，不會建立任何 Cloudflare 資源。
+這個指令只會在本機建立 `instance.json`，不會建立 Cloudflare 資源。
 
-成功時會看到類似：
+完成時應看到：
 
 ```text
 Created Mochi Bus instance manifest: instance.json
@@ -312,7 +333,7 @@ Cloudflare: my-chiayi-bus / my-chiayi-transit / my-chiayi-transit-shapes
 State: valid instance manifest
 ```
 
-這些名稱的關係是：
+名稱關係：
 
 ```text
 Instance ID：my-chiayi-bus
@@ -322,25 +343,16 @@ Instance ID：my-chiayi-bus
        └── R2：my-chiayi-transit-shapes
 ```
 
-`instance.json` 是這套服務的主要設定，可以提交到自己的 repository。它不應包含任何 secret。
+第一次產生時，`instance.json` 裡的 D1 ID 會是 `null`。這是正常的，因為資料庫還沒建立。
 
-第一次產生時，D1 ID 會是 `null`：
-
-```json
-"d1": {
-  "databaseName": "my-chiayi-transit",
-  "databaseId": null
-}
-```
-
-這是正常的，因為資料庫還沒建立。
-
-先驗證設定並產生部署檔案：
+先驗證並產生部署檔案：
 
 ```sh
 npm run instance:validate -- --config instance.json
 npm run instance:compile -- --config instance.json
 ```
+
+兩個指令都沒有出現 error，並回到可輸入指令的狀態，就可以繼續。
 
 ```text
 instance.json
@@ -350,43 +362,33 @@ instance.json
 .generated/instance/
 ```
 
-接著查看 provisioning plan：
+只修改 `instance.json`。不要手動修改 `.generated/instance/`，因為下次 compile 會重新產生它們。
+
+<details>
+<summary><strong>選用：查看完整 provisioning plan</strong></summary>
 
 ```sh
 npm run instance:provision-plan -- --config instance.json
 ```
 
-這個指令只會列出目前缺少什麼，不會建立或修改遠端資源。輸出最後會顯示：
+這個指令不會建立或修改遠端資源，但會列出 GitHub Actions、secrets 和其他進階項目。第一次手動部署時看到 `action_required` 或 `blocked` 不一定代表主流程失敗。
+
+輸出最後應顯示：
 
 ```text
 NO CHANGES WERE APPLIED
 ```
 
-第一次執行時，GitHub secrets 或 variables 可能也會被列成 `action_required`。這篇走手動部署，先不用處理那些項目；現在只看 D1、R2 和 generated artifacts。
-
-產生的檔案會放在：
-
-```text
-.generated/instance/instance-runtime.json
-.generated/instance/wrangler.instance.jsonc
-.generated/instance/operations-plan.json
-```
-
-只改 `instance.json`，不要手動修改 `.generated/instance/`。這些檔案可以隨時重新產生。
-
-<details>
-<summary><strong>instance.json 和 generated files 是什麼？</strong></summary>
-
-`instance.json` 是你維護的來源設定，記錄網站名稱、啟用縣市和 Cloudflare 資源名稱。
-
-`.generated/instance/` 則是 Mochi Bus 根據來源設定自動產生、交給程式和 Wrangler 使用的檔案。直接修改 generated files，下一次 compile 時就會被覆蓋。
-
 </details>
 
-## 5. 建立 D1 和 R2
+## 6. 建立 D1 和 R2
 
 > [!WARNING]
-> 從這一步開始，指令會真的在目前登入的 Cloudflare 帳號建立遠端資源。建立前再執行一次 `npx wrangler whoami`，確認帳號正確。
+> 從這一步開始，指令會真的在 Cloudflare 帳號建立遠端資源。先再確認一次帳號：
+>
+> ```sh
+> npx wrangler whoami
+> ```
 
 ### 建立 D1 database
 
@@ -398,16 +400,33 @@ NO CHANGES WERE APPLIED
 npx wrangler d1 create my-chiayi-transit
 ```
 
-Wrangler 會回傳一個 database ID。把實際值填回 `instance.json`：
+完成時，Wrangler 會顯示一個 `database_id`，格式像：
 
-```json
-"d1": {
-  "databaseName": "my-chiayi-transit",
-  "databaseId": "xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx"
-}
+```text
+database_id = "12345678-abcd-1234-abcd-123456789012"
+               └──────────────────────────────────┘
+                    只複製引號裡的這一段
 ```
 
-只改 `instance.json`，不要把 ID 直接寫進 generated Wrangler config。
+### 把 D1 ID 填回 `instance.json`
+
+1. 在 VS Code 左側點開 `instance.json`。
+2. 按 `Ctrl+F`；macOS 按 `Command+F`。
+3. 搜尋 `"databaseId": null`。
+4. 只把 `null` 換成剛才的 ID，並保留引號和逗點。
+5. 儲存檔案。
+
+修改前：
+
+```json
+"databaseId": null
+```
+
+修改後：
+
+```json
+"databaseId": "12345678-abcd-1234-abcd-123456789012"
+```
 
 ### 建立 R2 bucket
 
@@ -420,16 +439,21 @@ Wrangler 會回傳一個 database ID。把實際值填回 `instance.json`：
 npx wrangler r2 bucket create my-chiayi-transit-shapes
 ```
 
-R2 不需要把另一個 ID 填回 `instance.json`，bucket 名稱一致即可。
+完成時應顯示 bucket 已建立。R2 不需要把另一個 ID 填回 `instance.json`。
 
-不確定剛才有沒有建立成功，可以列出帳號裡的資源：
+可以用以下指令確認兩個資源：
 
 ```sh
 npx wrangler d1 list
 npx wrangler r2 bucket list
 ```
 
-不要為了重試而連續執行 `create`。如果看到同名資源，先確認它是不是剛才建立、而且準備給這套 Mochi Bus 使用。
+列表中應看到：
+
+- `my-chiayi-transit`
+- `my-chiayi-transit-shapes`
+
+不要為了重試而連續執行 `create`。如果看到同名資源，先確認它是不是剛才建立的。
 
 <details>
 <summary><strong>為什麼資料要分成 D1 和 R2？</strong></summary>
@@ -438,7 +462,7 @@ D1 適合保存需要查詢和互相關聯的表格資料，例如路線、站�
 
 R2 適合保存完整的大型檔案，例如 GeoJSON 線形、時刻表和城市路網檔案。
 
-Worker 會依照請求，把兩邊的資料組合成網站和 API 回應。
+Worker 會把兩邊的資料組合成網站和 API 回應。
 
 </details>
 
@@ -449,9 +473,55 @@ npm run instance:validate -- --config instance.json
 npm run instance:compile -- --config instance.json
 ```
 
-可以再跑一次 provisioning plan。它不一定會全部顯示 ready，因為 GitHub Actions 和進階檢查還沒設定；D1 ID 與 generated artifacts 正確即可繼續。
+沒有出現 error 就可以繼續。
 
-## 6. 建立 D1 資料表
+## 7. 建立 R2 發布憑證
+
+城市快照會從你的電腦直接寫入 R2，因此還需要一組只給快照工具使用的 R2 credentials。
+
+> [!WARNING]
+> R2 Secret Access Key 只會在建立 token 後顯示一次。先準備好 VS Code，建立後立刻複製到 `.snapshot.env`，不要貼到公開地方。
+
+### 在 Cloudflare 建立 R2 API token
+
+1. 打開 Cloudflare Dashboard。
+2. 進入 **Storage & databases → R2 → Overview**。
+3. 在 **Account Details** 找到 **API Tokens**，選擇 **Manage**。
+4. 建立 Account API token 或 User API token。
+5. 權限選擇 **Object Read & Write**。
+6. 建議只允許存取 `my-chiayi-transit-shapes` 這個 bucket。
+7. 建立後保留畫面上的：
+   - Access Key ID
+   - Secret Access Key
+   - Account ID
+
+### 建立 `.snapshot.env`
+
+macOS / Linux：
+
+```sh
+cp .snapshot.env.example .snapshot.env
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .snapshot.env.example .snapshot.env
+```
+
+在 VS Code 左側打開 `.snapshot.env`，填入剛才的三個值：
+
+```dotenv
+R2_ACCESS_KEY_ID="你的 Access Key ID"
+R2_SECRET_ACCESS_KEY="你的 Secret Access Key"
+CLOUDFLARE_ACCOUNT_ID="你的 Cloudflare Account ID"
+```
+
+儲存檔案。
+
+> `.snapshot.env` 也已被 Git 忽略。它只供本機快照發布使用，不會上傳成 Worker secret。
+
+## 8. 建立 D1 資料表
 
 目前的 D1 是空的。Migration 會建立 Mochi Bus 需要的資料表結構：
 
@@ -463,7 +533,7 @@ npm run instance:compile -- --config instance.json
 具有 routes、stops 等資料表的 D1
 ```
 
-這個指令在 PowerShell、macOS 和 Linux 都相同：
+執行：
 
 ```sh
 npx wrangler d1 migrations apply TRANSIT_DB --remote --config .generated/instance/wrangler.instance.jsonc
@@ -471,23 +541,21 @@ npx wrangler d1 migrations apply TRANSIT_DB --remote --config .generated/instanc
 
 > `TRANSIT_DB` 是 Mochi Bus 程式內使用的固定 binding 名稱，不要把它換成 `my-chiayi-transit`。
 
-Wrangler 可能會詢問是否套用 migration。繼續前，確認畫面中的 database 名稱是 `my-chiayi-transit`，或你自己在 `instance.json` 裡設定的名稱。
+Wrangler 可能會詢問是否套用 migration。確認畫面中的 database 是 `my-chiayi-transit`，再輸入 `y` 並按 Enter。
 
-若名稱或 ID 對不上，先停下來檢查 `npx wrangler whoami` 和 `instance.json`，不用急著刪掉資料庫重建。
+完成時應顯示 migration 已成功套用，並回到可輸入指令的狀態。
 
 <details>
 <summary><strong>migration 和 binding 是什麼？</strong></summary>
 
-- **migration**：建立或更新資料表的結構。這一步不是在搬移既有資料。
+- **migration**：建立或更新資料表的結構，不是在搬移舊資料。
 - **binding**：Worker 程式內存取某項 Cloudflare 資源時使用的固定名稱。
 
 `TRANSIT_DB` 指向哪一個真實 D1 database，是由 generated Wrangler config 決定。
 
 </details>
 
-## 7. 部署 Worker
-
-這一步會把網站程式上傳到 Cloudflare：
+## 9. 部署 Worker
 
 ```text
 你電腦裡的程式
@@ -500,7 +568,7 @@ Cloudflare Worker
 https://...workers.dev
 ```
 
-第一次部署時，同時把 `.dev.vars` 裡的兩個 TDX secrets 上傳：
+執行：
 
 ```sh
 npm run deploy -- --secrets-file .dev.vars
@@ -510,26 +578,19 @@ npm run deploy -- --secrets-file .dev.vars
 - **會建立或更新：** Worker 與 Worker secrets
 - **通常可以重跑：** 是
 
-這個指令會建置前端、上傳 Worker，並把 `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET` 存成 Cloudflare Worker secrets。檔案內容不會寫進 repository。
+第一次使用 Workers 時，Wrangler 可能會要求建立或確認 `workers.dev` subdomain。照畫面完成即可。
 
-第一次使用 Workers 時，Wrangler 可能會要求你建立或確認 `workers.dev` subdomain。照畫面完成即可，這不代表部署失敗。
+成功後，Wrangler 會顯示一個以 `.workers.dev` 結尾的完整網址。**直接複製終端機實際顯示的網址，不要自己猜 subdomain。**
 
-成功後，Wrangler 會顯示一個網址，類似：
+把網址貼進瀏覽器。此時網站應該能開，但還沒有完整路線和站牌，因為嘉義市資料尚未發布。
 
-```text
-https://my-chiayi-bus.<你的-subdomain>.workers.dev
-```
+完成標誌：
 
-先把這個網址複製下來，下一步會用到。
+- 終端機沒有顯示 deploy error
+- 顯示一個可開啟的 `https://...workers.dev` 網址
+- 瀏覽器可以載入網站頁面
 
-> [!NOTE]
-> 現在打開網站，頁面應該能載入，但還看不到完整路線和站牌。這是正常的：目前只有網站程式上線，嘉義市公車資料尚未發布。
-
-`workers.dev` 的 Cache API 行為和自訂網域不同，但不影響這次 starter 部署。
-
-## 8. 發布第一份城市快照
-
-### 程式上線了，為什麼還沒有公車？
+## 10. 發布第一份城市快照
 
 ```text
 部署 Worker
@@ -539,7 +600,7 @@ https://my-chiayi-bus.<你的-subdomain>.workers.dev
 ＝ 公車資料上線
 ```
 
-城市快照是某個時間點整理完成的一整份城市公車資料。發布流程會：
+快照發布會：
 
 ```text
 TDX
@@ -553,32 +614,44 @@ TDX
  └── 從公開網址確認結果
 ```
 
-快照工具需要知道剛才的公開網址，才能在發布完成後檢查結果。
+先把剛才的完整 `workers.dev` 網址複製好。
 
 macOS / Linux：
 
 ```sh
-export SNAPSHOT_SMOKE_BASE_URL="https://my-chiayi-bus.<你的-subdomain>.workers.dev"
+export SNAPSHOT_SMOKE_BASE_URL="PASTE_YOUR_WORKERS_DEV_URL_HERE"
 npm run snapshot:city -- Chiayi
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:SNAPSHOT_SMOKE_BASE_URL = "https://my-chiayi-bus.<你的-subdomain>.workers.dev"
+$env:SNAPSHOT_SMOKE_BASE_URL = "PASTE_YOUR_WORKERS_DEV_URL_HERE"
 npm run snapshot:city -- Chiayi
 ```
 
-把範例網址換成 Wrangler 實際回傳的網址，結尾不要加 `/`。
+執行前，先把 `PASTE_YOUR_WORKERS_DEV_URL_HERE` 換成 Wrangler 實際顯示的完整網址，例如：
 
-`SNAPSHOT_SMOKE_BASE_URL` 只存在目前這個終端機視窗。關閉視窗或改用另一個終端機後，需要重新設定。
+```text
+https://my-chiayi-bus.example.workers.dev
+```
 
-這一步會下載 TDX 資料、在本機驗證、寫入 D1 和 R2，再從公開網站檢查新快照。第一次執行時終端機會有不少輸出，不要在中途關掉。
+網址結尾不要加 `/`。
+
+`SNAPSHOT_SMOKE_BASE_URL` 只存在目前這個終端機。關閉終端機或換到另一個視窗後，需要重新設定。
+
+第一次執行時會有很多輸出，不要中途關閉 VS Code。完成可能需要一段時間。
 
 - **操作位置：** TDX、本機、Cloudflare D1/R2 和公開網站
 - **會寫入資料：** 是
-- **可能計費：** R2 或其他 Cloudflare 使用量超過方案額度時
+- **可能計費：** 使用量超過 Cloudflare 方案額度時
 - **通常可以重跑：** 是
+
+完成標誌：
+
+- 最後幾行出現 `"status":"published"` 或 `"phase":"published"`
+- 終端機回到可以再次輸入指令的狀態
+- 沒有出現 `snapshot_publish_failure`
 
 <details>
 <summary><strong>城市快照是什麼？</strong></summary>
@@ -587,28 +660,18 @@ npm run snapshot:city -- Chiayi
 
 它是某個時間點整理完成的一整份城市公車資料，包含路線、站牌、線形和時刻表等內容。Mochi Bus 會先驗證整份資料，再切換公開網站使用的版本。
 
-完整路網使用快照，可以減少重複向 TDX 下載相同資料，也讓地圖載入更快。即時到站和車輛位置等容易變動的資訊，仍會在需要時查詢 TDX。
+即時到站和車輛位置等容易變動的資訊，仍會在需要時查詢 TDX。
 
 </details>
 
-### 看到 R2 credentials 警告
+## 11. 確認結果
 
-Starter profile 可以先不建立 `.snapshot.env`。缺少 R2 S3 credentials 時，publisher 會改用較慢的 Wrangler 上傳方式；這個警告本身不代表失敗。
+### 確認 API
 
-要長期維運、匯入大城市或改成自動排程時，再設定：
-
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-前兩個值必須一起設定，不能只放其中一個。
-
-## 9. 確認結果
-
-先確認公開 API 看得到嘉義市。打開：
+把剛才的公開網址後面加上：
 
 ```text
-<公開網址>/api/v1/map/cities
+/api/v1/map/cities
 ```
 
 例如：
@@ -617,48 +680,126 @@ Starter profile 可以先不建立 `.snapshot.env`。缺少 R2 S3 credentials �
 https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 ```
 
-回應中的城市應只包含 `Chiayi`。
+瀏覽器可能會顯示一整段 JSON，這是正常的。使用瀏覽器尋找功能搜尋 `Chiayi`，應該可以找到它。
 
-接著回到網站確認：
+### 確認網站
 
-- [ ] 首頁和地圖可以開啟
-- [ ] 城市範圍只有嘉義市
+- [ ] 公開網址可以開啟
+- [ ] 地圖顯示嘉義市
 - [ ] 看得到路線、線形和站牌
+- [ ] 點擊路線或站牌後有內容
 - [ ] 到站時間可以查詢
-- [ ] 未啟用的縣市不會被當成可用城市
-- [ ] 網站不需要向 `bus.moc96336.com` 取得執行資料
 
 通過這些項目，就已經是一套能獨立運作的 Mochi Bus。
 
-完整的 release smoke 會檢查版本 tag、瀏覽器資產和較長的觀察窗口，留到 GitHub Actions 或 managed/operator 部署再使用，不列入第一次安裝。
-
 ## 常見問題
 
-### 網站能開，但沒有路線
+### `git`、`node`、`npm` 或 `npx` 顯示找不到指令
 
-代表 Worker 已經上線，但城市快照可能還沒發布成功。
+安裝工具後，完全關閉 VS Code再重新開啟。
 
-確認目前終端機已設定 `SNAPSHOT_SMOKE_BASE_URL`，再執行：
+若仍失敗，確認 Git 與 Node.js 已完成安裝，而不是只下載安裝檔。
+
+### PowerShell 顯示無法載入 `npm.ps1`
+
+不需要修改 PowerShell 執行原則。把指令中的：
+
+- `npm` 改成 `npm.cmd`
+- `npx` 改成 `npx.cmd`
+
+例如：
+
+```powershell
+npm.cmd install
+npx.cmd wrangler whoami
+```
+
+也可以把 VS Code 終端機切換成 Command Prompt。
+
+### `Could not read package.json`、`Missing script` 或找不到專案檔案
+
+目前終端機不在 `mochi-bus` 資料夾。
+
+在 VS Code 使用 **File → Open Recent** 開啟 `mochi-bus`，再建立新的終端機。執行：
+
+```sh
+pwd
+```
+
+最後一段路徑應該是 `mochi-bus`。
+
+### `npm install` 出現很多警告
+
+`npm WARN` 通常不代表失敗。真正的安裝錯誤通常會顯示 `npm ERR!`。
+
+### 找不到 `.dev.vars` 或 `.snapshot.env`
+
+確認已執行複製指令，並在 VS Code Explorer 按一下重新整理圖示。
+
+這兩個檔名開頭有一個 `.`，不是副檔名遺失。
+
+### `instance.json already exists`
+
+代表先前已建立過設定。不要直接加 `--force` 覆蓋；先打開現有的 `instance.json`，確認是否就是要繼續使用的設定。
+
+### `create` 顯示資源已經存在
+
+先列出目前帳號的資源：
+
+```sh
+npx wrangler d1 list
+npx wrangler r2 bucket list
+```
+
+如果同名資源是你剛才建立的，就直接沿用，不要重複建立。若用途不明，先停止並確認。
+
+### D1 ID 填入後驗證失敗
+
+確認：
+
+- 只替換了 `null`
+- ID 左右仍有雙引號
+- 該行結尾逗點仍存在
+- 沒有把 `databaseName` 改掉
+
+### `Missing TDX_CLIENT_ID or TDX_CLIENT_SECRET`
+
+確認 repository 根目錄有 `.dev.vars`，兩個值都已替換，不是空字串或範例文字，並且已儲存。
+
+### `Snapshot publisher requires a provisioned D1 database ID`
+
+檢查 `instance.json` 的 `cloudflare.d1.databaseId`。填好後重新執行：
+
+```sh
+npm run instance:validate -- --config instance.json
+npm run instance:compile -- --config instance.json
+```
+
+### `Snapshot publisher requires a fixed public origin or SNAPSHOT_SMOKE_BASE_URL`
+
+目前終端機沒有公開網址設定，或仍保留 `PASTE_YOUR_WORKERS_DEV_URL_HERE`。重新設定實際網址後再執行。
+
+### 出現 R2 credentials 或 `Snapshot state writer unavailable`
+
+確認根目錄有 `.snapshot.env`，並且三個值都已填寫與儲存：
+
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+R2 token 需要 Object Read & Write 權限，而且應包含 `my-chiayi-transit-shapes` bucket。
+
+### 出現 `snapshot_publish_failure`
+
+往上查看它前面的第一個錯誤訊息。修正後通常可以重新執行：
 
 ```sh
 npm run snapshot:city -- Chiayi
 ```
 
-### `Snapshot publisher requires a fixed public origin or SNAPSHOT_SMOKE_BASE_URL`
+### 網站能開，但沒有路線
 
-目前的終端機沒有公開網址設定。重新設定 `SNAPSHOT_SMOKE_BASE_URL` 後再跑一次。
-
-### `Missing TDX_CLIENT_ID or TDX_CLIENT_SECRET`
-
-確認 repository 根目錄有 `.dev.vars`，兩個值都已替換，不是空字串或範例文字。
-
-### `Snapshot publisher requires a provisioned D1 database ID`
-
-檢查 `instance.json` 的 `cloudflare.d1.databaseId`。填好後還要重新編譯：
-
-```sh
-npm run instance:compile -- --config instance.json
-```
+代表 Worker 已上線，但城市快照可能尚未成功發布。確認 snapshot 指令最後有出現 `"status":"published"` 或 `"phase":"published"`。
 
 ### `city_not_enabled`
 
@@ -687,20 +828,8 @@ npm run instance:compile -- --config instance.json
 1. `npx wrangler whoami` 顯示的帳號
 2. `instance.json` 的 D1 名稱與 ID
 3. R2 bucket 名稱
-4. generated config 是否由最新的 manifest 產生
-
-先找出哪一項不一致，不要再建一組名稱相近的資源繞過它。
-
-### `create` 顯示資源已經存在
-
-先列出目前帳號的資源：
-
-```sh
-npx wrangler d1 list
-npx wrangler r2 bucket list
-```
-
-如果同名資源是你剛才建立的，就直接沿用，不要重複建立。若用途不明，先停止並確認，不要把陌生的舊資源直接接進這套服務。
+4. `.snapshot.env` 的 Account ID
+5. generated config 是否由最新的 `instance.json` 產生
 
 ## 哪些步驟可以重跑？
 
@@ -727,8 +856,8 @@ npm run snapshot:city -- Chiayi
 以下兩個指令會建立新資源，執行前先確認同名資源不存在：
 
 ```sh
-npx wrangler d1 create ...
-npx wrangler r2 bucket create ...
+npx wrangler d1 create my-chiayi-transit
+npx wrangler r2 bucket create my-chiayi-transit-shapes
 ```
 
 ## 移除這套服務與停止可能的費用
@@ -739,17 +868,17 @@ npx wrangler r2 bucket create ...
 - [ ] D1 database
 - [ ] R2 bucket 內的所有物件
 - [ ] 空的 R2 bucket
+- [ ] 不再使用的 R2 API token
 
-R2 bucket 裡有快照時不能直接刪除，要先清空內容。刪除 Worker 不會自動刪除 D1 或 R2；刪除遠端資源也不會動到本機的 `instance.json`。
+R2 bucket 裡有快照時不能直接刪除，要先清空內容。刪除 Worker 不會自動刪除 D1 或 R2；刪除遠端資源也不會動到本機的 `instance.json`、`.dev.vars` 或 `.snapshot.env`。
 
-如果你不再使用任何 R2 功能，也請到 Cloudflare Billing 和 R2 頁面確認 subscription 與帳單狀態。不要只刪除 Worker 就假設所有可能計費的資源都已移除。
+如果不再使用任何 R2 功能，也請到 Cloudflare Billing 和 R2 頁面確認 subscription 與帳單狀態。不要只刪除 Worker 就假設所有可能計費的資源都已移除。
 
 ## 接下來
 
-先不要急著加入全台排程。比較好的下一步，是換一個乾淨環境再走一次，確認沒有使用到原作者帳號或本機留下來的設定。
-
 完成 starter 部署後，可以再選擇：
 
+- fork repository，長期維護自己的版本
 - 加入第二個縣市
 - 綁定自訂網域
 - 用 GitHub Actions 自動更新資料
