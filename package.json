@@ -32,6 +32,7 @@
     "cf-typegen:check": "wrangler types --env-interface CloudflareBindings --env-file .dev.vars.example --check",
     "instance:validate": "node scripts/instance/validate-config.mjs",
     "instance:compile": "node scripts/instance/compile-config.mjs",
+    "instance:doctor": "node scripts/instance/doctor.mjs",
     "instance:preflight": "node scripts/instance/operator-preflight.mjs",
     "measure:shape-pattern": "node scripts/shape-pattern-measurement/run.mjs",
     "verify:shape-pattern-report": "node scripts/shape-pattern-measurement/verify-report.mjs",
