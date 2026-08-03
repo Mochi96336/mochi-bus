@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { applyAppearanceShell } from './appearance-shell'
-import { instanceHomeRedirect } from './instance-home'
 import { applyInstanceResponse } from './instance-response'
 import { apiRateLimit } from './rate-limit'
 import { applyRouteShell } from './route-shell'
@@ -22,9 +21,6 @@ app.use('*', async (c, next) => {
 
   for (const [name, value] of Object.entries(headers)) c.header(name, value)
   if (redirectTarget) return c.redirect(redirectTarget, 308)
-
-  const homeRedirectTarget = instanceHomeRedirect(requestUrl.toString(), c.req.method)
-  if (homeRedirectTarget) return c.redirect(homeRedirectTarget, 302)
 
   await next()
   c.res = await applyInstanceResponse(c.res, requestUrl.toString())

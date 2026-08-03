@@ -188,6 +188,20 @@ describe('ETA bootstrap', () => {
     }
   })
 
+  it('renders a null local-home bootstrap without requiring a route query', () => {
+  const html = renderETAPage({
+    initialBoard: null,
+    mapCity: 'Chiayi',
+    notice: '即時資料暫時無法更新',
+    useLocalBoard: true,
+    requestUrl: 'https://chiayi.example/',
+  })
+
+  expect(bootstrapFrom(html)).toMatchObject({ initialBoard: null, useLocalBoard: true })
+  expect(html).toContain('href="/map?city=Chiayi"')
+  expect(html).not.toContain('"routeName":""')
+})
+
   it('escapes bootstrap JSON so a stop name cannot close the script element', () => {
     const maliciousQuery = {
       ...query,
