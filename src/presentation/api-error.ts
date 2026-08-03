@@ -1,3 +1,4 @@
+import { CityNotEnabledError, CITY_NOT_ENABLED_CODE } from '../domain/city-availability'
 import { QueryValidationError } from '../domain/bus-query'
 import {
   TDX_ACCESS_TOKEN_REJECTED_CODE,
@@ -23,6 +24,10 @@ export type ApiErrorBody =
     code: typeof TDX_ACCESS_TOKEN_REJECTED_CODE
     error: typeof TDX_ACCESS_TOKEN_REJECTED_MESSAGE
   }
+  | {
+    code: typeof CITY_NOT_ENABLED_CODE
+    error: string
+  }
   | { error: string }
 
 export type ApiErrorPresentation = {
@@ -43,6 +48,14 @@ export function presentBusApiError(
     return {
       status: error.status,
       body: apiInputErrorBody(error),
+      shouldLog: false,
+    }
+  }
+
+  if (error instanceof CityNotEnabledError) {
+    return {
+      status: 404,
+      body: { code: CITY_NOT_ENABLED_CODE, error: error.message },
       shouldLog: false,
     }
   }

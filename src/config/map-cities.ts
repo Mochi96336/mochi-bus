@@ -1,3 +1,5 @@
+import { instanceRuntime } from '../instance-runtime'
+
 export type MapCity = {
   code: string
   name: string
@@ -34,3 +36,6 @@ export const mapCities: MapCity[] = [
   { code: 'KinmenCounty', name: '金門', region: 'islands', center: [24.432, 118.318] },
   { code: 'LienchiangCounty', name: '馬祖', region: 'islands', center: [26.16, 119.951] },
 ]
+
+const enabledCityCodes = new Set(instanceRuntime.transit.enabledCities)
+export const enabledMapCities = mapCities.filter((city) => enabledCityCodes.has(city.code))
