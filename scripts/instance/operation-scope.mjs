@@ -1,29 +1,46 @@
 import { appendFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { loadOperationsPlan } from './operations-plan.mjs'
+import { loadOperationalResources } from './operational-resources.mjs'
 
-const OPERATIONS = new Set(['snapshot', 'publicProbe', 'windowWatchdog'])
+const OPERATIONS = new Set(['snapshot', 'releaseSmoke', 'publicProbe', 'windowWatchdog'])
 
-export function resolveOperationScope(operation, plan = loadOperationsPlan()) {
+export function resolveOperationScope(
+  operation,
+  plan = loadOperationsPlan(),
+  resources = loadOperationalResources(),
+) {
   if (!OPERATIONS.has(operation)) throw new Error(`Unsupported instance operation: ${operation || '<empty>'}`)
   const enabled = operation === 'snapshot'
     ? plan.snapshotSchedule !== 'manual'
     : plan.checks[operation]
+
+  if (enabled && ['snapshot', 'publicProbe', 'windowWatchdog'].includes(operation)
+    && !resources.d1DatabaseId) {
+    throw new Error(`${operation} requires a provisioned D1 database ID`)
+  }
+
   return Object.freeze({
     operation,
     enabled,
     snapshotSchedule: plan.snapshotSchedule,
     profile: plan.profile,
+    ...resources,
   })
 }
 
-export function writeOperationScope(scope, env = process.env) {
+export function writeOperationScope(scope, env = process.env, appendFile = appendFileSync) {
   const lines = [
     `enabled=${scope.enabled}`,
     `snapshot_schedule=${scope.snapshotSchedule}`,
     `profile=${scope.profile}`,
+    `worker_name=${scope.workerName}`,
+    `d1_database_name=${scope.d1DatabaseName}`,
+    `d1_database_id=${scope.d1DatabaseId ?? ''}`,
+    `r2_bucket_name=${scope.r2BucketName}`,
+    `public_origin=${scope.publicOrigin ?? ''}`,
   ]
-  if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `${lines.join('\n')}\n`)
+  if (env.GITHUB_OUTPUT) appendFile(env.GITHUB_OUTPUT, `${lines.join('\n')}\n`)
   console.log(JSON.stringify({ message: 'instance_operation_scope', ...scope }))
 }
 

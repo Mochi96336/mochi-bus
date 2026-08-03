@@ -34,11 +34,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler d1 migrations apply mochi-transit --remote
+        run: >-
+          npx wrangler d1 migrations apply
+          "${{ steps.operation.outputs.d1_database_name }}"
+          --remote
+          --config .generated/instance/wrangler.instance.jsonc
       - name: Probe the public surface for every enabled city
         if: steps.operation.outputs.enabled == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          SNAPSHOT_SMOKE_BASE_URL: ${{ vars.SNAPSHOT_SMOKE_BASE_URL }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
         run: npm run snapshot:public-probe

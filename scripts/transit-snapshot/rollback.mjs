@@ -1,13 +1,16 @@
 import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
+import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { assertArtifactIntegrity } from './artifact-integrity.mjs'
 import { readManifestJson } from './manifest-read-limit.mjs'
 import { executeReconcile, executeRollback, safeOperationDiagnostic } from './rollback-operations.mjs'
 import { networkPrefixMatches, readBoundedResponseJson, readBoundedResponseText } from './active-probe.mjs'
 import { parseContentLength } from './r2-metadata.mjs'
 
-const DATABASE = 'mochi-transit'
-const BUCKET = 'mochi-transit-shapes'
+const operationalResources = loadOperationalResources()
+const DATABASE = process.env.TRANSIT_D1_DATABASE_NAME ?? operationalResources.d1DatabaseName
+const BUCKET = process.env.TRANSIT_R2_BUCKET_NAME ?? operationalResources.r2BucketName
+const PUBLIC_ORIGIN = process.env.SNAPSHOT_SMOKE_BASE_URL ?? operationalResources.publicOrigin
 const MAX_EXACT_ARTIFACT_BYTES = 16 * 1024 * 1024
 const PUBLIC_JSON_LIMIT = 2 * 1024 * 1024
 
@@ -40,7 +43,7 @@ async function main() {
         ...options,
         targetVersion: parsed.targetVersion,
         transition: ({ expectedVersion, targetVersion }) => transitionAuthority(city, expectedVersion, targetVersion),
-        smoke: ({ version, evidence }) => smokeVersion({ city, version, evidence, baseUrl: vars.SNAPSHOT_SMOKE_BASE_URL }),
+        smoke: ({ version, evidence }) => smokeVersion({ city, version, evidence, baseUrl: PUBLIC_ORIGIN }),
       })
       : await executeReconcile({ ...options, explicitPrevious: parsed.previousVersion })
     console.log(JSON.stringify({ event: 'snapshot_authority_operation', ...result }))
@@ -270,7 +273,8 @@ function validArtifact(artifact, key) {
     && typeof artifact.sha256 === 'string' && /^[a-f0-9]{64}$/.test(artifact.sha256)
 }
 
-async function smokeVersion({ city, version, evidence, baseUrl = 'https://bus.moc96336.com' }) {
+async function smokeVersion({ city, version, evidence, baseUrl }) {
+  if (!baseUrl) throw new Error('Snapshot rollback smoke requires a fixed public origin')
   let succeeded = false
   for (let attempt = 1; attempt <= 12 && !succeeded; attempt += 1) {
     try {

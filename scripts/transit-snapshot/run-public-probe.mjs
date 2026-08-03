@@ -1,5 +1,6 @@
 import { appendFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { readBoundedResponseJson } from './active-probe.mjs'
 import { resolvePublicProbeBaseUrl } from './public-probe-origin.mjs'
@@ -113,8 +114,6 @@ export async function runPublicProbe({
 async function readCityReference(store, city, probeDate) {
   const base = await store.readReference(city)
   if (!base?.activeVersion || !base.counts || base.counts.sampleCount < 1) {
-    // The probe itself decides how a missing pointer or empty rows is
-    // classified; pass the evidence through unchanged.
     return Object.freeze({ ...base, sample: null })
   }
   const index = deterministicPublicCaseIndex(city, probeDate, PUBLIC_PROBE_CASE_VERSION, base.counts.sampleCount)
@@ -173,8 +172,6 @@ export function createPublicApiAdapter({
   })
 }
 
-// Reads at most `maximumBytes` and then abandons the stream, so probing a
-// 35 MB Taipei network payload costs one 64 KiB read instead of a download.
 export async function readResponsePrefix(response, maximumBytes) {
   if (!response.body) throw new Error('Prefix response has no body')
   const reader = response.body.getReader()
@@ -250,11 +247,11 @@ async function writePublicProbeSummary(summary) {
   }))
 }
 
-function storeFromEnvironment(env) {
+function storeFromEnvironment(env, resources) {
   return createD1PublicProbeStore({
     accountId: env.CLOUDFLARE_ACCOUNT_ID,
     apiToken: env.CLOUDFLARE_API_TOKEN,
-    databaseId: env.TRANSIT_DATABASE_ID,
+    databaseId: env.TRANSIT_DATABASE_ID ?? resources.d1DatabaseId,
   })
 }
 
@@ -277,8 +274,9 @@ async function main() {
     console.log(JSON.stringify({ message: 'instance_operation_disabled', operation: 'publicProbe' }))
     return
   }
+  const resources = loadOperationalResources()
   const result = await runPublicProbe({
-    store: storeFromEnvironment(process.env),
+    store: storeFromEnvironment(process.env, resources),
     publicApi: createPublicApiAdapter({
       baseUrl: resolvePublicProbeBaseUrl({ env: process.env }),
     }),
