@@ -32,10 +32,11 @@ export const SUPPORTED_CITY_CODES = Object.freeze([
 ])
 
 const SUPPORTED_CITY_SET = new Set(SUPPORTED_CITY_CODES)
-const INSTANCE_ID = /^[a-z][a-z0-9-]{2,62}$/
-const CLOUDFLARE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/
+const INSTANCE_ID = /^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$/
+const CLOUDFLARE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+const R2_BUCKET_NAME = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/
 const D1_DATABASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const RATE_LIMIT_NAMESPACE_ID = /^[0-9]{1,20}$/
+const RATE_LIMIT_NAMESPACE_ID = /^[1-9][0-9]{0,19}$/
 const ALLOWED_TOP_LEVEL_KEYS = new Set([
   '$schema', 'schemaVersion', 'instanceId', 'site', 'transit', 'cloudflare', 'operations',
 ])
@@ -169,7 +170,7 @@ export function validateInstanceConfig(value, { source = 'instance config' } = {
     const r2 = expectObject(cloudflare.r2, `${source}.cloudflare.r2`, errors)
     if (r2) {
       rejectUnknownKeys(r2, new Set(['bucketName']), `${source}.cloudflare.r2`, errors)
-      stringMatching(r2.bucketName, CLOUDFLARE_NAME, `${source}.cloudflare.r2.bucketName`, errors)
+      stringMatching(r2.bucketName, R2_BUCKET_NAME, `${source}.cloudflare.r2.bucketName`, errors)
     }
 
     const rateLimits = expectObject(root.cloudflare.rateLimits, `${source}.cloudflare.rateLimits`, errors)

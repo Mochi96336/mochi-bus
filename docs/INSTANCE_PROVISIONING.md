@@ -1,5 +1,12 @@
 # Instance provisioning plan
 
+Start a new fork manifest with [`instance:init`](INSTANCE_INIT.md), then pass the generated file directly to the provisioning planner:
+
+```sh
+npm run instance:init -- chiayi-bus --cities Chiayi
+npm run instance:provision-plan -- --config instance.json
+```
+
 `instance:provision-plan` converts the current instance doctor findings into a concrete, non-destructive setup plan.
 
 ```sh
