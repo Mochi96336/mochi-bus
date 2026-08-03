@@ -1,3 +1,5 @@
+import { instanceOrigin } from './instance-runtime'
+
 const HSTS_MAX_AGE_SECONDS = 86_400
 const CSP_REPORT_PATH = '/api/v1/csp-report'
 
@@ -45,10 +47,13 @@ export function httpsRedirectTarget(requestUrl: string): string | null {
   return url.toString()
 }
 
-export function securityHeaders(isHttps: boolean, origin = 'https://bus.moc96336.com'): Readonly<Record<string, string>> {
+export function securityHeaders(
+  isHttps: boolean,
+  requestUrl?: string,
+): Readonly<Record<string, string>> {
   const headers = {
     ...defaultSecurityHeaders,
-    'Reporting-Endpoints': `csp="${new URL(CSP_REPORT_PATH, origin)}"`,
+    'Reporting-Endpoints': `csp="${new URL(CSP_REPORT_PATH, instanceOrigin(requestUrl))}"`,
   }
   if (!isHttps) return headers
   return { ...headers, 'Strict-Transport-Security': `max-age=${HSTS_MAX_AGE_SECONDS}` }

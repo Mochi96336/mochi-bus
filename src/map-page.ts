@@ -1,5 +1,14 @@
 import { mapCities } from './config/map-cities'
-import { canonicalUrl, renderWebsiteStructuredData, siteOrigin, siteSearchDescription, siteSocialDescription, siteSocialImage, siteTitle } from './seo'
+import {
+  canonicalUrl,
+  renderWebsiteStructuredData,
+  siteName,
+  siteOrigin,
+  siteSearchDescription,
+  siteSocialDescription,
+  socialImageUrl,
+  siteTitle,
+} from './seo'
 
 export type MapPageMeta = {
   title?: string
@@ -14,7 +23,8 @@ export function renderMapPage(meta: MapPageMeta = {}): string {
   const title = meta.title ?? siteTitle
   const description = meta.description ?? siteSearchDescription
   const heading = meta.heading ?? '台灣公車地圖'
-  const canonical = meta.requestUrl ? canonicalUrl(meta.requestUrl) : `${siteOrigin}/map`
+  const canonical = meta.requestUrl ? canonicalUrl(meta.requestUrl) : `${siteOrigin()}/map`
+  const socialImage = socialImageUrl(canonical)
   // 城市清單是靜態設定,直接內嵌成 bootstrap:main.ts 不用先打一次
   // /api/v1/map/cities 才能開始還原 URL,深連結少一趟往返就少一段閃現。
   const statusText = meta.heading ? `${meta.heading} · 正在載入…` : '選一個區域，看看公車如何穿過城市。'
@@ -29,14 +39,14 @@ export function renderMapPage(meta: MapPageMeta = {}): string {
   <link rel="canonical" href="${escapeHTML(canonical)}">
   <meta property="og:title" content="${escapeHTML(title)}">
   <meta property="og:description" content="${escapeHTML(siteSocialDescription)}">
-  <meta property="og:site_name" content="Mochi Bus">
+  <meta property="og:site_name" content="${escapeHTML(siteName)}">
   <meta property="og:url" content="${escapeHTML(canonical)}">
-  <meta property="og:image" content="${siteSocialImage}">
+  <meta property="og:image" content="${escapeHTML(socialImage)}">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="${escapeHTML(title)}">
   <meta name="twitter:description" content="${escapeHTML(siteSocialDescription)}">
-  <meta name="twitter:image" content="${siteSocialImage}">
-  ${renderWebsiteStructuredData()}
+  <meta name="twitter:image" content="${escapeHTML(socialImage)}">
+  ${renderWebsiteStructuredData(canonical)}
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon.ico" sizes="any">
@@ -65,7 +75,7 @@ export function renderMapPage(meta: MapPageMeta = {}): string {
          導覽宣告一律經 #map-status。 -->
     <aside id="map-drawer" class="map-drawer"></aside>
   </div>
-  <script id="map-bootstrap" type="application/json">${safeJSON({ cities: mapCities })}</script>
+  <script id="map-bootstrap" type="application/json">${safeJSON({ cities: mapCities, siteName })}</script>
   <script type="module" src="/assets/map.js"></script>
 </body>
 </html>`
@@ -80,6 +90,6 @@ function safeJSON(value: unknown): string {
     .replaceAll('<', '\\u003c')
     .replaceAll('>', '\\u003e')
     .replaceAll('&', '\\u0026')
-    .replaceAll(' ', '\u2028')
-    .replaceAll(' ', '\u2029')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029')
 }
