@@ -35,7 +35,7 @@
 > [!IMPORTANT]
 > Mochi Bus 使用 Cloudflare R2 儲存路線線形、時刻表和城市快照。
 >
-> R2 有每月免費額度，但啟用前仍需要在 Cloudflare Dashboard 完成 R2 checkout，並讓帳號具備可用的付款方式；實際畫面通常會要求信用卡等付款資料。
+> R2 有每月免費額度，但啟用前仍要在 Cloudflare Dashboard 完成 R2 checkout，讓帳號具備可用的付款方式；實際畫面通常會要求信用卡等付款資料。
 >
 > 使用量保持在免費額度內時，R2 費用可以是 0；超過免費額度後會依實際用量計費。價格和免費額度可能調整，建立前請查看 [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/)。
 >
@@ -98,7 +98,7 @@ Worker 是網站程式；D1 和 R2 保存網站需要的公車資料。
 - [ ] 已取得 TDX Client ID 與 Client Secret
 - [ ] 電腦可以安裝 Git、Node.js 和文字編輯器
 
-TDX 憑證可以從[會員中心](https://tdx.transportdata.tw/)取得；還沒有帳號可先[註冊](https://tdx.transportdata.tw/register/general)。位置在「會員中心 → 資料服務 → API 金鑰」。
+TDX 憑證位於「[TDX 會員中心](https://tdx.transportdata.tw/) → 資料服務 → API 金鑰」。還沒有帳號時，先完成[會員註冊](https://tdx.transportdata.tw/register/general)，再建立一組 API 金鑰。
 
 ## 1. 安裝需要的工具
 
@@ -111,13 +111,23 @@ TDX 憑證可以從[會員中心](https://tdx.transportdata.tw/)取得；還沒�
 建議使用 VS Code，因為後面可以在同一個畫面：
 
 - 看見所有專案檔案
-- 編輯 `.dev.vars` 和 `instance.json`
+- 編輯 `.dev.vars`、`.snapshot.env` 和 `instance.json`
 - 打開內建終端機執行指令
 - 避免 Windows 把 `.dev.vars` 存成 `.dev.vars.txt`
 
 不需要安裝任何 VS Code extension。
 
-安裝完成後，先關閉再重新開啟 VS Code，讓剛安裝的 Git 和 Node.js 可以被找到。
+<details>
+<summary><strong>第一次安裝時該選哪些選項？</strong></summary>
+
+- Node.js 下載頁選擇 **LTS** 版本，安裝選項保留預設即可。
+- Git 安裝程式的選項保留預設即可。
+- VS Code 使用 User Installer 或 System Installer 都可以。
+- 不要把專案放進 `C:\Program Files` 等需要管理員權限的資料夾。
+
+安裝完成後，完全關閉再重新開啟 VS Code，讓新安裝的 Git 和 Node.js 可以被找到。
+
+</details>
 
 ### 打開 VS Code 終端機
 
@@ -125,7 +135,7 @@ TDX 憑證可以從[會員中心](https://tdx.transportdata.tw/)取得；還沒�
 2. 從上方選單選擇 **Terminal → New Terminal**。
 3. 畫面下方會出現可以輸入指令的區域。
 
-後面灰色指令框中的文字，都是貼進這個終端機，再按 Enter 執行。
+Windows 預設通常是 PowerShell；macOS 和 Linux 通常是自己的系統 shell。後面灰色指令框中的文字，都是貼進這個終端機，再按 Enter 執行。
 
 確認工具已安裝：
 
@@ -141,7 +151,7 @@ npm --version
 - Node.js 顯示 `v22` 或更新版本
 - npm 顯示版本號
 
-若出現「找不到指令」，先完全關閉 VS Code再重新開啟。
+若出現「找不到指令」，先完全關閉 VS Code 再重新開啟。
 
 ```text
 Node.js
@@ -168,22 +178,26 @@ npm 會隨 Node.js 一起安裝。這篇主要使用：
 
 ## 2. 取得程式碼
 
-先在 VS Code 的終端機查看目前位置：
+先在 VS Code 終端機查看目前位置：
 
 ```sh
 pwd
 ```
 
-Mochi Bus 會下載到這個位置。接著執行：
+Windows PowerShell、macOS 和 Linux 都可以使用 `pwd`。Mochi Bus 會下載到這個位置。
+
+接著執行：
 
 ```sh
 git clone https://github.com/Mochi96336/mochi-bus.git
 cd mochi-bus
 ```
 
+`git clone` 會建立一個新的 `mochi-bus` 資料夾；`cd mochi-bus` 則會進入它。
+
 從現在開始，除非教學另外說明，**所有指令都要在 `mochi-bus` 資料夾中執行**。
 
-執行：
+再次執行：
 
 ```sh
 pwd
@@ -191,12 +205,12 @@ pwd
 
 最後一段路徑應該是 `mochi-bus`。
 
-### 用 VS Code 開啟專案資料夾
+### 用 VS Code 開啟整個專案資料夾
 
 1. 選擇 **File → Open Folder**。
 2. 找到剛才下載的 `mochi-bus` 資料夾。
-3. 選擇 **Select Folder** 或 **開啟**。
-4. 若 VS Code 詢問是否信任作者，確認網址是 `Mochi96336/mochi-bus` 後選擇信任。
+3. 選擇 **Select Folder**；macOS 選擇 **Open**。
+4. 若出現 Workspace Trust 提示，先確認這個資料夾是由上面的官方 `git clone` 指令取得。確認後選擇 **Yes, I trust the authors**，終端機和專案工具才會正常啟用。
 5. 再選擇 **Terminal → New Terminal**。
 
 左側 Explorer 現在應該會看到 `README.md`、`package.json`、`docs` 等檔案。新終端機的目前位置也應該是 `mochi-bus`。
@@ -211,7 +225,7 @@ pwd
 - **clone**：把 repository 下載到自己的電腦
 - **fork**：在自己的 GitHub 帳號建立一份可獨立維護的副本
 
-第一次跟著教學時直接 clone 官方 repository 最簡單。完成部署後，再研究 fork 和同步 upstream。
+第一次跟著教學時直接 clone 官方 repository 最簡單，也不需要 GitHub 帳號。完成部署後，再研究 fork 和同步 upstream。
 
 </details>
 
@@ -259,6 +273,8 @@ npx wrangler whoami
 ```
 
 完成時應顯示你的 Cloudflare 帳號資訊。稍後的 D1、R2 和 Worker 都會建立在這個帳號。
+
+若 Wrangler 要你選擇帳號，選擇剛才完成 R2 checkout 的同一個帳號。
 
 <details>
 <summary><strong>npx 和 Wrangler 是什麼？</strong></summary>
@@ -480,20 +496,38 @@ npm run instance:compile -- --config instance.json
 城市快照會從你的電腦直接寫入 R2，因此還需要一組只給快照工具使用的 R2 credentials。
 
 > [!WARNING]
-> R2 Secret Access Key 只會在建立 token 後顯示一次。先準備好 VS Code，建立後立刻複製到 `.snapshot.env`，不要貼到公開地方。
+> Secret Access Key 只會在建立 token 後顯示一次。建立後立刻複製到 `.snapshot.env`，不要貼到公開地方。
 
 ### 在 Cloudflare 建立 R2 API token
 
 1. 打開 Cloudflare Dashboard。
 2. 進入 **Storage & databases → R2 → Overview**。
 3. 在 **Account Details** 找到 **API Tokens**，選擇 **Manage**。
-4. 建立 Account API token 或 User API token。
+4. 一般個人帳號可選擇 **Create User API token**；只有需要帳號層級 token 時才選 **Create Account API token**。
 5. 權限選擇 **Object Read & Write**。
-6. 建議只允許存取 `my-chiayi-transit-shapes` 這個 bucket。
-7. 建立後保留畫面上的：
+6. 將可存取的 bucket 限制為 `my-chiayi-transit-shapes`。
+7. 建立 token。
+8. 立即複製畫面上的：
    - Access Key ID
    - Secret Access Key
-   - Account ID
+
+Account ID 不是 Access Key ID。它通常可以在同一頁的 **Account Details** 或 R2 S3 endpoint 中找到：
+
+```text
+https://ACCOUNT_ID.r2.cloudflarestorage.com
+        └────────┘
+          這一段
+```
+
+<details>
+<summary><strong>Account token 和 User token 有什麼差別？</strong></summary>
+
+- **User API token**：綁定目前登入的 Cloudflare 使用者，個人自架通常選這個即可。
+- **Account API token**：綁定整個 Cloudflare account，通常只有 Super Administrator 能建立。
+
+兩者都可以產生 R2 的 Access Key ID 和 Secret Access Key。這篇只需要其中一種。
+
+</details>
 
 ### 建立 `.snapshot.env`
 
@@ -517,7 +551,7 @@ R2_SECRET_ACCESS_KEY="你的 Secret Access Key"
 CLOUDFLARE_ACCOUNT_ID="你的 Cloudflare Account ID"
 ```
 
-儲存檔案。
+按 `Ctrl+S`；macOS 按 `Command+S` 儲存。
 
 > `.snapshot.env` 也已被 Git 忽略。它只供本機快照發布使用，不會上傳成 Worker secret。
 
@@ -640,7 +674,7 @@ https://my-chiayi-bus.example.workers.dev
 
 `SNAPSHOT_SMOKE_BASE_URL` 只存在目前這個終端機。關閉終端機或換到另一個視窗後，需要重新設定。
 
-第一次執行時會有很多輸出，不要中途關閉 VS Code。完成可能需要一段時間。
+第一次執行時會有很多輸出，不要中途關閉 VS Code。
 
 - **操作位置：** TDX、本機、Cloudflare D1/R2 和公開網站
 - **會寫入資料：** 是
@@ -696,7 +730,7 @@ https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 
 ### `git`、`node`、`npm` 或 `npx` 顯示找不到指令
 
-安裝工具後，完全關閉 VS Code再重新開啟。
+安裝工具後，完全關閉 VS Code 再重新開啟。
 
 若仍失敗，確認 Git 與 Node.js 已完成安裝，而不是只下載安裝檔。
 
@@ -714,16 +748,22 @@ npm.cmd install
 npx.cmd wrangler whoami
 ```
 
-也可以把 VS Code 終端機切換成 Command Prompt。
+也可以在 VS Code 終端機右上角的下拉選單改用 **Command Prompt**。使用 Command Prompt 時，以 `cd` 顯示目前路徑，不要使用 `pwd`。
 
 ### `Could not read package.json`、`Missing script` 或找不到專案檔案
 
 目前終端機不在 `mochi-bus` 資料夾。
 
-在 VS Code 使用 **File → Open Recent** 開啟 `mochi-bus`，再建立新的終端機。執行：
+在 VS Code 使用 **File → Open Recent** 開啟 `mochi-bus`，再建立新的終端機。Windows PowerShell、macOS 和 Linux 執行：
 
 ```sh
 pwd
+```
+
+Windows Command Prompt 則執行：
+
+```bat
+cd
 ```
 
 最後一段路徑應該是 `mochi-bus`。
@@ -779,7 +819,7 @@ npm run instance:compile -- --config instance.json
 
 目前終端機沒有公開網址設定，或仍保留 `PASTE_YOUR_WORKERS_DEV_URL_HERE`。重新設定實際網址後再執行。
 
-### 出現 R2 credentials 或 `Snapshot state writer unavailable`
+### 出現 R2 credentials、`Snapshot state writer unavailable` 或 R2 403
 
 確認根目錄有 `.snapshot.env`，並且三個值都已填寫與儲存：
 
@@ -787,7 +827,12 @@ npm run instance:compile -- --config instance.json
 - `R2_SECRET_ACCESS_KEY`
 - `CLOUDFLARE_ACCOUNT_ID`
 
-R2 token 需要 Object Read & Write 權限，而且應包含 `my-chiayi-transit-shapes` bucket。
+再確認：
+
+- R2 token 權限是 **Object Read & Write**
+- token 包含 `my-chiayi-transit-shapes` bucket
+- `CLOUDFLARE_ACCOUNT_ID` 填的是 Account ID，不是 Access Key ID
+- Secret Access Key 沒有多複製空格
 
 ### 出現 `snapshot_publish_failure`
 
