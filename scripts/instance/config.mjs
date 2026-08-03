@@ -403,7 +403,8 @@ function validateDemoQuery(value, enabledCities, path, errors) {
   if (typeof query.city === 'string' && !enabledCities.includes(query.city)) {
     errors.push(`${path}.city must be included in enabledCities`)
   }
-  for (const key of ['routeName', 'stopName', 'stopUid', 'routeUid']) {
+  nonEmptyString(query.routeName, `${path}.routeName`, errors, 40)
+  for (const key of ['stopName', 'stopUid', 'routeUid']) {
     nonEmptyString(query[key], `${path}.${key}`, errors, 160)
   }
   if (query.direction !== 0 && query.direction !== 1) {

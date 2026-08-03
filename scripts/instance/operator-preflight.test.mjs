@@ -73,7 +73,7 @@ describe('instance operator preflight', () => {
     const fetchImpl = vi.fn(async (url, options) => {
       expect(options.headers.Authorization).toBe('Bearer secret-api-token')
       return String(url).includes('/d1/database/')
-        ? cloudflareResponse({ uuid: databaseId, name: 'mochi-transit' })
+        ? cloudflareResponse({ uuid: databaseId.toUpperCase(), name: 'mochi-transit' })
         : cloudflareResponse({ name: 'mochi-transit-shapes' })
     })
 
@@ -132,14 +132,14 @@ describe('instance operator preflight', () => {
       'CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID',
       'snapshot requires a provisioned D1 database ID',
       'R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be configured together',
-      'A fixed public origin or SNAPSHOT_SMOKE_BASE_URL is required',
+      'SNAPSHOT_SMOKE_BASE_URL is required when the instance canonical origin is request-derived',
       'Missing required operator configuration: TDX_CLIENT_ID, TDX_CLIENT_SECRET',
     ])
     expect(JSON.stringify(inspected)).not.toContain('do-not-print-me')
     expect(JSON.stringify(inspected)).not.toContain('only-half-a-pair')
   })
 
-  it('requires explicit public origins only for operations that use them', () => {
+  it('reuses the operational origin contract only for operations that need an origin', () => {
     expect(() => resolveOperatorPreflight({
       operation: 'deploy',
       plan: plan(),
@@ -151,8 +151,20 @@ describe('instance operator preflight', () => {
       operation: 'deploy',
       plan: plan(),
       resources: resources({ publicOrigin: null }),
-      env: cloudflareEnv({ RELEASE_SMOKE_ORIGIN: 'https://fork.example' }),
+      env: cloudflareEnv({ RELEASE_SMOKE_ORIGIN: 'https://fork.example/' }),
     }).origin).toBe('https://fork.example')
+
+    expect(resolveOperatorPreflight({
+      operation: 'snapshot',
+      plan: plan({ profile: 'starter', snapshotSchedule: 'manual' }),
+      forceEnabled: true,
+      resources: resources({ publicOrigin: null }),
+      env: cloudflareEnv({
+        TDX_CLIENT_ID: 'tdx-id',
+        TDX_CLIENT_SECRET: 'tdx-secret',
+        SNAPSHOT_SMOKE_BASE_URL: 'http://localhost:8787/',
+      }),
+    }).origin).toBe('http://localhost:8787')
 
     expect(resolveOperatorPreflight({
       operation: 'windowWatchdog',

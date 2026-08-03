@@ -18,11 +18,17 @@ describe('operator preflight workflow integration', () => {
     expect(deploy).toContain('RELEASE_SMOKE_ORIGIN: ${{ steps.operation.outputs.public_origin || vars.RELEASE_SMOKE_ORIGIN }}')
   })
 
-  it('preflights scheduled and manually forced snapshots before migrations', () => {
+  it('validates manual cities and preflights snapshots before migrations', () => {
+    const cityValidation = sync.indexOf('node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"')
     const preflight = sync.indexOf('npm run instance:preflight -- snapshot')
-    expect(preflight).toBeGreaterThan(-1)
-    expect(sync.indexOf('name: Apply transit database migrations')).toBeGreaterThan(preflight)
-    expect(sync.indexOf('name: Build and publish snapshot')).toBeGreaterThan(preflight)
+    const migration = sync.indexOf('name: Apply transit database migrations')
+    const publication = sync.indexOf('name: Build and publish snapshot')
+
+    expect(cityValidation).toBeGreaterThan(-1)
+    expect(preflight).toBeGreaterThan(cityValidation)
+    expect(migration).toBeGreaterThan(preflight)
+    expect(publication).toBeGreaterThan(migration)
+    expect(sync.match(/node scripts\/instance\/assert-operation-city\.mjs/g)).toHaveLength(1)
     expect(sync).toContain("MOCHI_BUS_PREFLIGHT_FORCE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}")
     for (const secret of [
       'TDX_CLIENT_ID',

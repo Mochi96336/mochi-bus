@@ -64,6 +64,16 @@ test('demo query city must be enabled', async () => {
   )
 })
 
+test('demo query route name must fit the public route endpoint', async () => {
+  const production = await loadJson(productionPath)
+  production.transit.demoQuery.routeName = 'x'.repeat(41)
+
+  assert.throws(
+    () => validateInstanceConfig(production),
+    /demoQuery\.routeName must be a non-empty string up to 40 characters/,
+  )
+})
+
 test('operator profile requires fixed identity, resources and checks', async () => {
   const production = await loadJson(productionPath)
   production.site.canonicalOrigin = 'request'

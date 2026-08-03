@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url'
 import { loadOperationsPlan } from './operations-plan.mjs'
-import { loadOperationalResources } from './operational-resources.mjs'
+import { loadOperationalResources, resolveOperationalOrigin } from './operational-resources.mjs'
 
 const OPERATIONS = new Set(['deploy', 'snapshot', 'publicProbe', 'windowWatchdog'])
 const CLOUDFLARE_ACCOUNT_ID = /^[0-9a-f]{32}$/i
@@ -70,15 +70,13 @@ export function inspectOperatorPreflight({
   if (operation === 'publicProbe' || operation === 'snapshot'
     || (operation === 'deploy' && plan.checks.releaseSmoke)) {
     const overrideName = operation === 'deploy' ? 'RELEASE_SMOKE_ORIGIN' : 'SNAPSHOT_SMOKE_BASE_URL'
-    const suppliedOrigin = environmentValue(env, overrideName)
     try {
-      if (resources.publicOrigin && suppliedOrigin) {
-        const overrideOrigin = validatePublicOrigin(suppliedOrigin, overrideName)
-        if (overrideOrigin !== resources.publicOrigin) {
-          throw new Error(`${overrideName} must match generated public origin ${resources.publicOrigin}`)
-        }
-      }
-      origin = validatePublicOrigin(resources.publicOrigin ?? suppliedOrigin, overrideName)
+      origin = resolveOperationalOrigin(
+        resources,
+        environmentValue(env, overrideName),
+        overrideName,
+        { allowHttp: operation !== 'deploy' },
+      )
     } catch (error) {
       blockers.push(errorMessage(error))
     }
@@ -231,7 +229,8 @@ async function verifyD1Database({ accountId, apiToken, check, fetchImpl }) {
     'D1 database',
     fetchImpl,
   )
-  if (body?.result?.uuid !== check.id || body?.result?.name !== check.name) {
+  const returnedId = typeof body?.result?.uuid === 'string' ? body.result.uuid.toLowerCase() : null
+  if (returnedId !== check.id.toLowerCase() || body?.result?.name !== check.name) {
     throw new Error(`Cloudflare D1 identity mismatch for ${check.name}`)
   }
 }
@@ -296,22 +295,6 @@ function hasEnvironment(env, name) {
 
 function environmentValue(env, name) {
   return hasEnvironment(env, name) ? env[name].trim() : null
-}
-
-function validatePublicOrigin(value, overrideName) {
-  if (!value) {
-    throw new Error(`A fixed public origin or ${overrideName} is required`)
-  }
-  let url
-  try {
-    url = new URL(value)
-  } catch {
-    throw new Error(`${overrideName} must be a fixed HTTPS origin`)
-  }
-  if (url.protocol !== 'https:' || url.origin !== value || url.username || url.password) {
-    throw new Error(`${overrideName} must be a fixed HTTPS origin`)
-  }
-  return url.origin
 }
 
 function errorMessage(error) {

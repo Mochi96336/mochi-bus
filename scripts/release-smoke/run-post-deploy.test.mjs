@@ -51,6 +51,14 @@ describe('post-deploy smoke CLI adapter', () => {
     })
   })
 
+  it('always includes a distinct default city before optional canaries', () => {
+    expect(resolveReleaseSmokeTargets({
+      enabledCities: ['Taipei', 'Kaohsiung', 'Chiayi'],
+      defaultCity: 'Kaohsiung',
+      demoQuery: { city: 'Taipei', routeName: '307' },
+    }).cities).toEqual(['Taipei', 'Kaohsiung'])
+  })
+
   it('scopes a no-demo single-city instance to its only enabled city', () => {
     expect(resolveReleaseSmokeTargets({
       enabledCities: ['Chiayi'],
@@ -80,11 +88,17 @@ describe('post-deploy smoke CLI adapter', () => {
       defaultCity: 'Taipei',
       demoQuery: null,
     })).toThrowError(expect.objectContaining({ code: 'release_identity_invalid' }))
+    expect(() => resolveReleaseSmokeTargets({
+      enabledCities: ['Taipei'],
+      defaultCity: 'Taipei',
+      demoQuery: { city: 'Taipei', routeName: 'x'.repeat(41) },
+    })).toThrowError(expect.objectContaining({ code: 'release_identity_invalid' }))
   })
 
   it('derives explicit and no-demo route samples without catalogue-order dependence', () => {
     const catalogue = {
       routes: [
+        { routeName: '0'.repeat(41), routeUid: 'TOO-LONG' },
         { routeName: '藍線', routeUid: 'CY-BLUE' },
         { routeName: '307', routeUid: 'TPE307-B' },
         { routeName: '307', routeUid: 'TPE307-A' },
@@ -101,6 +115,8 @@ describe('post-deploy smoke CLI adapter', () => {
       routeUids: ['CY-ONE'],
     })
     expect(() => selectCatalogueRouteSample(catalogue, 'missing'))
+      .toThrowError(expect.objectContaining({ code: 'route_sample_missing' }))
+    expect(() => selectCatalogueRouteSample(catalogue, 'x'.repeat(41)))
       .toThrowError(expect.objectContaining({ code: 'route_sample_missing' }))
   })
 
@@ -131,7 +147,8 @@ describe('post-deploy smoke CLI adapter', () => {
     }, 'Taipei', sample)).toThrowError(expect.objectContaining({ code: 'route_contract_invalid' }))
   })
 
-  it('uses target identity instead of fixed city URLs or a hardcoded route UID', () => {
+  it('uses the supplied runtime environment and derived target identity', () => {
+    expect(source).toContain('loadOperationalResources({ env })')
     expect(source).toContain('resolveReleaseSmokeTargets(resources)')
     expect(source).toContain('for (const city of targets.cities)')
     expect(source).toContain('selectCatalogueRouteSample(detailRoutes, targets.routeName)')

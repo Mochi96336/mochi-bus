@@ -122,6 +122,12 @@ describe('instance operational resources', () => {
     expect(resources.rateLimitNamespaceIds).toEqual({ standard: null, expensive: null })
   })
 
+  it('preserves generated integer namespace identity for operation-specific validation', () => {
+    expect(resolveOperationalResources(runtime(), wrangler({
+      ratelimits: [{ name: 'API_STANDARD_RATE_LIMITER', namespace_id: '0' }],
+    })).rateLimitNamespaceIds).toEqual({ standard: '0', expensive: null })
+  })
+
   it('fails closed on ambiguous bindings and malformed resource identity', () => {
     expect(() => resolveOperationalResources(runtime(), wrangler({ d1_databases: [] })))
       .toThrow('exactly one TRANSIT_DB binding')
@@ -129,8 +135,8 @@ describe('instance operational resources', () => {
       r2_buckets: [{ binding: 'TRANSIT_SHAPES', bucket_name: 'Invalid_Name' }],
     }))).toThrow('valid Cloudflare resource name')
     expect(() => resolveOperationalResources(runtime(), wrangler({
-      ratelimits: [{ name: 'API_STANDARD_RATE_LIMITER', namespace_id: '0' }],
-    }))).toThrow('positive integer string')
+      ratelimits: [{ name: 'API_STANDARD_RATE_LIMITER', namespace_id: 'not-an-id' }],
+    }))).toThrow('integer string')
     expect(() => resolveOperationalResources(runtime(), wrangler({
       ratelimits: [
         { name: 'API_STANDARD_RATE_LIMITER', namespace_id: '1001' },
@@ -147,5 +153,8 @@ describe('instance operational resources', () => {
       enabledCities: ['Chiayi'],
       demoQuery: { city: 'Taipei', routeName: '307' },
     }), wrangler())).toThrow('demoQuery.city must be enabled')
+    expect(() => resolveOperationalResources(runtime('https://bus.example', {
+      demoQuery: { city: 'Chiayi', routeName: 'x'.repeat(41) },
+    }), wrangler())).toThrow('up to 40 characters')
   })
 })

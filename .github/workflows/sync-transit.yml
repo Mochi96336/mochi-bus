@@ -84,6 +84,11 @@ jobs:
       - name: Resolve snapshot operation scope
         id: operation
         run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Validate manual snapshot city
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_CITY: ${{ inputs.city }}
+        run: node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"
       - name: Preflight snapshot resources
         if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
         run: npm run instance:preflight -- snapshot
@@ -133,7 +138,6 @@ jobs:
 
           if [ -n "$INPUT_CITY" ]; then
             cities="$INPUT_CITY"
-            node scripts/instance/assert-operation-city.mjs "$INPUT_CITY"
             if [ "$INPUT_FORCE_PUBLISH" = "true" ]; then
               export SNAPSHOT_FORCE=1
             fi

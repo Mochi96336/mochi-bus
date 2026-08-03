@@ -39,7 +39,7 @@ export async function main(env = process.env) {
   const expectedSha = env.EXPECTED_RELEASE_SHA
   const smokeStartedAt = Date.now()
   try {
-    const resources = loadOperationalResources()
+    const resources = loadOperationalResources({ env })
     const targets = resolveReleaseSmokeTargets(resources)
     const origin = productionOrigin(env.RELEASE_SMOKE_ORIGIN ?? resources.publicOrigin)
     const token = smokeToken(env, expectedSha)
@@ -91,7 +91,8 @@ export function resolveReleaseSmokeTargets(resources) {
     || typeof defaultCity !== 'string' || !enabledCities.includes(defaultCity)
     || !(demoQuery === null || (demoQuery && typeof demoQuery === 'object'
       && typeof demoQuery.city === 'string' && enabledCities.includes(demoQuery.city)
-      && typeof demoQuery.routeName === 'string' && demoQuery.routeName.length > 0))) {
+      && typeof demoQuery.routeName === 'string' && demoQuery.routeName.length > 0
+      && demoQuery.routeName.length <= 40))) {
     throw new ReleaseSmokeError('release_identity_invalid')
   }
 
@@ -99,8 +100,8 @@ export function resolveReleaseSmokeTargets(resources) {
   const cities = []
   for (const city of [
     detailCity,
-    ...SECONDARY_CITY_CANARIES.filter((candidate) => enabledCities.includes(candidate)),
     defaultCity,
+    ...SECONDARY_CITY_CANARIES.filter((candidate) => enabledCities.includes(candidate)),
     ...enabledCities,
   ]) {
     if (!cities.includes(city)) cities.push(city)
@@ -126,11 +127,14 @@ export function resolveReleaseSmokeTargets(resources) {
 
 export function selectCatalogueRouteSample(routes, routeName = null) {
   if (!routes || !Array.isArray(routes.routes)
-    || !(routeName === null || (typeof routeName === 'string' && routeName.length > 0))) {
+    || !(routeName === null
+      || (typeof routeName === 'string' && routeName.length > 0 && routeName.length <= 40))) {
     throw new ReleaseSmokeError('route_sample_missing')
   }
   const validRoutes = routes.routes.filter((candidate) => candidate
-    && typeof candidate.routeName === 'string' && candidate.routeName.length > 0
+    && typeof candidate.routeName === 'string'
+    && candidate.routeName.length > 0
+    && candidate.routeName.length <= 40
     && typeof candidate.routeUid === 'string' && candidate.routeUid.length > 0)
   const selectedRouteName = routeName
     ?? [...new Set(validRoutes.map((candidate) => candidate.routeName))].sort()[0]
