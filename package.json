@@ -34,6 +34,7 @@
     "instance:compile": "node scripts/instance/compile-config.mjs",
     "instance:doctor": "node scripts/instance/doctor.mjs",
     "instance:preflight": "node scripts/instance/operator-preflight.mjs",
+    "instance:provision-plan": "node scripts/instance/provision-plan.mjs",
     "measure:shape-pattern": "node scripts/shape-pattern-measurement/run.mjs",
     "verify:shape-pattern-report": "node scripts/shape-pattern-measurement/verify-report.mjs",
     "snapshot:city": "node scripts/sync-transit-snapshot.mjs",
