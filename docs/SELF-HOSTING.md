@@ -152,7 +152,7 @@ Worker
 > [!NOTE]
 > 這篇產生的 starter 設定預設不包含 Cloudflare Rate Limiting binding。網站和 API 仍會運作，但受保護的 API 沒有實際限流；目前 middleware 會 fail-open，相關請求也可能在 Worker log 中出現 `api_rate_limit_binding_failed`。
 >
-> `workers.dev` 可以完成部署與測試，但 Cloudflare Cache API 在 `*.workers.dev` 上不生效。Mochi Bus 的 isolate 記憶體快取仍在，失去的是跨 isolate／機房使用的第二層 Cache API。
+> `workers.dev` 可以完成部署與測試，但 Cloudflare Cache API 在 `*.workers.dev` 上不生效。Mochi Bus 的 isolate 記憶體快取仍在，失去的是同一 Cloudflare 機房內可跨請求／isolate 重用的第二層 Cache API。
 >
 > 小規模測試可以先照本篇完成。打算長期公開使用時，請看文末的「補上 API rate limit」與「綁定自訂網域不只是換網址」。
 
@@ -1362,9 +1362,9 @@ R2 bucket 裡有城市快照時不能直接刪除，要先清空內容。刪除 
 
 ### 綁定自訂網域不只是換網址
 
-`workers.dev` 適合第一次部署，但 Cache API 在 `*.workers.dev` 上不生效。綁定自訂網域或 route 後，Mochi Bus 才能使用第二層 Cache API，減少跨 isolate 的重複 TDX 請求、降低延遲，也降低集中流量時遇到 TDX 429 的機率。
+`workers.dev` 適合第一次部署，但 Cache API 在 `*.workers.dev` 上不生效。綁定自訂網域或 route 後，Mochi Bus 才能使用第二層 Cache API，減少同一機房內跨請求／isolate 的重複 TDX 查詢、降低延遲，也降低集中流量時遇到 TDX 429 的機率。
 
-綁定網域後，要同步更新 `instance.json` 的公開 origin、重新 compile 與 deploy；快照 smoke 使用的網址也要換成新的 origin。
+Starter 預設的 `site.canonicalOrigin` 是 `request`，通常會跟隨實際來訪網域，不必為了自訂網域強制改成固定值。若你已自行改成固定 origin，才要同步更新 `instance.json`；無論哪種情況，都要重新 deploy，並把快照 smoke 使用的網址換成新的自訂網域。
 
 ### 補上 API rate limit
 
