@@ -1,0 +1,36 @@
+{
+  "$schema": "../config/instance.schema.json",
+  "schemaVersion": 1,
+  "instanceId": "chiayi-bus",
+  "site": {
+    "name": "Mochi Bus",
+    "canonicalOrigin": "request"
+  },
+  "transit": {
+    "enabledCities": ["Chiayi"],
+    "defaultCity": "Chiayi",
+    "demoQuery": null
+  },
+  "cloudflare": {
+    "workerName": "chiayi-bus",
+    "workersDev": true,
+    "d1": {
+      "databaseName": "chiayi-transit",
+      "databaseId": null
+    },
+    "r2": {
+      "bucketName": "chiayi-transit-shapes"
+    },
+    "rateLimits": {
+      "standardNamespaceId": null,
+      "expensiveNamespaceId": null
+    }
+  },
+  "operations": {
+    "profile": "starter",
+    "snapshotSchedule": "manual",
+    "releaseSmoke": true,
+    "publicProbe": false,
+    "windowWatchdog": false
+  }
+}

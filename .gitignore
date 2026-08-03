@@ -22,6 +22,9 @@ node_modules/
 .dev.vars
 .snapshot.env
 
+# generated
+/.generated/
+
 # logs
 logs/
 *.log

@@ -1,0 +1,66 @@
+{
+  "$schema": "../config/instance.schema.json",
+  "schemaVersion": 1,
+  "instanceId": "mochi-production",
+  "site": {
+    "name": "Mochi Bus",
+    "canonicalOrigin": "https://bus.moc96336.com"
+  },
+  "transit": {
+    "enabledCities": [
+      "Taipei",
+      "NewTaipei",
+      "Taoyuan",
+      "Taichung",
+      "Tainan",
+      "Kaohsiung",
+      "Keelung",
+      "Hsinchu",
+      "HsinchuCounty",
+      "MiaoliCounty",
+      "ChanghuaCounty",
+      "NantouCounty",
+      "YunlinCounty",
+      "Chiayi",
+      "ChiayiCounty",
+      "PingtungCounty",
+      "YilanCounty",
+      "HualienCounty",
+      "TaitungCounty",
+      "KinmenCounty",
+      "PenghuCounty",
+      "LienchiangCounty"
+    ],
+    "defaultCity": "Taipei",
+    "demoQuery": {
+      "city": "Taipei",
+      "routeName": "307",
+      "stopName": "捷運西門站",
+      "stopUid": "TPE213044",
+      "routeUid": "TPE19108",
+      "direction": 0
+    }
+  },
+  "cloudflare": {
+    "workerName": "mochi-tools",
+    "workersDev": false,
+    "d1": {
+      "databaseName": "mochi-transit",
+      "databaseId": "e5680212-29c5-4045-acd2-1e5df703e751"
+    },
+    "r2": {
+      "bucketName": "mochi-transit-shapes"
+    },
+    "rateLimits": {
+      "standardNamespaceId": "96336001",
+      "expensiveNamespaceId": "96336002"
+    }
+  },
+  "operations": {
+    "profile": "operator",
+    "snapshotSchedule": "taipei-weekly-sharded",
+    "releaseSmoke": true,
+    "publicProbe": true,
+    "windowWatchdog": true
+  }
+}
