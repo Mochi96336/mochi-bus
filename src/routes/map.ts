@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { mapCities } from '../config/map-cities'
 import { renderMapPage } from '../map-page'
+import { siteName } from '../seo'
 import type { MapEnv } from './map-http-context'
 import {
   findNearbyPlaces,
@@ -25,9 +26,9 @@ map.get('/map', (c) => {
   const routeName = c.req.query('route')?.trim()
   const cityName = mapCities.find((city) => city.code === c.req.query('city')?.trim())?.name
   const meta = routeName && routeName.length <= 40
-    ? { title: `${routeName} 公車路線圖｜Mochi Bus`, description: `${routeName} 的路線走向、站牌與即時到站`, heading: `${routeName} 公車路線圖` }
+    ? { title: `${routeName} 公車路線圖｜${siteName}`, description: `${routeName} 的路線走向、站牌與即時到站`, heading: `${routeName} 公車路線圖` }
     : cityName
-      ? { title: `${cityName}公車地圖｜Mochi Bus`, description: `${cityName}的公車路網、附近站牌與路線規劃`, heading: `${cityName}公車地圖` }
+      ? { title: `${cityName}公車地圖｜${siteName}`, description: `${cityName}的公車路網、附近站牌與路線規劃`, heading: `${cityName}公車地圖` }
       : {}
   return c.html(renderMapPage({ ...meta, requestUrl: c.req.url }), 200, {
     'Cache-Control': 'no-cache',

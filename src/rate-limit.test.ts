@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { instanceId } from './instance-runtime'
 import { apiRateLimit, apiRateLimitPolicy, type RateLimitBindings } from './rate-limit'
 
 const rateLimiter = (success: boolean): RateLimit => ({
@@ -59,7 +60,9 @@ describe('API rate-limit middleware', () => {
     }, test.env)
 
     expect(response.status).toBe(200)
-    expect(standard.limit).toHaveBeenCalledWith({ key: 'mochi-tools:standard:203.0.113.8' })
+    expect(standard.limit).toHaveBeenCalledWith({
+      key: `${instanceId}:standard:203.0.113.8`,
+    })
     expect(test.handler).toHaveBeenCalledOnce()
   })
 

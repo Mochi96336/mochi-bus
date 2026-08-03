@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { applyAppearanceShell } from './appearance-shell'
+import { applyInstanceResponse } from './instance-response'
 import { apiRateLimit } from './rate-limit'
 import { applyRouteShell } from './route-shell'
 import bus from './routes/bus'
@@ -16,12 +17,13 @@ const app = new Hono<Env>()
 app.use('*', async (c, next) => {
   const requestUrl = new URL(c.req.url)
   const redirectTarget = httpsRedirectTarget(requestUrl.toString())
-  const headers = securityHeaders(requestUrl.protocol === 'https:', requestUrl.origin)
+  const headers = securityHeaders(requestUrl.protocol === 'https:', requestUrl.toString())
 
   for (const [name, value] of Object.entries(headers)) c.header(name, value)
   if (redirectTarget) return c.redirect(redirectTarget, 308)
 
   await next()
+  c.res = await applyInstanceResponse(c.res, requestUrl.toString())
   c.res = applyAppearanceShell(c.res)
   if (requestUrl.pathname === '/route') c.res = applyRouteShell(c.res)
 
