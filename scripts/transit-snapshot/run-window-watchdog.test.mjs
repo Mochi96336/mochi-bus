@@ -1,20 +1,43 @@
 import { describe, expect, it, vi } from 'vitest'
+import { operationEnabledCities } from '../instance/operations-plan.mjs'
 import { evaluateWindowWatchdog } from './watchdog-contract.mjs'
 import { runWindowWatchdog, watchdogSummaryMarkdown } from './run-window-watchdog.mjs'
+import {
+  scheduledCitiesForTaipeiDate,
+  SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY,
+  taipeiLocalTimeAsUtc,
+} from './snapshot-schedule.mjs'
 
-const evaluatedAt = '2026-07-19T23:45:00.000Z'
+const scheduleDates = [
+  '2026-07-19',
+  '2026-07-20',
+  '2026-07-21',
+  '2026-07-22',
+  '2026-07-23',
+  '2026-07-24',
+  '2026-07-25',
+]
+const firstEnabledCity = operationEnabledCities()[0]
+const targetWeekday = SNAPSHOT_SUPPORTED_CITIES_BY_TAIPEI_WEEKDAY
+  .findIndex((cities) => cities.includes(firstEnabledCity))
+const scheduleDate = scheduleDates[targetWeekday]
+const previousScheduleDate = new Date(`${scheduleDate}T00:00:00.000Z`)
+previousScheduleDate.setUTCDate(previousScheduleDate.getUTCDate() - 7)
+const previousDate = previousScheduleDate.toISOString().slice(0, 10)
+const expectedCities = [...scheduledCitiesForTaipeiDate(scheduleDate)]
+const evaluatedAt = taipeiLocalTimeAsUtc(scheduleDate, 7, 45).toISOString()
 
 function evidence(city, overrides = {}) {
-  const windowId = `v1:${city}:2026-07-20:0317`
+  const windowId = `v1:${city}:${scheduleDate}:0317`
   return {
     window: {
       schemaVersion: 1,
       city,
       windowId,
-      completedAt: '2026-07-19T19:29:00.000Z',
+      completedAt: taipeiLocalTimeAsUtc(scheduleDate, 3, 29).toISOString(),
       result: 'unchanged',
-      lastSourceCheckAt: '2026-07-19T19:20:00.000Z',
-      lastPublishedAt: '2026-07-12T19:27:00.000Z',
+      lastSourceCheckAt: taipeiLocalTimeAsUtc(scheduleDate, 3, 20).toISOString(),
+      lastPublishedAt: taipeiLocalTimeAsUtc(previousDate, 3, 27).toISOString(),
       activeVersion: `${city}-v1`,
       previousVersion: `${city}-v0`,
       failureClass: 'none',
@@ -25,7 +48,7 @@ function evidence(city, overrides = {}) {
       windowId,
       activeVersion: `${city}-v1`,
       previousVersion: `${city}-v0`,
-      activeProbeAt: '2026-07-19T19:26:00.000Z',
+      activeProbeAt: taipeiLocalTimeAsUtc(scheduleDate, 3, 26).toISOString(),
       activeProbeResult: 'success',
       probeFailureClass: 'none',
       rollbackAvailable: true,
@@ -57,7 +80,7 @@ function monotonicClock() {
 }
 
 describe('window watchdog runner', () => {
-  it('evaluates every expected city and succeeds only for healthy statuses', async () => {
+  it('evaluates every enabled city in the closed window', async () => {
     const target = store()
     const emitter = vi.fn()
     const result = await runWindowWatchdog({
@@ -66,19 +89,19 @@ describe('window watchdog runner', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(result.summary.results.map((item) => [item.city, item.status])).toEqual([
-      ['Taipei', 'unchanged_healthy'],
-      ['NewTaipei', 'unchanged_healthy'],
-    ])
-    expect(target.readEvidence).toHaveBeenCalledTimes(2)
-    expect(target.completeCity).toHaveBeenCalledTimes(2)
-    expect(emitter).toHaveBeenCalledTimes(2)
+    expect(result.summary.results.map((item) => [item.city, item.status])).toEqual(
+      expectedCities.map((city) => [city, 'unchanged_healthy']),
+    )
+    expect(target.readEvidence).toHaveBeenCalledTimes(expectedCities.length)
+    expect(target.completeCity).toHaveBeenCalledTimes(expectedCities.length)
+    expect(emitter).toHaveBeenCalledTimes(expectedCities.length)
   })
 
-  it('does not let one city query failure prevent the remaining cities', async () => {
+  it('does not let one city query failure prevent the remaining enabled cities', async () => {
+    const failedCity = expectedCities[0]
     const target = store({
       readEvidence: vi.fn(async (city) => {
-        if (city === 'Taipei') throw new Error('private database detail')
+        if (city === failedCity) throw new Error('private database detail')
         return evidence(city)
       }),
     })
@@ -88,16 +111,19 @@ describe('window watchdog runner', () => {
     })
 
     expect(result.ok).toBe(false)
-    expect(result.failedCities).toEqual(['Taipei'])
-    expect(result.summary.results).toHaveLength(2)
-    expect(result.summary.results[0]).toMatchObject({ status: 'unknown', diagnosticClass: 'watchdog_query_failed' })
-    expect(result.summary.results[1]).toMatchObject({ city: 'NewTaipei', status: 'unchanged_healthy' })
+    expect(result.failedCities).toEqual([failedCity])
+    expect(result.summary.results).toHaveLength(expectedCities.length)
+    expect(result.summary.results[0]).toMatchObject({
+      city: failedCity, status: 'unknown', diagnosticClass: 'watchdog_query_failed',
+    })
+    expect(result.summary.results.slice(1).every((item) => item.status === 'unchanged_healthy')).toBe(true)
   })
 
   it('reports city durable-write failure without modifying snapshot state', async () => {
+    const failedCity = expectedCities[0]
     const target = store({
       completeCity: vi.fn(async (_runId, result) => {
-        if (result.city === 'Taipei') throw new Error('D1 write unavailable')
+        if (result.city === failedCity) throw new Error('D1 write unavailable')
       }),
     })
     const result = await runWindowWatchdog({
@@ -106,7 +132,7 @@ describe('window watchdog runner', () => {
     })
 
     expect(result.summary.results[0]).toMatchObject({
-      city: 'Taipei', status: 'record_write_failed', diagnosticClass: 'record_write_failed',
+      city: failedCity, status: 'record_write_failed', diagnosticClass: 'record_write_failed',
     })
     expect(result.ok).toBe(false)
     expect(target).not.toHaveProperty('activate')
@@ -120,7 +146,7 @@ describe('window watchdog runner', () => {
       emitter: () => { throw new Error('logs unavailable') }, summaryWriter: vi.fn(),
     })
     expect(result.ok).toBe(true)
-    expect(target.completeCity).toHaveBeenCalledTimes(2)
+    expect(target.completeCity).toHaveBeenCalledTimes(expectedCities.length)
   })
 
   it('fails the job for rollback degraded while saying current service remains usable', async () => {
@@ -140,17 +166,18 @@ describe('window watchdog runner', () => {
     })
     const markdown = watchdogSummaryMarkdown(result.summary)
     expect(result.ok).toBe(false)
-    expect(markdown).toContain('- Unchanged rollback degraded: Taipei, NewTaipei')
+    expect(markdown).toContain(`- Unchanged rollback degraded: ${expectedCities.join(', ')}`)
     expect(markdown).toContain('unchanged_rollback_degraded')
   })
 
   it('renders only fixed safe summary fields', () => {
+    const city = expectedCities[0]
     const result = evaluateWindowWatchdog({
-      city: 'Taipei', scheduleDate: '2026-07-20', evaluatedAt,
-      ...evidence('Taipei'),
+      city, scheduleDate, evaluatedAt,
+      ...evidence(city),
     })
-    const markdown = watchdogSummaryMarkdown({ scheduleDate: '2026-07-20', evaluatedAt, results: [result] })
-    expect(markdown).toContain('| Taipei | v1:Taipei:2026-07-20:0317 | unchanged_healthy |')
+    const markdown = watchdogSummaryMarkdown({ scheduleDate, evaluatedAt, results: [result] })
+    expect(markdown).toContain(`| ${city} | v1:${city}:${scheduleDate}:0317 | unchanged_healthy |`)
     expect(markdown).not.toMatch(/route|place|artifact|https?:|authorization|token|stack|raw error/i)
   })
 })
