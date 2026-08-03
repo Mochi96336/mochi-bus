@@ -3,7 +3,7 @@
 > Understand the network first, then catch the bus.  
 >先看懂城市的公車網路，再決定怎麼搭車。
 
-🚌 **線上試用:[bus.moc96336.com](https://bus.moc96336.com/)**
+🚌 **公開參考實例:[bus.moc96336.com](https://bus.moc96336.com/)**
 
 [![點地圖上的站牌,攤開所有經過的路線與到站時間](docs/image/hero-map.webp)](https://bus.moc96336.com/map)
 
@@ -19,6 +19,8 @@ Mochi Bus 的起點，是一次搭公車時的小抱怨:有些工具有地圖，
 - **地圖(`/map`)**:全台 22 縣市的路線地圖。選縣市看路線、展開全城路網、點地圖找附近站牌與到站時間、路線規劃(直達 + 一次轉乘)、即時車輛位置。支援依連線 IP 跳到所在縣市、瀏覽器返回鍵逐層退回、可分享 URL。
 
 跑在 Cloudflare Workers 上:Hono + D1(路網快照)+ R2(線形與時刻表)+ Leaflet/Vite 前端。
+
+`bus.moc96336.com` 是 Mochi 維護的公開參考實例,不是 Mochi Bus 唯一能運作的地方。想架一套自己的版本,請看[部署自己的 Mochi Bus](docs/SELF-HOSTING.md)。
 
 產品定位、完整功能清單、設計細節與市面比較:[docs/OVERVIEW.md](docs/OVERVIEW.md)。
 
@@ -40,7 +42,7 @@ npm install
 npm run dev
 ```
 
-這樣就能跑:地圖直接即時查 TDX,封面看板功能完整。全路網、附近站牌與路線規劃需要路網快照——快照同步腳本目前寫入的是**雲端** D1/R2,所以這些功能要部署自己的一套才有(見下方)。
+這樣就能跑:地圖直接即時查 TDX,封面看板功能完整。全路網、附近站牌與路線規劃需要路網快照;部署自己的一套請看 [SELF-HOSTING.md](docs/SELF-HOSTING.md)。
 
 ## 頁面
 
@@ -102,29 +104,13 @@ TDX 回應與資料庫版本查詢走兩層快取:模組層記憶體(isolate 內
 
 瀏覽器會直接向 TDX token endpoint 驗證憑證並換取短效 access token；Client Secret 不經過 Mochi Bus Worker。access token 只在頁面記憶體短暫快取、按 `SHA-256(clientId + secret)` 指紋隔離，送到 Worker 時使用標準 `Authorization: Bearer` header。Worker 的 invocation logs 已停用，應用 log 只記錄狀態與錯誤分類，不記錄 upstream body、憑證或 Authorization header。Worker 只代理 TDX data API（該 API 不支援瀏覽器跨來源呼叫），不再提供憑證驗證端點。
 
-## 驗證與部署自己的一套
+## 部署自己的一套
 
-需要一個 Cloudflare 帳號(免費方案即可)。先建立 D1 與 R2,把 `wrangler.jsonc` 裡的 `database_id` 換成自己的:
+第一次先從一個縣市和 `workers.dev` 開始。完整步驟在：
 
-```sh
-npx wrangler d1 create mochi-transit
-npx wrangler r2 bucket create mochi-transit-shapes
-```
+**[部署自己的 Mochi Bus](docs/SELF-HOSTING.md)**
 
-接著驗證、設定憑證、部署:
-
-```sh
-npm run check        # typegen check + vitest + tsc + vite build + wrangler dry-run
-npx wrangler secret put TDX_CLIENT_ID
-npx wrangler secret put TDX_CLIENT_SECRET
-npx wrangler d1 migrations apply mochi-transit --remote
-npm run deploy
-npm run snapshot:city -- Chiayi   # 匯入縣市路網快照(可換;小縣市幾分鐘,雙北量大會久一些)
-```
-
-注意 Cache API 在 `*.workers.dev` 網址上是 no-op,要綁自訂網域快取層才會生效。
-
-CI 同步需要的 repo secrets:`TDX_CLIENT_ID`、`TDX_CLIENT_SECRET`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`。這些 secrets 只注入 snapshot publish step，不會暴露給 checkout、Node setup 或 `npm ci`；正式環境建議再用 GitHub Environment required reviewers 保護。
+自己的部署只需要維護 `instance.json`。不要修改根目錄 `wrangler.jsonc` 或 `.generated/instance/`。
 
 ## 資料與圖資來源
 
