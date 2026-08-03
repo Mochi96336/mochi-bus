@@ -30,13 +30,12 @@
 
 本篇以 **Visual Studio Code（VS Code）** 作為主要操作畫面。熟悉終端機與文字編輯器的人，可以自行換成其他工具。
 
-不展開任何摺疊區，也能完成部署。摺疊區主要使用三種標籤：
+不展開任何摺疊區，也能完成部署。摺疊區主要使用兩種標籤：
 
 - **第一次操作：** 不熟悉 VS Code、終端機或 Cloudflare 畫面時展開
 - **深入了解：** 想知道工具和架構為什麼這樣設計時展開
-- **遇到錯誤：** 實際看到對應訊息時再展開
 
-費用、Secret、安全警告、必要指令和成功標誌不會藏在摺疊區裡。
+費用、Secret、安全警告、必要指令和成功標誌不會藏在摺疊區裡。常見問題則保留成一般標題，方便用 `Ctrl+F` 搜尋錯誤訊息，或從 issue 直接連到特定項目。
 
 ## 開始前先知道
 
@@ -147,6 +146,15 @@ Worker
 </details>
 
 </details>
+
+### Starter 是第一次上線路線，不是完整的長期公開設定
+
+> [!NOTE]
+> 這篇產生的 starter 設定預設不包含 Cloudflare Rate Limiting binding。網站和 API 仍會運作，但受保護的 API 沒有實際限流；目前 middleware 會 fail-open，相關請求也可能在 Worker log 中出現 `api_rate_limit_binding_failed`。
+>
+> `workers.dev` 可以完成部署與測試，但 Cloudflare Cache API 在 `*.workers.dev` 上不生效。Mochi Bus 的 isolate 記憶體快取仍在，失去的是跨 isolate／機房使用的第二層 Cache API。
+>
+> 小規模測試可以先照本篇完成。打算長期公開使用時，請看文末的「補上 API rate limit」與「綁定自訂網域不只是換網址」。
 
 ### 繼續前確認
 
@@ -455,7 +463,12 @@ Profile: starter
 Cities: Chiayi
 Cloudflare: my-chiayi-bus / my-chiayi-transit / my-chiayi-transit-shapes
 State: valid instance manifest
+Next: npm run instance:validate -- --config 'instance.json'
+Then: npm run instance:provision-plan -- --config 'instance.json'
+Existing files are never replaced unless --force is supplied.
 ```
+
+`Next:`、`Then:` 和不自動覆蓋既有檔案的提醒都是正常輸出。本篇接下來會走較容易理解的手動部署流程。
 
 第一次產生時，`instance.json` 裡的 D1 ID 會是 `null`。這是正常的，因為資料庫還沒建立。
 
@@ -469,6 +482,8 @@ npm run instance:compile -- --config instance.json
 兩個指令都沒有出現 error，並回到可輸入指令的狀態，就可以繼續。
 
 > 只修改 `instance.json`。不要手動修改 `.generated/instance/`，因為下次 compile 會重新產生它們。
+
+`instance.json` 不在 `.gitignore`，所以 VS Code Source Control 顯示它是未追蹤檔案是正常的。它不是 Secret，但包含 Worker、D1、R2 等資源名稱與 ID。本篇的手動部署可以先留在本機；日後 fork repository 並使用 GitHub Actions 時，再提交這份檔案並設定 `MOCHI_BUS_INSTANCE_CONFIG`。
 
 <details>
 <summary><strong>第一次操作：如何找到 instance.json？</strong></summary>
@@ -863,6 +878,15 @@ $env:SNAPSHOT_SMOKE_BASE_URL = "PASTE_YOUR_WORKERS_DEV_URL_HERE"
 npm run snapshot:city -- Chiayi
 ```
 
+Windows Command Prompt：
+
+```bat
+set SNAPSHOT_SMOKE_BASE_URL=PASTE_YOUR_WORKERS_DEV_URL_HERE
+npm run snapshot:city -- Chiayi
+```
+
+Command Prompt 的 `set` 請照上面的無引號格式。寫成 `set SNAPSHOT_SMOKE_BASE_URL="https://..."` 時，雙引號會成為值的一部分。
+
 執行前，把 `PASTE_YOUR_WORKERS_DEV_URL_HERE` 換成實際網址，例如：
 
 ```text
@@ -1081,20 +1105,28 @@ https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 
 ## 常見問題
 
-<details>
-<summary><strong>工具、VS Code 與終端機</strong></summary>
+終端機出現錯誤時，可以直接把其中一段訊息貼到瀏覽器的頁內搜尋。下面的錯誤名稱刻意不摺疊，讓它們可以被搜尋、出現在 GitHub 大綱，也能從 issue 深連。
 
-<details>
-<summary><strong>遇到錯誤：git、node、npm 或 npx 顯示找不到指令</strong></summary>
+### 進階診斷：`instance:doctor`
+
+Repository 另有 [Instance doctor](INSTANCE_DOCTOR.md)，可以檢查 manifest、generated artifacts、操作需求與 Cloudflare 資源身分：
+
+```sh
+npm run instance:doctor
+npm run instance:doctor -- --remote
+```
+
+目前它不會自動把 `.dev.vars` 或 `.snapshot.env` 載入 `process.env`，而且會同時檢查 deploy 與 snapshot 的 operator configuration。未另外設定 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 等環境變數時看到 `BLOCKED`，不一定代表這篇的手動 starter 路線失敗。因此本篇不把 doctor 列為必經步驟；`--remote` 只做唯讀 D1／R2 身分確認。
+
+### 工具、VS Code 與終端機
+
+#### `git`、`node`、`npm` 或 `npx` 顯示找不到指令
 
 完全關閉 VS Code 再重新開啟。
 
 若仍失敗，確認 Git 與 Node.js 已完成安裝，而不是只下載安裝檔。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：PowerShell 無法載入 npm.ps1</strong></summary>
+#### PowerShell 無法載入 `npm.ps1`
 
 把 `npm` 改成 `npm.cmd`，把 `npx` 改成 `npx.cmd`：
 
@@ -1103,12 +1135,9 @@ npm.cmd install
 npx.cmd wrangler whoami
 ```
 
-不需要修改 PowerShell 執行原則。
+不需要修改 PowerShell 執行原則。也可以在 VS Code 終端機右上角的下拉選單改用 **Command Prompt**。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：Could not read package.json 或 Missing script</strong></summary>
+#### `Could not read package.json` 或 `Missing script`
 
 目前終端機不在 `mochi-bus` 資料夾。
 
@@ -1126,38 +1155,23 @@ cd
 
 最後一段路徑應該是 `mochi-bus`。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：npm install 出現很多警告</strong></summary>
+#### `npm install` 出現很多警告
 
 `npm WARN` 通常不代表失敗。真正的安裝錯誤通常會顯示 `npm ERR!`，而且終端機會以非零狀態結束。
 
-</details>
+### 設定檔與憑證
 
-</details>
-
-<details>
-<summary><strong>設定檔與憑證</strong></summary>
-
-<details>
-<summary><strong>遇到錯誤：找不到 .dev.vars 或 .snapshot.env</strong></summary>
+#### 找不到 `.dev.vars` 或 `.snapshot.env`
 
 確認已執行對應的複製指令，並在 VS Code Explorer 按一下重新整理。
 
 這兩個檔名開頭有一個 `.`，不是副檔名遺失。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：instance.json already exists</strong></summary>
+#### `instance.json already exists`
 
 代表先前已建立過設定。不要直接加 `--force` 覆蓋；先打開現有的 `instance.json`，確認是否就是要繼續使用的設定。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：D1 ID 填入後 validate 失敗</strong></summary>
+#### D1 ID 填入後 validate 失敗
 
 確認：
 
@@ -1166,22 +1180,13 @@ cd
 - 該行結尾逗點仍存在
 - 沒有把 `databaseName` 改掉
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：Missing TDX_CLIENT_ID or TDX_CLIENT_SECRET</strong></summary>
+#### `Missing TDX_CLIENT_ID or TDX_CLIENT_SECRET`
 
 確認 repository 根目錄有 `.dev.vars`，兩個值都已替換，不是空字串或範例文字，而且已儲存。
 
-</details>
+### Cloudflare 資源
 
-</details>
-
-<details>
-<summary><strong>Cloudflare 資源</strong></summary>
-
-<details>
-<summary><strong>遇到錯誤：create 顯示資源已經存在</strong></summary>
+#### `create` 顯示資源已經存在
 
 列出目前帳號的資源：
 
@@ -1192,10 +1197,7 @@ npx wrangler r2 bucket list
 
 如果同名資源是你剛才建立的，就直接沿用，不要重複建立。若用途不明，先停止並確認。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：Snapshot publisher requires a provisioned D1 database ID</strong></summary>
+#### `Snapshot publisher requires a provisioned D1 database ID`
 
 檢查 `instance.json` 的 `cloudflare.d1.databaseId`。填好後重新執行：
 
@@ -1204,10 +1206,7 @@ npm run instance:validate -- --config instance.json
 npm run instance:compile -- --config instance.json
 ```
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：R2 credentials、Snapshot state writer unavailable 或 R2 403</strong></summary>
+#### R2 credentials、`Snapshot state writer unavailable` 或 R2 403
 
 確認根目錄有 `.snapshot.env`，並且三個值都已填寫與儲存：
 
@@ -1223,10 +1222,7 @@ npm run instance:compile -- --config instance.json
 - `CLOUDFLARE_ACCOUNT_ID` 填的不是 Access Key ID
 - Secret Access Key 沒有多複製空格
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：Cloudflare 資源互相對不上</strong></summary>
+#### Cloudflare 資源互相對不上
 
 依序確認：
 
@@ -1238,15 +1234,9 @@ npm run instance:compile -- --config instance.json
 
 不要再建立一組名稱相近的資源繞過問題。
 
-</details>
+### 部署與城市快照
 
-</details>
-
-<details>
-<summary><strong>部署與城市快照</strong></summary>
-
-<details>
-<summary><strong>遇到錯誤：缺少 SNAPSHOT_SMOKE_BASE_URL</strong></summary>
+#### 缺少 `SNAPSHOT_SMOKE_BASE_URL`
 
 錯誤可能是：
 
@@ -1256,10 +1246,7 @@ Snapshot publisher requires a fixed public origin or SNAPSHOT_SMOKE_BASE_URL
 
 目前終端機沒有公開網址設定，或仍保留 `PASTE_YOUR_WORKERS_DEV_URL_HERE`。重新設定實際網址後再執行。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：snapshot_publish_failure</strong></summary>
+#### `snapshot_publish_failure`
 
 往上查看它前面的第一個錯誤訊息。修正後通常可以重新執行：
 
@@ -1269,28 +1256,19 @@ npm run snapshot:city -- Chiayi
 
 不要只看最後一行，也不要先刪除 D1 或 R2。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：state_write_failed_reconcile_required</strong></summary>
+#### `state_write_failed_reconcile_required`
 
 新版本可能已經通過 smoke 並保持啟用，但快照狀態尚未完成。
 
 保留完整輸出，不要刪除 D1 或 R2，也不要假設單純重跑一定能修復。這類錯誤需要使用 repository 內的 reconcile 維運流程處理。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：cleanup_failed</strong></summary>
+#### `cleanup_failed`
 
 新版本通常仍可服務，但舊版本資料可能尚未清理。
 
 保留完整輸出。由於內容未變時下一次執行可能提前結束，單純重跑不保證再次執行 cleanup。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：網站能開，但沒有路線</strong></summary>
+#### 網站能開，但沒有路線
 
 代表 Worker 已上線，但城市快照可能尚未成功發布。
 
@@ -1300,10 +1278,7 @@ npm run snapshot:city -- Chiayi
 /api/v1/map/routes?city=Chiayi
 ```
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：city_not_enabled</strong></summary>
+#### `city_not_enabled`
 
 請求的城市不在 `instance.json` 的 `transit.enabledCities`。修改設定後重新執行：
 
@@ -1315,20 +1290,13 @@ npm run deploy -- --secrets-file .dev.vars
 
 新增城市後，還要另外發布該城市的快照。
 
-</details>
-
-<details>
-<summary><strong>遇到錯誤：generated artifacts 過期</strong></summary>
+#### generated artifacts 過期
 
 不要直接修改 `.generated/instance/`。重新產生即可：
 
 ```sh
 npm run instance:compile -- --config instance.json
 ```
-
-</details>
-
-</details>
 
 ## 哪些步驟可以重跑？
 
@@ -1359,6 +1327,23 @@ npx wrangler d1 create my-chiayi-transit
 npx wrangler r2 bucket create my-chiayi-transit-shapes
 ```
 
+## 之後如何更新 Mochi Bus
+
+回到 `mochi-bus` 資料夾後，依序執行：
+
+```sh
+git pull --ff-only
+npm install
+npm run instance:validate -- --config instance.json
+npm run instance:compile -- --config instance.json
+npx wrangler d1 migrations apply TRANSIT_DB --remote --config .generated/instance/wrangler.instance.jsonc
+npm run deploy -- --secrets-file .dev.vars
+```
+
+- `git pull --ff-only` 只接受可以直接快轉的更新，不會自行製造 merge commit。
+- 若 pull 顯示有本機修改或無法 fast-forward，先停止並確認改過哪些檔案；不要為了更新直接執行 `git reset --hard`。
+- 一般程式更新不需要重新發布城市快照。若某次版本更新需要重建資料，應以該版本的 release note 為準。
+
 ## 移除這套服務與停止可能的費用
 
 可以從 Cloudflare Dashboard 刪除：
@@ -1375,11 +1360,46 @@ R2 bucket 裡有城市快照時不能直接刪除，要先清空內容。刪除 
 
 ## 接下來
 
-完成 starter 部署後，可以再選擇：
+### 綁定自訂網域不只是換網址
+
+`workers.dev` 適合第一次部署，但 Cache API 在 `*.workers.dev` 上不生效。綁定自訂網域或 route 後，Mochi Bus 才能使用第二層 Cache API，減少跨 isolate 的重複 TDX 請求、降低延遲，也降低集中流量時遇到 TDX 429 的機率。
+
+綁定網域後，要同步更新 `instance.json` 的公開 origin、重新 compile 與 deploy；快照 smoke 使用的網址也要換成新的 origin。
+
+### 補上 API rate limit
+
+Starter 產生的 `instance.json` 會包含：
+
+```json
+"rateLimits": {
+  "standardNamespaceId": null,
+  "expensiveNamespaceId": null
+}
+```
+
+長期公開使用時，可以把兩個 `null` 改成彼此不同、且未用於帳號內其他 limiter 的正整數字串，例如：
+
+```json
+"rateLimits": {
+  "standardNamespaceId": "421001",
+  "expensiveNamespaceId": "421002"
+}
+```
+
+這些 namespace ID 不需要另外建立 Cloudflare 資源；它們是 Wrangler Rate Limiting binding 使用的識別值。修改後執行：
+
+```sh
+npm run instance:validate -- --config instance.json
+npm run instance:compile -- --config instance.json
+npm run deploy -- --secrets-file .dev.vars
+```
+
+部署完成後，標準 API 使用每分鐘 120 次限制，較昂貴的路網與規劃 API 使用每分鐘 30 次限制。
+
+完成 starter 部署後，也可以再選擇：
 
 - fork repository，長期維護自己的版本
 - 加入第二個縣市
-- 綁定自訂網域
 - 用 GitHub Actions 自動更新資料
 - 升級成 managed profile
 - 定期同步 upstream 的 Mochi Bus 更新
