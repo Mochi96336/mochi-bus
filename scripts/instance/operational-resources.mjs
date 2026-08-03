@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { SUPPORTED_CITY_CODES } from './config.mjs'
 
 export const DEFAULT_RUNTIME_CONFIG_PATH = '.generated/instance/instance-runtime.json'
 export const DEFAULT_WRANGLER_CONFIG_PATH = '.generated/instance/wrangler.instance.jsonc'
 
 const CLOUDFLARE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/
 const D1_DATABASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const INSTANCE_ID = /^[a-z][a-z0-9-]{2,62}$/
+const SUPPORTED_CITY_SET = new Set(SUPPORTED_CITY_CODES)
 const RESOURCE_ENVIRONMENT = Object.freeze([
   ['TRANSIT_D1_DATABASE_NAME', 'd1DatabaseName'],
   ['TRANSIT_DATABASE_ID', 'd1DatabaseId'],
@@ -31,10 +34,23 @@ export function resolveOperationalResources(runtime, wrangler, {
   runtimePath = 'instance runtime',
   wranglerPath = 'instance Wrangler config',
 } = {}) {
-  if (!isRecord(runtime) || runtime.schemaVersion !== 1 || !isRecord(runtime.site)) {
+  if (!isRecord(runtime) || runtime.schemaVersion !== 1 || !isRecord(runtime.site)
+    || !isRecord(runtime.transit)) {
     throw new Error(`Invalid operational runtime: ${runtimePath}`)
   }
   if (!isRecord(wrangler)) throw new Error(`Invalid operational Wrangler config: ${wranglerPath}`)
+
+  const instanceId = instanceIdentifier(runtime.instanceId, `${runtimePath}.instanceId`)
+  const enabledCities = cityList(runtime.transit.enabledCities, `${runtimePath}.transit.enabledCities`)
+  const defaultCity = city(runtime.transit.defaultCity, `${runtimePath}.transit.defaultCity`)
+  if (!enabledCities.includes(defaultCity)) {
+    throw new Error(`${runtimePath}.transit.defaultCity must be enabled`)
+  }
+  const demoQuery = releaseSmokeDemoQuery(
+    runtime.transit.demoQuery,
+    enabledCities,
+    `${runtimePath}.transit.demoQuery`,
+  )
 
   const workerName = cloudflareName(wrangler.name, `${wranglerPath}.name`)
   const d1 = binding(wrangler.d1_databases, 'TRANSIT_DB', `${wranglerPath}.d1_databases`)
@@ -45,6 +61,10 @@ export function resolveOperationalResources(runtime, wrangler, {
   const publicOrigin = canonicalPublicOrigin(runtime.site.canonicalOrigin, `${runtimePath}.site.canonicalOrigin`)
 
   return Object.freeze({
+    instanceId,
+    enabledCities,
+    defaultCity,
+    demoQuery,
     workerName,
     d1DatabaseName,
     d1DatabaseId,
@@ -108,6 +128,44 @@ function binding(entries, expectedBinding, path) {
   const matches = entries.filter((entry) => isRecord(entry) && entry.binding === expectedBinding)
   if (matches.length !== 1) throw new Error(`${path} must contain exactly one ${expectedBinding} binding`)
   return matches[0]
+}
+
+function instanceIdentifier(value, path) {
+  if (typeof value !== 'string' || !INSTANCE_ID.test(value)) {
+    throw new Error(`${path} must be a valid instance ID`)
+  }
+  return value
+}
+
+function cityList(value, path) {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`${path} must be a non-empty array`)
+  const result = []
+  const seen = new Set()
+  value.forEach((entry, index) => {
+    const code = city(entry, `${path}[${index}]`)
+    if (seen.has(code)) throw new Error(`${path} must not contain duplicate cities`)
+    seen.add(code)
+    result.push(code)
+  })
+  return Object.freeze(result)
+}
+
+function city(value, path) {
+  if (typeof value !== 'string' || !SUPPORTED_CITY_SET.has(value)) {
+    throw new Error(`${path} must be a supported city`)
+  }
+  return value
+}
+
+function releaseSmokeDemoQuery(value, enabledCities, path) {
+  if (value === null) return null
+  if (!isRecord(value)) throw new Error(`${path} must be null or an object`)
+  const queryCity = city(value.city, `${path}.city`)
+  if (!enabledCities.includes(queryCity)) throw new Error(`${path}.city must be enabled`)
+  if (typeof value.routeName !== 'string' || value.routeName.length === 0 || value.routeName.length > 40) {
+    throw new Error(`${path}.routeName must be a non-empty route name up to 40 characters`)
+  }
+  return Object.freeze({ city: queryCity, routeName: value.routeName })
 }
 
 function cloudflareName(value, path) {

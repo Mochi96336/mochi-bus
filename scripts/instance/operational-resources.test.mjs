@@ -5,8 +5,18 @@ import {
   resolveOperationalResources,
 } from './operational-resources.mjs'
 
-function runtime(canonicalOrigin = 'https://bus.example') {
-  return { schemaVersion: 1, site: { canonicalOrigin } }
+function runtime(canonicalOrigin = 'https://bus.example', transit = {}) {
+  return {
+    schemaVersion: 1,
+    instanceId: 'chiayi-bus',
+    site: { canonicalOrigin },
+    transit: {
+      enabledCities: ['Chiayi'],
+      defaultCity: 'Chiayi',
+      demoQuery: null,
+      ...transit,
+    },
+  }
 }
 
 function wrangler(overrides = {}) {
@@ -38,12 +48,31 @@ describe('instance operational resources', () => {
       '/repo/.generated/instance/wrangler.instance.jsonc',
     ])
     expect(resources).toEqual({
+      instanceId: 'chiayi-bus',
+      enabledCities: ['Chiayi'],
+      defaultCity: 'Chiayi',
+      demoQuery: null,
       workerName: 'chiayi-bus',
       d1DatabaseName: 'chiayi-transit',
       d1DatabaseId: '123e4567-e89b-42d3-a456-426614174000',
       r2BucketName: 'chiayi-transit-shapes',
       publicOrigin: 'https://bus.example',
     })
+  })
+
+  it('keeps only the release-smoke demo identity from the runtime query', () => {
+    expect(resolveOperationalResources(runtime('https://bus.example', {
+      enabledCities: ['Taipei', 'Chiayi'],
+      defaultCity: 'Chiayi',
+      demoQuery: {
+        city: 'Taipei',
+        routeName: '307',
+        stopName: '捷運西門站',
+        stopUid: 'TPE213044',
+        routeUid: 'TPE19108',
+        direction: 0,
+      },
+    }), wrangler()).demoQuery).toEqual({ city: 'Taipei', routeName: '307' })
   })
 
   it('accepts matching workflow outputs but rejects stale resource overrides', () => {
@@ -94,5 +123,16 @@ describe('instance operational resources', () => {
     }))).toThrow('valid Cloudflare resource name')
     expect(() => resolveOperationalResources(runtime('http://bus.example'), wrangler()))
       .toThrow('fixed HTTPS origin')
+    expect(() => resolveOperationalResources(runtime('https://bus.example', {
+      enabledCities: ['Chiayi'],
+      defaultCity: 'Taipei',
+    }), wrangler())).toThrow('defaultCity must be enabled')
+    expect(() => resolveOperationalResources(runtime('https://bus.example', {
+      enabledCities: ['Chiayi'],
+      demoQuery: { city: 'Taipei', routeName: '307' },
+    }), wrangler())).toThrow('demoQuery.city must be enabled')
+    expect(() => resolveOperationalResources(runtime('https://bus.example', {
+      demoQuery: { city: 'Chiayi', routeName: 'x'.repeat(41) },
+    }), wrangler())).toThrow('up to 40 characters')
   })
 })
