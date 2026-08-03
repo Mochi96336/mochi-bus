@@ -1,6 +1,6 @@
 import type { Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
-import { supportedCityCodes } from '../config'
+import { requireEnabledCity, supportedCityCodes } from '../config'
 import { QueryValidationError } from '../domain/bus-query'
 import {
   realtimeJourneyEstimate,
@@ -51,7 +51,9 @@ export async function readJourneyEta(c: Context<MapEnv>) {
   const tracker = beginMapOperation(c, 'map_journey_eta', null)
   let observedCity: TelemetryCity | null = null
   try {
-    const { city, legs } = parseJourneyEtaInput(await readJsonBody(c.req.raw), supportedCityCodes)
+    const input = parseJourneyEtaInput(await readJsonBody(c.req.raw), supportedCityCodes)
+    const city = requireEnabledCity(input.city)
+    const { legs } = input
     observedCity = telemetryCity(city)
     const env = tdxEnv(c)
     let warning: TDXWarning | undefined

@@ -1,3 +1,4 @@
+import { CityNotEnabledError } from '../domain/city-availability'
 import { QueryValidationError } from '../domain/bus-query'
 import {
   QueryResolutionError,
@@ -37,6 +38,15 @@ export function publicErrorMessage(error: unknown): string {
  */
 export function presentPageError(error: unknown, setupUrl: string): PageErrorPresentation {
   const message = publicErrorMessage(error)
+
+  if (error instanceof CityNotEnabledError) {
+    return {
+      status: 404,
+      title: '這個縣市未啟用',
+      message,
+      actions: [{ href: '/map', label: '查看此實例提供的縣市' }],
+    }
+  }
 
   if (error instanceof QueryValidationError) {
     return {

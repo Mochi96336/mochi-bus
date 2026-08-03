@@ -1,4 +1,4 @@
-import { mapCities } from './config/map-cities'
+import { enabledMapCities } from './config/map-cities'
 import {
   canonicalUrl,
   renderWebsiteStructuredData,
@@ -25,8 +25,8 @@ export function renderMapPage(meta: MapPageMeta = {}): string {
   const heading = meta.heading ?? '台灣公車地圖'
   const canonical = meta.requestUrl ? canonicalUrl(meta.requestUrl) : `${siteOrigin()}/map`
   const socialImage = socialImageUrl(canonical)
-  // 城市清單是靜態設定,直接內嵌成 bootstrap:main.ts 不用先打一次
-  // /api/v1/map/cities 才能開始還原 URL,深連結少一趟往返就少一段閃現。
+  // 啟用城市清單直接內嵌成 bootstrap:main.ts 不用先打一次
+  // /api/v1/map/cities 才能開始還原 URL,也不會短暫露出此實例沒有提供的縣市。
   const statusText = meta.heading ? `${meta.heading} · 正在載入…` : '選一個區域，看看公車如何穿過城市。'
   return `<!doctype html>
 <html lang="zh-Hant">
@@ -75,7 +75,7 @@ export function renderMapPage(meta: MapPageMeta = {}): string {
          導覽宣告一律經 #map-status。 -->
     <aside id="map-drawer" class="map-drawer"></aside>
   </div>
-  <script id="map-bootstrap" type="application/json">${safeJSON({ cities: mapCities, siteName })}</script>
+  <script id="map-bootstrap" type="application/json">${safeJSON({ cities: enabledMapCities, siteName })}</script>
   <script type="module" src="/assets/map.js"></script>
 </body>
 </html>`

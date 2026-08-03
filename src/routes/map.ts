@@ -1,8 +1,11 @@
 import { Hono } from 'hono'
-import { mapCities } from '../config/map-cities'
+import { requireEnabledCity, supportedCityCodes } from '../config'
+import { enabledMapCities, mapCities } from '../config/map-cities'
 import { renderMapPage } from '../map-page'
 import { siteName } from '../seo'
+import { renderErrorPage } from '../ui'
 import type { MapEnv } from './map-http-context'
+import { mapJsonError } from './map-http-context'
 import {
   findNearbyPlaces,
   readPlace,
@@ -20,11 +23,39 @@ import { readPlaceArrivals } from './map-place-arrivals'
 
 const map = new Hono<MapEnv>()
 
+map.use('/api/v1/map/*', async (c, next) => {
+  const city = c.req.query('city')?.trim()
+  // Unknown values still belong to each endpoint's existing input-validation path so
+  // operation telemetry is emitted exactly once. This shared gate only enforces the
+  // new instance policy for cities Mochi Bus supports but this deployment disabled.
+  if (!city || !supportedCityCodes.has(city)) return next()
+  try {
+    requireEnabledCity(city)
+  } catch (error) {
+    return mapJsonError(c, error, '縣市設定無法使用')
+  }
+  return next()
+})
+
 map.get('/map', (c) => {
   // 深連結的標題直接從 query 組(路線名就在網址裡,不用查庫);
   // place 深連結要查 DB 才有名字,不值得為標題多一次往返,維持通用標題。
   const routeName = c.req.query('route')?.trim()
-  const cityName = mapCities.find((city) => city.code === c.req.query('city')?.trim())?.name
+  const requestedCityCode = c.req.query('city')?.trim()
+  const requestedCity = mapCities.find((city) => city.code === requestedCityCode)
+  if (requestedCity && !enabledMapCities.some((city) => city.code === requestedCity.code)) {
+    return c.html(renderErrorPage({
+      title: '這個縣市未啟用',
+      message: `此實例未提供該縣市：${requestedCity.name}`,
+      actionsHTML: '<a href="/map">查看此實例提供的縣市</a>',
+      requestUrl: c.req.url,
+    }), 404, {
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    })
+  }
+  const cityName = enabledMapCities.find((city) => city.code === requestedCityCode)?.name
   const meta = routeName && routeName.length <= 40
     ? { title: `${routeName} 公車路線圖｜${siteName}`, description: `${routeName} 的路線走向、站牌與即時到站`, heading: `${routeName} 公車路線圖` }
     : cityName
@@ -37,7 +68,7 @@ map.get('/map', (c) => {
   })
 })
 
-map.get('/api/v1/map/cities', (c) => c.json({ schemaVersion: 1, cities: mapCities }, 200, {
+map.get('/api/v1/map/cities', (c) => c.json({ schemaVersion: 1, cities: enabledMapCities }, 200, {
   'Cache-Control': 'public, max-age=86400',
 }))
 
