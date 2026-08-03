@@ -1,5 +1,6 @@
 import { appendFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { latestClosedSnapshotScheduleDate, scheduledCitiesForTaipeiDate, scheduledSnapshotWindow } from './snapshot-schedule.mjs'
 import {
   createWindowWatchdogEvent,
@@ -163,6 +164,11 @@ function safeLog(message, city, watchdogRunIdValue) {
 }
 
 async function main() {
+  const plan = loadOperationsPlan()
+  if (!plan.checks.windowWatchdog) {
+    console.log(JSON.stringify({ message: 'instance_operation_disabled', operation: 'windowWatchdog' }))
+    return
+  }
   const result = await runWindowWatchdog({ store: storeFromEnvironment(process.env) })
   process.exitCode = result.ok ? 0 : 1
 }

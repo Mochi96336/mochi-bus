@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseTelemetryEvent } from '../../src/observability/telemetry.ts'
+import { operationEnabledCities } from '../instance/operations-plan.mjs'
 import { PUBLIC_PROBE_HARD_CHECK_COUNT } from './public-probe-contract.mjs'
 import {
   createPublicApiAdapter,
@@ -22,7 +23,7 @@ function reference(city) {
   }
 }
 
-function healthyApi(city) {
+function healthyApi() {
   return {
     getJson: vi.fn(async (path) => {
       if (path.startsWith('/api/v1/map/routes')) {
@@ -84,7 +85,7 @@ describe('public probe runner', () => {
 
   afterEach(() => vi.restoreAllMocks())
 
-  it('covers every snapshot city once with strict telemetry per city', async () => {
+  it('covers every enabled snapshot city once with strict telemetry per city', async () => {
     const emitter = vi.fn()
     const store = fakeStore({
       readReference: vi.fn(async (city) => reference(city)),
@@ -92,11 +93,11 @@ describe('public probe runner', () => {
     })
     const result = await runPublicProbe(runOptions({ store, publicApi: healthyApi(), emitter }))
 
-    expect(PUBLIC_PROBE_CITIES).toHaveLength(22)
+    expect(new Set(PUBLIC_PROBE_CITIES)).toEqual(new Set(operationEnabledCities()))
     expect(result.ok).toBe(true)
     expect(result.summary.results.map((item) => item.city)).toEqual([...PUBLIC_PROBE_CITIES])
     expect(result.summary.results.every((item) => item.status === 'healthy')).toBe(true)
-    expect(emitter).toHaveBeenCalledTimes(22)
+    expect(emitter).toHaveBeenCalledTimes(PUBLIC_PROBE_CITIES.length)
     for (const [event] of emitter.mock.calls) {
       expect(parseTelemetryEvent(event)).toEqual(event)
       expect(event).toMatchObject({ event: 'public_probe_completed', result: 'success' })
@@ -118,11 +119,12 @@ describe('public probe runner', () => {
   })
 
   it('fails the job on a hard failure but leaves other cities independent', async () => {
+    const failedCity = PUBLIC_PROBE_CITIES[0]
     const api = healthyApi()
     const baseGetJson = api.getJson
     api.getJson = vi.fn(async (path) => {
       const url = new URL(path, 'https://bus.example')
-      if (url.pathname === '/api/v1/map/routes' && url.searchParams.get('city') === 'Taipei') {
+      if (url.pathname === '/api/v1/map/routes' && url.searchParams.get('city') === failedCity) {
         return { schemaVersion: 2, source: 'snapshot', snapshotVersion: 'v0', routes: [{ routeName: '307' }] }
       }
       return baseGetJson(path)
@@ -134,9 +136,9 @@ describe('public probe runner', () => {
     const result = await runPublicProbe(runOptions({ store, publicApi: api }))
 
     expect(result.ok).toBe(false)
-    expect(result.failedCities).toEqual(['Taipei'])
-    const taipei = result.summary.results.find((item) => item.city === 'Taipei')
-    expect(taipei).toMatchObject({ status: 'hard_failed', failureClass: 'public_version_mismatch', observedVersion: 'v0' })
+    expect(result.failedCities).toEqual([failedCity])
+    const failed = result.summary.results.find((item) => item.city === failedCity)
+    expect(failed).toMatchObject({ status: 'hard_failed', failureClass: 'public_version_mismatch', observedVersion: 'v0' })
   })
 
   it('marks unreachable references unknown without claiming city health', async () => {
