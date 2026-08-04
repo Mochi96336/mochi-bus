@@ -101,22 +101,80 @@ html[data-mochi-map-booting="true"] #map-app::before {
   document.head.appendChild(style)
 }
 
-function waitForFirstTile(timeoutMs = 650): Promise<void> {
-  if (document.querySelector('.leaflet-tile-loaded')) return Promise.resolve()
+export type TileBatchState = {
+  loaded: number
+  pending: number
+}
+
+export function tileBatchIsReady(state: TileBatchState): boolean {
+  return state.loaded > 0 && state.pending === 0
+}
+
+function activeTileContainer(): Element | null {
+  const pane = document.querySelector('.leaflet-tile-pane')
+  if (!pane) return null
+  const containers = Array.from(pane.querySelectorAll<HTMLElement>(':scope > .leaflet-tile-container'))
+  if (!containers.length) return pane
+  return containers.reduce((active, candidate) => {
+    const activeZ = Number.parseInt(active.style.zIndex || '0', 10) || 0
+    const candidateZ = Number.parseInt(candidate.style.zIndex || '0', 10) || 0
+    return candidateZ >= activeZ ? candidate : active
+  })
+}
+
+function currentTileBatch(): TileBatchState {
+  const container = activeTileContainer()
+  if (!container) return { loaded: 0, pending: 0 }
+  const tiles = Array.from(container.querySelectorAll('.leaflet-tile'))
+  const loaded = tiles.filter((tile) => tile.classList.contains('leaflet-tile-loaded')).length
+  return { loaded, pending: tiles.length - loaded }
+}
+
+/**
+ * Drawer hydration can finish while Leaflet still keeps the Taiwan tile level
+ * in the DOM. Wait for the currently active (highest-z) tile level to complete,
+ * then require two stable frames before exposing it.
+ */
+function waitForTargetTileBatch(timeoutMs = 900): Promise<void> {
   return new Promise((resolve) => {
     let done = false
+    let observer: MutationObserver | undefined
+    let timeout: number | undefined
+    let settleFrame: number | undefined
+
     const finish = () => {
       if (done) return
       done = true
-      observer.disconnect()
-      window.clearTimeout(timeout)
+      observer?.disconnect()
+      if (timeout !== undefined) window.clearTimeout(timeout)
+      if (settleFrame !== undefined) window.cancelAnimationFrame(settleFrame)
       resolve()
     }
-    const observer = new MutationObserver(() => {
-      if (document.querySelector('.leaflet-tile-loaded')) finish()
-    })
-    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
-    const timeout = window.setTimeout(finish, timeoutMs)
+
+    const check = () => {
+      const batch = currentTileBatch()
+      if (!tileBatchIsReady(batch)) return
+      if (settleFrame !== undefined) window.cancelAnimationFrame(settleFrame)
+      settleFrame = window.requestAnimationFrame(() => {
+        settleFrame = window.requestAnimationFrame(() => {
+          const stable = currentTileBatch()
+          if (tileBatchIsReady(stable) && stable.loaded >= batch.loaded) finish()
+        })
+      })
+    }
+
+    const pane = document.querySelector('.leaflet-tile-pane')
+    if (pane) {
+      observer = new MutationObserver(check)
+      observer.observe(pane, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'src', 'style'],
+      })
+    }
+    timeout = window.setTimeout(finish, timeoutMs)
+    window.requestAnimationFrame(() => window.requestAnimationFrame(check))
   })
 }
 
@@ -127,7 +185,7 @@ function twoFrames(): Promise<void> {
 /**
  * The Leaflet map is constructed at a Taiwan-wide default camera. Keep that
  * implementation detail behind a neutral canvas until URL hydration reaches
- * the requested city/place/route and the first matching tiles have painted.
+ * the requested city/place/route and the active tile batch has painted.
  */
 export function installInitialMapViewGate(maxWaitMs = 5_000): () => void {
   installGateStyle()
@@ -145,7 +203,7 @@ export function installInitialMapViewGate(maxWaitMs = 5_000): () => void {
   const reveal = async () => {
     if (revealed || revealing) return
     revealing = true
-    await waitForFirstTile()
+    await waitForTargetTileBatch()
     await twoFrames()
     if (revealed) return
     revealed = true
