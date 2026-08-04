@@ -1,3 +1,4 @@
+// @ts-ignore -- Vitest runs this file in Node; production TS config intentionally omits Node types.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
