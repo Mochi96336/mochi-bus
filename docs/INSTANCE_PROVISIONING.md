@@ -95,7 +95,11 @@ The job runs only when dispatched from the repository default branch and explici
 
 The workflow never runs any generated provisioning command.
 
-Forks may set `MOCHI_BUS_INSTANCE_CONFIG` as a repository variable to select their committed manifest. Request-derived instances may additionally need:
+Forks may set `MOCHI_BUS_INSTANCE_CONFIG` as a repository variable to select the committed manifest used by the **Instance provisioning plan** workflow. That workflow explicitly injects the variable into its environment.
+
+The current **Deploy** and **Sync transit snapshots** workflows do not inject this repository variable. They automatically use a root-level `instance.json`; using another manifest path requires explicitly wiring `vars.MOCHI_BUS_INSTANCE_CONFIG` into `MOCHI_BUS_INSTANCE_CONFIG` in those workflows as well.
+
+Request-derived instances may additionally need:
 
 - `RELEASE_SMOKE_ORIGIN`
 - `SNAPSHOT_SMOKE_BASE_URL`
