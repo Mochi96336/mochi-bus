@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
 import initialViewGateCss from './initial-view-gate.css?raw'
 import {
