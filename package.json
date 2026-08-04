@@ -32,6 +32,7 @@
     "cf-typegen:check": "wrangler types --env-interface CloudflareBindings --env-file .dev.vars.example --check",
     "instance:init": "node scripts/instance/init.mjs",
     "instance:update": "node scripts/instance/update.mjs",
+    "instance:migration-plan": "node scripts/instance/migration-plan.mjs",
     "instance:validate": "node scripts/instance/validate-config.mjs",
     "instance:compile": "node scripts/instance/compile-config.mjs",
     "instance:doctor": "node scripts/instance/doctor.mjs",
