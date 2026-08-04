@@ -50,15 +50,18 @@ describe('manual instance bundle review workflow contracts', () => {
     expect(runner).toContain('parseStrictJson')
     expect(runner).toContain('writeInstanceBundleArtifact')
     expect(runner).toContain('verifyInstanceBundleFile')
+    expect(runner).toContain('checkInstanceBundleFreshnessFile')
+    expect(runner).toContain('freshness.json')
     expect(runner).toContain("open(path, 'wx', 0o600)")
   })
 
-  test('documentation keeps review evidence separate from apply and deploy', async () => {
+  test('documentation keeps verification and freshness separate from apply and deploy', async () => {
     const documentation = await source(documentationUrl)
     expect(documentation).toContain('workflow_dispatch')
     expect(documentation).toContain('changes_json')
     expect(documentation).toContain('bundle.json')
     expect(documentation).toContain('verification.json')
+    expect(documentation).toContain('freshness.json')
     expect(documentation).toContain('does not apply')
     expect(documentation).toContain('instance:update --write')
     expect(documentation).toContain('No repository secret')
