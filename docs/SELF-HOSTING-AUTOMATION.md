@@ -2,25 +2,23 @@
 
 這份教學接續[部署自己的 Mochi Bus](SELF-HOSTING.md)。
 
-請先完成手動 starter 部署，確認 Worker、D1、R2 和第一份城市快照都能正常運作，再開始設定自動化。
+請先完成手動 starter 部署，確認 Worker、D1、R2 和第一份嘉義市快照都能正常運作，再開始設定 GitHub Actions。
 
-自動化分成兩件不同的事：
+Mochi Bus 有四個與自架維運直接相關的 workflows：
 
-```text
-程式碼有更新
-    └── Deploy workflow
-        └── 重新部署 Worker
+| Workflow | 作用 | 觸發方式 |
+|---|---|---|
+| **Deploy** | 驗證並部署 Worker，之後執行 release smoke | push 到 fork 的 `main`，或手動執行 |
+| **Sync transit snapshots** | 下載 TDX 資料並發布城市快照 | 台北時間每日 03:17，或手動執行 |
+| **Snapshot window watchdog** | 檢查排程快照是否留下可信結果 | 台北時間每日 07:45，或手動執行 |
+| **Public network probe** | 從公開網址檢查快照與部分即時資料路徑 | 台北時間每日 08:20，或手動執行 |
 
-公車資料需要更新
-    └── Sync transit snapshots workflow
-        └── 重新發布城市快照
-```
+它們不會互相代替：
 
-兩者使用不同的 Secrets，也可以分開啟用：
-
-- 只設定 Deploy workflow，不會自動更新城市資料。
-- 只設定快照 workflow，不會替你同步或部署新版程式碼。
-- Fork 不會自動建立 Cloudflare 資源，也不會自動搬移本機 Secret。
+- Deploy 不會更新城市資料。
+- Sync 不會替你同步 upstream 或部署新版程式碼。
+- Watchdog 和 public probe 只負責檢查與記錄，**不會自動重跑、修復或 rollback**。
+- Fork 不會自動建立 Cloudflare 資源，也不會搬移本機 Secret。
 
 ## 開始前確認
 
@@ -35,11 +33,11 @@
 > `.dev.vars`、`.snapshot.env`、TDX Client Secret、R2 Secret Access Key 和 Cloudflare API token 都不能提交到 repository。
 
 > [!IMPORTANT]
-> 公開 repository 的 fork 預設不執行 workflows。先完成本篇的 Cloudflare Tokens、Repository Secrets 和 Variables，再提交 `instance.json`、啟用 Actions 並手動驗證。這樣可以避免第一個 Deploy 因缺少憑證而失敗。
+> Deploy 會在 `main` 收到 push 時執行。請先設定本篇需要的 Tokens、Secrets 和 Variables，再提交並 push `instance.json`，避免第一個 Deploy 在缺少憑證時啟動。
 
-## 1. 建立自己的 fork
+## 1. 建立 fork 並放入自己的 instance
 
-操作位置：GitHub 網站
+操作位置：GitHub、VS Code 與終端機
 
 1. 打開 `Mochi96336/mochi-bus` repository。
 2. 選擇 **Fork**。
@@ -48,43 +46,52 @@
 
 Fork 是放在自己帳號下、可以獨立設定 Secrets 與 Actions 的 repository 副本。它不是新的 Cloudflare 服務，也不會影響已經手動部署的 Worker。
 
-### 建議重新 clone fork
+### 重新 clone fork
 
-操作位置：VS Code 終端機
+先用 VS Code 開啟準備存放專案的上層資料夾，例如：
 
-最容易理解的方式，是把 fork 下載到另一個資料夾，不直接改動原本完成手動部署的資料夾。
+- Windows：`C:\Users\你的名稱\Projects` 或 `D:\Projects`
+- macOS / Linux：`~/Projects`
 
-把 `YOUR_GITHUB_USERNAME` 換成自己的 GitHub 使用者名稱：
+再開啟終端機，把 `YOUR_GITHUB_USERNAME` 換成自己的 GitHub 使用者名稱：
 
 ```sh
-cd ..
 git clone https://github.com/YOUR_GITHUB_USERNAME/mochi-bus.git mochi-bus-fork
 cd mochi-bus-fork
-npm install
 ```
 
-接著把原本資料夾中的 `instance.json` 複製到新資料夾根目錄。
+`git clone` 會建立新的 `mochi-bus-fork` 子資料夾，不會把 repository 檔案散落到上層資料夾。
 
-若還要在新資料夾繼續手動部署或發布快照，也可以在本機複製 `.dev.vars` 和 `.snapshot.env`；它們仍然不可提交。
+### 先複製 `instance.json`，再安裝依賴
 
-## 2. 把 instance 設定放進 fork 專案
+`npm install` 會執行 repository 的 `prepare` script 並編譯 instance。若自己的 `instance.json` 還沒放進 fork，工具會暫時改用 repository 內建的 production manifest。它不會因此部署 Mochi 正式服務，但 `.generated/instance/` 會指向錯誤的設定，容易造成誤解。
 
-操作位置：VS Code 編輯器與終端機
+先把原本手動部署資料夾中的 `instance.json` 複製到 `mochi-bus-fork` 根目錄。可以用 VS Code Explorer；若兩個資料夾正好相鄰且名稱為 `mochi-bus`、`mochi-bus-fork`，也可以執行：
 
-確認新資料夾根目錄存在：
+Windows PowerShell：
 
-```text
-instance.json
+```powershell
+Copy-Item ..\mochi-bus\instance.json .\instance.json
 ```
 
-先驗證：
+macOS / Linux：
 
 ```sh
-npm run instance:validate -- --config instance.json
-npm run instance:compile -- --config instance.json
+cp ../mochi-bus/instance.json ./instance.json
 ```
 
-再查看目前的 Git 狀態：
+確認根目錄已看到 `instance.json` 後，再執行：
+
+```sh
+npm install
+npm run instance:validate -- --config instance.json
+npm run instance:compile -- --config instance.json
+npm run instance:provision-plan -- --config instance.json
+```
+
+若還要在新資料夾繼續手動部署或發布快照，可以在本機複製 `.dev.vars` 和 `.snapshot.env`；它們仍然不可提交。
+
+最後檢查：
 
 ```sh
 git status --short
@@ -92,31 +99,17 @@ git status --short
 
 此時可以看到尚未提交的 `instance.json`。不應看到 `.dev.vars` 或 `.snapshot.env`；若看到它們，先停止，不要繼續。
 
-`instance.json` 不是 Secret，可以提交；它會保存 Worker、D1、R2、城市與操作模式等設定。這一步先不要執行 `git add`、`git commit` 或 `git push`，等 Tokens、Secrets 和 Variables 都設定完成後再一起提交。
+`instance.json` 不是 Secret，可以提交。它保存 Worker、D1、R2、城市與操作模式等設定。
 
-## 3. 讓 workflows 找到 instance 設定
-
-目前的 Deploy 與 Sync transit snapshots workflows 會自動尋找 repository 根目錄的：
-
-```text
-instance.json
-```
-
-因此本篇固定把 instance 設定放在根目錄，**不需要另外建立 `MOCHI_BUS_INSTANCE_CONFIG` Repository Variable**。
-
-若把檔案移到 `instances/...` 等其他路徑，現有 workflows 不會只因為建立同名 GitHub Variable 就自動讀取它；還必須修改 workflow，將該 Variable 明確傳入 `MOCHI_BUS_INSTANCE_CONFIG` 環境變數。這屬於自訂 workflow 的進階路線，本篇不採用。
-
-## 4. 設定 Push 後自動部署 Worker
-
-Deploy workflow 會在 fork 的 `main` 收到 push 時執行，也可以從 GitHub Actions 手動啟動。
+## 2. 設定 Push 後自動部署 Worker
 
 ### 建立 Cloudflare deploy token
 
 操作位置：Cloudflare Dashboard
 
-建立一組只供 GitHub Actions 部署使用的 Cloudflare API token。不要把本機 Wrangler login、R2 S3 Secret Access Key 或 Global API Key 當成 deploy token。
+建立一組只供 GitHub Actions 部署使用的 Cloudflare API token。不要使用 Global API Key、R2 S3 Secret Access Key，或把本機 Wrangler login 當成 deploy token。
 
-前往 **My Profile → API Tokens → Create Token**，可以從 **Edit Cloudflare Workers** template 開始，再確認 Account permissions 至少包含：
+可以從 **Edit Cloudflare Workers** template 開始，再確認 Account permissions 至少包含：
 
 ```text
 Workers Scripts Write
@@ -125,60 +118,33 @@ Workers R2 Storage Read
 ```
 
 - **Workers Scripts Write：** 上傳與更新 Worker。
-- **D1 Read：** Deploy preflight 唯讀確認 D1 名稱與 ID。
-- **Workers R2 Storage Read：** Deploy preflight 唯讀確認 R2 bucket 身分；實際快照物件的寫入由下方另外建立的 S3 credentials 負責。
+- **D1 Read：** Deploy preflight 確認 D1 名稱與 ID。
+- **Workers R2 Storage Read：** Deploy preflight 確認 R2 bucket 身分。
 
-Account Resources 只選擇實際部署 Mochi Bus 的 Cloudflare account。第一次使用 `workers.dev` 不需要為自訂網域加入 Zone 權限；日後綁定 route 時再依需要增加對應 zone 的 Workers Routes 權限。
+Account Resources 只選擇實際部署 Mochi Bus 的 Cloudflare account。第一次使用 `workers.dev` 不需要加入自訂網域的 Zone 權限；日後綁定 route 時再依需要增加。
 
-Cloudflare 可能調整權限名稱與 template 內容，建立前可對照 [API token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) 與 [Workers GitHub Actions 指引](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)。
+Cloudflare 可能調整權限名稱與 template，建立前可對照 [API token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) 與 [Workers GitHub Actions 指引](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)。
 
-建立後保存：
+### 建立 Deploy 使用的 Repository Secrets 與 Variable
 
-```text
-Cloudflare deploy API token
-Cloudflare Account ID
-```
+操作位置：自己的 fork → **Settings → Secrets and variables → Actions**
 
-需要確認目前 instance 還缺哪些操作設定時，可以在本機執行：
-
-```sh
-npm run instance:provision-plan -- --config instance.json
-```
-
-完整規格也可參考 [Instance provisioning plan](INSTANCE_PROVISIONING.md)。
-
-### 建立 Repository Secrets
-
-操作位置：自己的 fork → GitHub Settings
-
-前往：
-
-```text
-Settings
-  → Secrets and variables
-  → Actions
-  → Secrets
-  → New repository secret
-```
-
-至少建立：
+建立 Repository Secrets：
 
 ```text
 CLOUDFLARE_DEPLOY_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 ```
 
-Secret 名稱必須完全一致，包括大小寫。
-
-本篇從 starter 接續，而 starter 預設啟用 release smoke，因此還必須建立 Repository Variable：
+再到 **Variables** 建立：
 
 ```text
 RELEASE_SMOKE_ORIGIN=https://你的公開網域
 ```
 
-Starter 使用 `workers.dev` 時，填入 Wrangler 實際顯示的完整網址；結尾不要加 `/`。缺少這個 Variable 時，Deploy preflight 會在上傳 Worker 前停止。
+Starter 預設啟用 release smoke，因此這個 Variable 不能省略。使用 `workers.dev` 時，填入 Wrangler 實際顯示的完整網址，結尾不要加 `/`。
 
-### TDX Worker Secrets 不會從本機自動搬進 GitHub
+### Worker 的 TDX Secret 不會由 GitHub Deploy 重新設定
 
 手動教學第一次執行：
 
@@ -188,37 +154,33 @@ npm run deploy -- --secrets-file .dev.vars
 
 時，已把 TDX Client ID 和 Client Secret 保存到 Cloudflare Worker Secrets。
 
-之後的 GitHub Deploy workflow 不會讀取你電腦裡的 `.dev.vars`。既有 Worker Secret 會繼續保留；只有更換 TDX 憑證時，才需要另外更新 Worker Secrets。
+GitHub Deploy workflow 不會讀取你電腦裡的 `.dev.vars`，但既有 Worker Secrets 會繼續保留。只有更換 TDX 憑證時，才需要重新更新 Worker Secrets；做法見後面的「輪替 TDX 憑證」。
 
-## 5. 設定城市資料自動更新
+## 3. 選擇是否自動更新城市資料
 
-> 只需要 Push 後自動部署 Worker、不需要城市資料排程時，可以跳過第 5、6 節，直接前往第 7 節。保留 `profile: "starter"` 與 `snapshotSchedule: "manual"`，也不需要建立快照 workflow 的 Token、Secrets 或 `SNAPSHOT_SMOKE_BASE_URL`。
+只需要 Push 後自動部署 Worker 時，可以跳過本節，保留：
 
-`Sync transit snapshots` workflow 可以：
+```json
+"profile": "starter",
+"snapshotSchedule": "manual"
+```
 
-- 依 instance 設定的排程發布城市資料
-- 從 GitHub Actions 手動選擇一個城市
-- 發布前套用 D1 migration
-- 發布後從公開網址執行 smoke 驗證
+此時不需要建立快照用 Secrets，也不需要啟用三個 scheduled workflows。
 
-### 建立快照 workflow Secrets
+### 建立快照與監測使用的 Cloudflare token
 
-操作位置：Cloudflare Dashboard 與自己的 fork → GitHub Settings
-
-先在 Cloudflare Dashboard 建立另一組供 migration、D1 快照狀態與 R2 bucket preflight 使用的 API token。Account permissions 至少包含：
+需要自動更新城市資料時，建立另一組供 migration、D1 快照狀態、watchdog、public probe 與 R2 preflight 使用的 Cloudflare API token。Account permissions 至少包含：
 
 ```text
 D1 Write
 Workers R2 Storage Read
 ```
 
-- **D1 Write：** 套用 migration，並讀寫快照窗口與狀態資料。
-- **Workers R2 Storage Read：** preflight 唯讀確認目標 bucket 身分。
-- 實際快照物件的上傳、讀取與刪除仍使用下方 `R2_ACCESS_KEY_ID`／`R2_SECRET_ACCESS_KEY`，不是這組 Cloudflare API token。
+實際快照物件的上傳、讀取與刪除仍使用 R2 S3 credentials，不是這組 Cloudflare API token。
 
-Account Resources 只選擇實際部署 Mochi Bus 的 Cloudflare account。Cloudflare 可能調整權限名稱，建立前可再對照 [API token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)。
+### 建立快照 Repository Secrets 與 Variable
 
-再到 GitHub Settings 建立以下 Repository Secrets：
+建立以下 Repository Secrets：
 
 ```text
 TDX_CLIENT_ID
@@ -235,34 +197,73 @@ R2_SECRET_ACCESS_KEY
 SNAPSHOT_SMOKE_BASE_URL=https://你的公開網域
 ```
 
-這裡的 R2 Access Key ID 與 Secret Access Key，可以使用手動教學中建立的那組 bucket-scoped、Object Read & Write credentials。
+R2 credentials 可以使用手動教學中建立的 bucket-scoped、Object Read & Write credentials。
 
-`CLOUDFLARE_API_TOKEN` 是供 migration 與快照遠端操作使用的 Cloudflare API token；它和 `CLOUDFLARE_DEPLOY_API_TOKEN` 的用途不同，即使實際權限設計可能重疊，也不要因為名稱相似就漏建其中一個 Secret。
+`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_DEPLOY_API_TOKEN` 用途不同，即使實際權限可能重疊，也不要因名稱相似而漏建。
 
 > [!WARNING]
-> GitHub Secrets 儲存的是 Secret 的值，不要把 `NAME=value` 整行貼進 Value 欄位。Name 填 `TDX_CLIENT_ID`，Value 只填真正的 Client ID。
+> GitHub Secrets 的 Value 只填真正的值，不要貼入 `NAME=value` 整行文字。
 
-## 6. 從 starter 升級為 managed 排程（需要自動更新城市資料才做）
+### 選擇快照排程
 
-Starter profile 強制使用：
+Managed profile 可以使用：
 
-```json
-"profile": "starter",
-"snapshotSchedule": "manual"
-```
+| `snapshotSchedule` | 行為 | 建議用途 |
+|---|---|---|
+| `daily` | 每天依序處理所有 `enabledCities` | 少數城市，而且確實需要每日更新 |
+| `taipei-weekly-sharded` | 將城市分散在一週七天，每個城市每週處理一次 | 城市較多或接近全台 |
 
-即使 fork 已建立、Secrets 也全部填好，`manual` 仍代表不會把城市加入每日自動發布。
-
-要讓 `enabledCities` 中的城市加入每日排程，必須同時修改：
+少數城市需要每日更新：
 
 ```json
 "profile": "managed",
 "snapshotSchedule": "daily"
 ```
 
-只改成 `daily`、卻保留 `profile: "starter"`，會在 `instance:validate` 直接失敗。
+城市較多時：
 
-修改後執行：
+```json
+"profile": "managed",
+"snapshotSchedule": "taipei-weekly-sharded"
+```
+
+`Sync transit snapshots` 在同一個 job 中逐城處理，job 最長 180 分鐘。大量城市全部設成 `daily`，除了 TDX 額度，也可能遇到執行時間不足。
+
+只改成自動排程、卻保留 `profile: "starter"`，會在 `instance:validate` 失敗。
+
+> [!WARNING]
+> **TDX 免費額度不保證足以支撐全台自動更新。**
+>
+> 快照工具會下載各個啟用城市的路線、站牌、站序、線形與班表。TDX 公車 API 目前列有計次與計量換算基準，基礎會員目前每月提供有限免費點數；實際扣點方式、存取頻率與可用額度以 TDX 會員中心為準。
+>
+> 網站使用者查詢即時到站、車輛與旅程估時也可能使用 TDX。啟用 `publicProbe` 後，workflow 每天還會透過公開 Worker 對每個啟用城市執行少量即時資料診斷，因此也會增加用量。
+>
+> 建議先從實際需要的少數城市開始，觀察用量後再增加；城市較多時優先使用每週分片。請查看 [TDX 公車 API 說明](https://tdx.transportdata.tw/api-service/swagger)、[TDX 首頁](https://tdx.transportdata.tw/)，以及會員中心的最新資訊。
+
+### 決定是否啟用監測
+
+從 starter 改成 managed，不會自動改寫其他欄位。只需要自動更新時，可以保留：
+
+```json
+"releaseSmoke": true,
+"publicProbe": false,
+"windowWatchdog": false
+```
+
+需要完整 managed 維運檢查時，改成：
+
+```json
+"releaseSmoke": true,
+"publicProbe": true,
+"windowWatchdog": true
+```
+
+- `windowWatchdog` 於每日 07:45 檢查已關閉的排程窗口，並在 D1 記錄自己的檢查結果；它不會補跑 Sync。
+- `publicProbe` 於每日 08:20 從公開網址檢查所有啟用城市；它不會修復或 rollback。
+- Public probe 的 `realtime_degraded` 是 Yellow，workflow 仍會成功；要查看 run summary 才會看見警告。
+- `windowWatchdog: true` 不能搭配 `snapshotSchedule: "manual"`。
+
+修改後再次執行：
 
 ```sh
 npm run instance:validate -- --config instance.json
@@ -270,11 +271,7 @@ npm run instance:compile -- --config instance.json
 npm run instance:provision-plan -- --config instance.json
 ```
 
-Provisioning plan 可以再次列出 managed 自動化仍缺少的 Secrets、Variables 或操作條件。先不要 push，下一步會在所有設定完成後一起提交。
-
-## 7. 提交設定並啟用 Actions
-
-操作位置：VS Code 終端機與自己的 fork
+## 4. 提交設定並啟用 Actions
 
 先確認只有預期中的設定準備提交：
 
@@ -293,49 +290,57 @@ git commit -m "chore: add self-hosted instance config"
 git push
 ```
 
-若 `git commit` 顯示 `Please tell me who you are`，先設定自己的 Git 顯示名稱與 GitHub 已驗證 email：
+若 `git push` 要求驗證，依 Git Credential Manager 開啟的瀏覽器完成登入，或使用 Personal Access Token。GitHub 帳號密碼不能用於 Git HTTPS push。
 
-```sh
-git config --global user.name "你的名稱"
-git config --global user.email "你的 GitHub 已驗證 email"
+### 啟用 workflows
+
+GitHub Actions 通常已在 repository 啟用；若 Actions 頁面顯示啟用提示，先依畫面操作。
+
+公開 repository 被 fork 後，**scheduled workflows 預設停用**。到自己的 fork → **Actions**，依設定啟用：
+
+- 使用自動快照：**Sync transit snapshots**
+- `windowWatchdog: true`：**Snapshot window watchdog**
+- `publicProbe: true`：**Public network probe**
+
+Deploy 不是 scheduled workflow；確認 **Deploy** 頁面可以看到 **Run workflow**，並檢查剛才 push 產生的 run。
+
+Scheduled workflows 只使用 default branch 上的 workflow 與 `instance.json`。本篇假設 default branch 是 `main`。
+
+公開 repository 連續 60 天沒有活動時，GitHub 可能再次自動停用 scheduled workflows。排程也可能因平台負載延遲，負載很高時甚至可能被捨棄；重新啟用後不會自動補跑錯過的工作。可參考 [GitHub workflow 啟用說明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)與 [`schedule` 事件說明](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
+
+### 打開 Actions 失敗通知
+
+到 GitHub 個人設定：
+
+```text
+Settings
+  → Notifications
+  → System
+  → Actions
 ```
 
-若 `git push` 要求驗證，依 Git Credential Manager 開啟的瀏覽器完成登入，或使用 Personal Access Token。GitHub 帳號密碼不能用於 Git HTTPS push；可參考 [GitHub authentication](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/about-authentication-to-github)。
+選擇 **On GitHub** 或 **Email**，並可再選 **Only notify for failed workflows**。
 
-### 啟用 fork 的 workflows
+Scheduled workflow 的通知會送給建立或修改其排程的使用者；若 workflow 曾停用再重新啟用，之後通知會送給重新啟用的人。完整說明見 [Managing GitHub Actions notifications](https://docs.github.com/en/subscriptions-and-notifications/how-tos/managing-github-actions-notifications)。
 
-公開 repository 的 fork 預設不執行 workflows。Push 完成後：
+## 5. 第一次驗證
 
-1. 打開自己的 fork。
-2. 選擇 **Actions**。
-3. 若出現停用提示，選擇 **I understand my workflows, go ahead and enable them** 或 **Enable workflows**。
-4. 打開 **Deploy**，確認可以看到 **Run workflow**。
-5. 只有設定城市資料自動更新時，才需要再打開 **Sync transit snapshots**；若顯示 **Enable workflow**，選擇它並確認可以看到 **Run workflow**。
+### Deploy
 
-公開 fork 的 scheduled workflows 預設停用；公開 repository 連續 60 天沒有活動時，排程也可能再次被 GitHub 自動停用。之後發現城市資料沒有更新時，先到 Actions 確認 **Sync transit snapshots** 仍為 enabled。詳細行為可參考 [GitHub 的 workflow 啟用說明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)。
+1. 打開 **Actions → Deploy**。
+2. 檢查剛才 push 的 run；若沒有 run，選擇 **Run workflow**。
+3. 確認必要步驟通過。
+4. 打開公開網址，確認網站正常。
 
-> 若你在設定 Secrets 前就提早啟用 Actions，第一次 push 可能已產生一個失敗的 Deploy。這不代表原本線上的 Worker 被刪除；完成本篇設定後，手動重新執行即可。
+### Sync transit snapshots
 
-## 8. 第一次驗證已啟用的 workflows
+只有啟用城市資料自動更新時才做：
 
-操作位置：自己的 fork → Actions
-
-### 驗證 Deploy workflow
-
-1. 選擇 **Deploy**。
-2. 若剛才 push 已自動產生成功的 run，可以直接檢查該次結果；否則選擇 **Run workflow**。
-3. 打開執行紀錄，確認所有必要步驟通過。
-4. 再打開公開網址，確認網站仍能運作。
-
-### 驗證 Sync transit snapshots workflow
-
-只有設定城市資料自動更新時才需要這一段。第一次不要只等排程，應手動執行並觀察結果：
-
-1. 選擇 **Sync transit snapshots**。
+1. 打開 **Sync transit snapshots**。
 2. 選擇 **Run workflow**。
 3. `city` 選擇 `Chiayi`。
 4. `force_publish` 保持 `false`。
-5. `window_type` 改成 `manual`。
+5. `window_type` 選擇 `manual`。
 6. `repair_legacy_previous` 保持 `false`，其他 repair 欄位留空。
 7. 等待 workflow 完成。
 8. 確認公開網站與以下 API 仍有嘉義市資料：
@@ -345,75 +350,146 @@ git config --global user.email "你的 GitHub 已驗證 email"
 /api/v1/map/routes?city=Chiayi
 ```
 
-完成後再讓 `managed` 的每日排程持續運作。
+### Public network probe
 
-## 9. 兩種自動化各自失敗時怎麼判斷
+`publicProbe: true` 時，可以在快照存在後手動執行 **Public network probe**，再查看 run summary：
 
-### Deploy workflow 失敗
+- `healthy`：hard checks 與即時診斷正常。
+- `realtime_degraded`：快照 hard checks 正常，但即時資料有 Yellow 警告；workflow 仍可能是綠色。
+- `hard_failed`／`unknown`：workflow 失敗，需要查看 failure class。
 
-先確認：
+### Snapshot window watchdog
 
-- repository 根目錄有已提交的 `instance.json`
-- `CLOUDFLARE_DEPLOY_API_TOKEN` 存在
-- `CLOUDFLARE_ACCOUNT_ID` 屬於正確帳號
-- D1、R2 與 Worker 名稱仍和 instance 一致
+`windowWatchdog: true` 時，不要用 `window_type=manual` 的 run 驗證 watchdog。它檢查的是 03:17 排程建立的窗口；等第一個自動排程窗口在 07:30 關閉後，再查看 07:45 的結果。
 
-Deploy 失敗不一定會讓目前線上的舊 Worker 消失。先查看第一個失敗步驟，不要急著刪除 Cloudflare 資源。
+### 新增城市的安全順序
 
-### Snapshot workflow 失敗
+每次加入新城市，一次處理一個：
 
-先確認：
+1. 修改 `enabledCities`，並確認 `defaultCity`、`demoQuery` 仍合法。
+2. 執行 validate、compile 與 provision plan。
+3. commit 並 push。
+4. 等 Deploy 完成，確認新版 Worker 已接受該城市。
+5. 手動執行 Sync，只選擇新城市並使用 `window_type=manual`。
+6. 確認新城市 routes API 有資料，再加入下一個城市。
 
-- repository 根目錄有已提交的 `instance.json`
-- 六個快照 Secrets 都存在
-- `SNAPSHOT_SMOKE_BASE_URL` 是正確的公開網址
-- R2 credentials 有目標 bucket 的 Object Read & Write 權限
-- `profile` 與 `snapshotSchedule` 組合合法
-- `enabledCities` 包含要發布的城市
+不要在 Deploy 尚未完成時同時啟動新城市 Sync；snapshot smoke 可能仍打到舊 Worker，造成 `city_not_enabled` 等假失敗。
 
-看到 `state_write_failed_reconcile_required` 或 `cleanup_failed` 時，保留完整 log，不要假設重新 Run workflow 一定能修復。
+## 6. Workflow 失敗時先判斷遠端是否已改變
 
-## 10. Fork 之後仍要自己決定的事
+### Deploy 失敗
 
-Fork 不會自動替你完成：
+先查看第一個紅色步驟：
 
-- Cloudflare D1、R2 和 Worker 的第一次建立
-- Repository Secrets 與 Variables
-- 自訂網域
-- API rate limit
-- 要啟用哪些城市
-- snapshot 更新頻率
-- Secret 輪替
-- upstream 更新發生衝突時如何處理
+- **Preflight deployment resources** 或 **Verify release candidate**：尚未上傳新版 Worker。
+- **Deploy Worker**：新版通常沒有完整部署，舊 Worker 通常仍在；仍應打開公開網址確認。
+- **Run true post-deploy release smoke**：新版 Worker 已經 deploy，可能正在對外服務。Workflow 變紅不代表自動 rollback，也不代表仍是舊版。
 
-Fork 的作用是提供長期維護與自動化的容器，不是按一下就完成所有部署。
+Post-deploy smoke 失敗時，先確認公開網址、release SHA 與 smoke evidence，不要只重新 Run workflow 或刪除 Worker。
 
-## 11. 同步 Mochi Bus upstream 更新
+### Sync 失敗
 
-自己的 fork 和原始 Mochi Bus 是兩個 repository。原始專案更新後，fork 不會自動合併所有修改。
+Sync 會先套用 D1 migration，再建置與發布快照。後段失敗時，migration 可能已經成功套用；不要把整次失敗理解成「完全沒有改變遠端狀態」。
 
-> [!WARNING]
-> 你的 fork 已保存 Cloudflare 與 TDX Secrets。同步 upstream 前，先查看即將加入的 commits，特別是 `.github/workflows/`、`scripts/`、`package.json` 和 `package-lock.json`。更新進入 fork 的 `main` 後，Deploy workflow 可能會使用這些 Secrets 自動執行。
+看到 `state_write_failed_reconcile_required` 或 `cleanup_failed` 時，保留完整 log，不要假設重新執行一定能修復。若目前 active snapshot 仍健康，先保留服務，再依 runbook 處理。
 
-同步前先確認：
+### Watchdog 或 public probe 失敗
 
-- `instance.json` 已提交
-- 本機沒有尚未保存的重要修改
-- `.dev.vars` 和 `.snapshot.env` 沒有進入 commit
-- 已看過 upstream 更新的大致內容
+它們只會留下診斷，不會自動補跑 Sync、修復或 rollback。若 scheduled workflow 整次沒有建立 run，GitHub 也不會產生一個「失敗」來通知你；發現資料過期時仍要檢查 workflow 是否被停用。
 
-最容易理解的是使用 GitHub 網頁：
+進階狀態與操作方式：
 
-1. 打開自己的 fork 首頁。
-2. 確認目前分支是 `main`。
-3. 選擇檔案列表上方的 **Sync fork**。
-4. 查看 GitHub 顯示的 upstream commits。
-5. 沒有衝突且內容符合預期時，選擇 **Update branch**。
-6. 若 GitHub 要求建立 pull request 解決衝突，先停止自動部署並逐項處理；不要使用 force update 或 `git reset --hard` 覆蓋自己的 `instance.json`。
+- [Snapshot window watchdog](operations/snapshot-window-watchdog.md)
+- [Public network probe](operations/public-network-probe.md)
+- [Transit snapshot publishing](operations/transit-snapshot-publishing.md)
+- [Transit snapshot rollback authority](operations/transit-snapshot-rollback-authority.md)
 
-GitHub 的完整操作說明請見 [Syncing a fork](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/syncing-a-fork)。
+## 7. 日後維護
 
-網頁同步完成後，在本機 fork 資料夾執行：
+### 輪替 TDX 憑證
+
+同一組 TDX 憑證分別供公開 Worker 與 Sync workflow 使用。更換 Client ID 或 Client Secret 時，兩邊都要更新：
+
+1. 更新 fork 的 `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET` Repository Secrets。
+2. 更新本機 `.dev.vars`。
+3. 確認本機 fork 是準備部署的版本：
+
+```sh
+git pull --ff-only
+git status --short
+npm install
+npm run instance:validate -- --config instance.json
+npm run instance:compile -- --config instance.json
+```
+
+4. 重新部署 Worker Secrets：
+
+```sh
+npm run deploy -- --secrets-file .dev.vars
+```
+
+這個指令不只更新 Secret，也會重新部署目前 checkout 的程式碼；不要在過期或未檢查的 branch 上執行。
+
+只更新 GitHub Secrets 時，Sync 可能恢復正常，但公開網站仍使用舊憑證；只重新部署 Worker 時，網站可能正常，但排程仍會使用過期的 GitHub Secrets。
+
+### 更換公開網域
+
+從 `workers.dev` 改成自訂網域，或更換既有網域時，至少同步確認：
+
+```text
+RELEASE_SMOKE_ORIGIN
+SNAPSHOT_SMOKE_BASE_URL
+instance.json 的 site.canonicalOrigin（使用固定 origin 時）
+Cloudflare route／custom domain 權限
+```
+
+只改 Cloudflare 網域、沒有更新 Variables，Deploy smoke、snapshot smoke 或 public probe 會繼續打舊網址。
+
+### 暫停城市資料更新
+
+保留網站、但停止自動更新時：
+
+- 停用 **Sync transit snapshots**。
+- 同時停用 **Snapshot window watchdog**，否則它會持續把缺少更新判成 missing／failed。
+- **Public network probe** 可以保留來監測既有網站，但仍會產生公開請求與少量 TDX 即時用量。
+
+### 移除整套服務
+
+刪除 Cloudflare 資源前，先停用：
+
+1. Sync transit snapshots
+2. Snapshot window watchdog
+3. Public network probe
+4. Deploy
+
+確認沒有仍在執行中的相關 run，再依[手動自架教學的移除清單](SELF-HOSTING.md#移除服務與停止可能的費用)刪除 Worker、D1 與 R2。
+
+完成後移除不再需要的 Repository Secrets／Variables，並撤銷：
+
+- Cloudflare deploy API token
+- 快照與監測使用的 Cloudflare API token
+- R2 Access Key ID／Secret Access Key
+- 不再使用的 TDX API 金鑰
+
+刪除 GitHub repository 或 Cloudflare Worker，不會自動撤銷其他平台上的 token，也不會自動清空 R2 bucket。
+
+### 同步 upstream 更新
+
+進入 fork `main` 的任何 push 都會觸發 Deploy，而且 workflow 與 scripts 可以使用已保存的 Secrets。同步 upstream 前，至少檢查：
+
+```text
+.github/workflows/
+scripts/
+package.json
+package-lock.json
+instance.json
+```
+
+最保守的簡單流程：
+
+1. 暫時停用 Deploy 與三個 scheduled workflows。
+2. 使用 GitHub **Sync fork**，確認沒有不能接受的 commits 或衝突後再更新。
+3. 在本機 fork 執行：
 
 ```sh
 git pull --ff-only
@@ -421,23 +497,40 @@ npm install
 npm run instance:validate -- --config instance.json
 npm run instance:compile -- --config instance.json
 npm run instance:provision-plan -- --config instance.json
+npm run check
+git status --short
 ```
 
-最後回到 Actions 檢查這次更新觸發的 Deploy。若 pull 顯示有本機修改、無法 fast-forward 或出現衝突，先確認改過哪些檔案，不要為了更新直接執行 `git reset --hard`。
+4. 重新啟用 Deploy，手動執行並確認成功。
+5. Deploy 成功後，再重新啟用需要的 scheduled workflows。
+6. 依城市狀態補跑停用期間錯過的 Sync。
+
+不要為了消除衝突直接執行 `git reset --hard` 或 force update，避免覆蓋自己的 `instance.json`。GitHub 操作說明見 [Syncing a fork](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/syncing-a-fork)。
 
 ## 完成標誌
 
-完成本篇後應符合：
+### 所有人都應完成
 
 - [ ] repository 根目錄的 `instance.json` 已提交到自己的 fork
 - [ ] `.dev.vars` 和 `.snapshot.env` 沒有提交
-- [ ] Deploy token 使用指定 account，並具備 Workers Scripts Write、D1 Read 與 Workers R2 Storage Read
+- [ ] Deploy token 使用正確 account，且權限符合本篇說明
 - [ ] `RELEASE_SMOKE_ORIGIN` 已設定
-- [ ] Deploy workflow 已啟用並可手動成功執行
-- [ ] Push 到 `main` 後會重新部署 Worker
-- [ ] 若啟用城市資料自動更新：快照 token、六個 Secrets 與 `SNAPSHOT_SMOKE_BASE_URL` 已設定
-- [ ] 若啟用城市資料自動更新：Sync transit snapshots 已啟用，並以 `window_type=manual` 成功發布 `Chiayi`
-- [ ] 若使用 managed profile：排程會處理已啟用城市
-- [ ] 公開網址與城市 API 驗證正常
+- [ ] Deploy workflow 已成功執行
+- [ ] 公開網址可以正常使用
+- [ ] GitHub Actions 通知方式已確認
+
+### 啟用城市資料自動更新時才需要
+
+- [ ] 六個快照 Secrets 與 `SNAPSHOT_SMOKE_BASE_URL` 已設定
+- [ ] 已依需求選擇 `daily` 或 `taipei-weekly-sharded`
+- [ ] Sync transit snapshots 已啟用
+- [ ] 已以 `window_type=manual` 成功發布並驗證 Chiayi
+- [ ] 已知道 scheduled workflow 可能延遲、停用或漏跑，且不會自動補跑
+
+### 啟用 managed 監測時才需要
+
+- [ ] `windowWatchdog`／`publicProbe` 的設定與實際啟用 workflow 一致
+- [ ] 第一個 scheduled window 結束後，watchdog 結果符合預期
+- [ ] Public probe summary 已檢查，沒有被忽略的 `realtime_degraded`
 
 需要回頭檢查第一次部署、費用、刪除服務或一般錯誤時，請回到[部署自己的 Mochi Bus](SELF-HOSTING.md)。

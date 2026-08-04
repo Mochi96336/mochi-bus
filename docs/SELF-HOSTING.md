@@ -234,6 +234,8 @@ Worker
 
 小規模測試可以先照本篇完成。打算長期公開使用時，再看文末的自訂網域與 API rate limit 說明。
 
+---
+
 </details>
 
 ### Starter 是第一次上線路線，不是完整的長期公開設定
@@ -318,20 +320,29 @@ LTS 是 Node.js 的長期支援版本，通常比剛發布的新版本更適合�
 
 </details>
 
+---
+
 </details>
 
 ## 2. 取得程式碼
 
-**操作位置：** VS Code 終端機，之後用 VS Code 開啟 `mochi-bus` 資料夾
+**操作位置：** 先用 VS Code 開啟準備存放專案的上層資料夾，再在該資料夾開啟終端機
 
-在 VS Code 終端機執行：
+`git clone` 會在終端機目前所在的位置建立一個新的 `mochi-bus` 子資料夾。先在 VS Code 選擇 **File → Open Folder**，開啟或建立一個專門放程式專案的資料夾，例如：
+
+- Windows：`C:\Users\你的名稱\Projects` 或 `D:\Projects`
+- macOS / Linux：`~/Projects`
+
+專案放在 C 槽本身沒有問題，但不要直接放在 `C:\` 根目錄、`C:\Windows`、`C:\Program Files` 等系統位置。若電腦有其他磁碟，也可以選擇空間較充足的位置。
+
+開啟上層資料夾後，選擇 **Terminal → New Terminal**，再執行：
 
 ```sh
 git clone https://github.com/Mochi96336/mochi-bus.git
 cd mochi-bus
 ```
 
-`git clone` 會建立一個新的 `mochi-bus` 資料夾；`cd mochi-bus` 會進入它。
+`git clone` 會建立新的 `mochi-bus` 資料夾；`cd mochi-bus` 會進入它，不會把 repository 檔案散落到上層資料夾中。
 
 > [!IMPORTANT]
 > 從現在開始，除非教學另外說明，所有指令都要在 `mochi-bus` 資料夾中執行。
@@ -408,6 +419,8 @@ node_modules/
 
 </details>
 
+---
+
 </details>
 
 ## 3. 登入 Cloudflare
@@ -463,6 +476,8 @@ Wrangler 登入帳號 A
 ```
 
 </details>
+
+---
 
 </details>
 
@@ -532,6 +547,8 @@ repository 的 `.gitignore` 已列出 `.dev.vars` 和 `.snapshot.env`。這是�
 兩個檔案都只放本機，不應提交。
 
 </details>
+
+---
 
 </details>
 
@@ -627,6 +644,8 @@ NO CHANGES WERE APPLIED
 ```
 
 </details>
+
+---
 
 </details>
 
@@ -738,6 +757,8 @@ D1 binding 使用 database ID 精確識別資料庫；R2 binding 使用 bucket n
 
 </details>
 
+---
+
 </details>
 
 ## 7. 建立 R2 發布憑證
@@ -835,6 +856,8 @@ Wrangler 可以逐一上傳物件，但快照發布工具還需要讀取 manifes
 
 </details>
 
+---
+
 </details>
 
 ## 8. 建立 D1 資料表
@@ -888,6 +911,8 @@ Wrangler 會記錄已套用的 migration。再次執行時，只會處理尚未�
 仍應先確認 generated config 指向正確資料庫，因為 `--remote` 操作的是雲端 D1。
 
 </details>
+
+---
 
 </details>
 
@@ -964,6 +989,8 @@ npm run deploy -- --secrets-file .dev.vars
 deploy 不會自動下載並發布 TDX 城市資料。下一步完成城市快照後，網站才會有完整路線、站牌、線形和時刻表。
 
 </details>
+
+---
 
 </details>
 
@@ -1159,6 +1186,8 @@ D1 適合關聯查詢；R2 適合直接讀取完整檔案。
 
 </details>
 
+---
+
 </details>
 
 ## 11. 確認結果
@@ -1214,6 +1243,8 @@ https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 
 </details>
 
+---
+
 </details>
 
 ## 這篇完成後，你現在擁有什麼？
@@ -1256,6 +1287,8 @@ Fork 不是 Cloudflare 部署的必要條件。繼續在目前電腦手動更新
 - 可以重新 clone 的未修改原始碼
 
 Secret 本身應放進密碼管理器，不要提交到 repository。`node_modules/` 可以重裝，`.generated/instance/` 可以由 `instance.json` 重新 compile。
+
+---
 
 </details>
 
@@ -1565,5 +1598,7 @@ Cloudflare Rate Limiting 的計數偏寬鬆、採最終一致，不是全球共�
 - 在 fork 中定期同步 upstream 的 Mochi Bus 更新
 
 Fork、自動部署與自動更新城市資料的完整步驟，請見[用 fork 啟用自動部署與城市資料更新](SELF-HOSTING-AUTOMATION.md)。
+
+---
 
 </details>
