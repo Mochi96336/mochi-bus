@@ -1,0 +1,555 @@
+import { constants } from 'node:fs'
+import { appendFile, lstat, open, realpath } from 'node:fs/promises'
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  hashCanonical,
+  parseStrictJson,
+  sha256,
+  verifyInstanceBundleArtifact,
+} from './bundle-integrity.mjs'
+import { readInstanceBundleArtifact } from './verify-bundle.mjs'
+
+export const MAX_INSTANCE_MANIFEST_BYTES = 1024 * 1024
+
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const FORBIDDEN_CONFIG_DIRECTORIES = new Set(['.git', '.generated', 'node_modules'])
+
+export function parseInstanceBundleFreshnessArguments(argv = process.argv.slice(2)) {
+  const options = {
+    inputPath: null,
+    configPath: null,
+    expectedBundleHash: null,
+    expectedArtifactHash: null,
+    json: false,
+    githubSummary: false,
+    help: false,
+  }
+  const positional = []
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]
+    if (argument === '--json' || argument === '--github-summary' || argument === '--help') {
+      if (argument === '--json') options.json = true
+      else if (argument === '--github-summary') options.githubSummary = true
+      else options.help = true
+      continue
+    }
+
+    const equalsIndex = argument.indexOf('=')
+    const optionName = equalsIndex >= 0 ? argument.slice(0, equalsIndex) : argument
+    let value = equalsIndex >= 0 ? argument.slice(equalsIndex + 1) : null
+    if (!optionName.startsWith('--')) {
+      positional.push(argument)
+      continue
+    }
+    if (!['--input', '--config', '--expect-hash', '--expect-artifact-hash'].includes(optionName)) {
+      throw new Error(`Unknown bundle freshness option: ${optionName}`)
+    }
+    if (value === null) {
+      value = argv[index + 1]
+      if (!value || value.startsWith('--')) throw new Error(`Missing value after ${optionName}`)
+      index += 1
+    }
+    if (!value) throw new Error(`Missing value after ${optionName}=`)
+    if (/[\u0000\r\n]/.test(value)) throw new Error(`${optionName} cannot contain NUL or line breaks`)
+    if (optionName === '--input') options.inputPath = value
+    else if (optionName === '--config') options.configPath = value
+    else if (optionName === '--expect-hash') options.expectedBundleHash = normalizeHash(value, '--expect-hash')
+    else options.expectedArtifactHash = normalizeHash(value, '--expect-artifact-hash')
+  }
+
+  if (!options.inputPath && positional.length > 0) options.inputPath = positional.shift()
+  if (positional.length > 0) throw new Error(`Unexpected argument: ${positional[0]}`)
+  if (!options.help && !options.inputPath) {
+    throw new Error('instance:check-bundle-freshness requires --input <bundle.json> or one positional artifact path')
+  }
+  return Object.freeze(options)
+}
+
+export async function checkInstanceBundleFreshnessFile(options, {
+  cwd = process.cwd(),
+} = {}) {
+  const input = await readInstanceBundleArtifact(options.inputPath, { cwd })
+  const integrity = verifyInstanceBundleArtifact(input.artifact)
+  const checks = integrity.checks.map((check) => ({
+    id: `artifact:${check.id}`,
+    ok: check.ok,
+    detail: check.detail,
+  }))
+  const errors = integrity.errors.map((error) => `artifact:${error}`)
+
+  addExpectedCheck(
+    checks,
+    errors,
+    'expected-bundle-hash',
+    options.expectedBundleHash,
+    integrity.bundleHash,
+  )
+  addExpectedCheck(
+    checks,
+    errors,
+    'expected-artifact-hash',
+    options.expectedArtifactHash,
+    integrity.artifactHash,
+  )
+
+  if (errors.length > 0) {
+    return freshnessReport({
+      status: 'blocked',
+      currentState: 'unavailable',
+      staleKind: null,
+      applyAllowed: false,
+      projectedCutoverReady: false,
+      artifactPath: input.displayPath,
+      configPath: options.configPath ?? input.artifact?.bundle?.instance?.configPath ?? null,
+      instanceId: input.artifact?.bundle?.instance?.id ?? null,
+      bundleHash: integrity.bundleHash,
+      artifactHash: integrity.artifactHash,
+      expectedBundleHash: options.expectedBundleHash,
+      expectedArtifactHash: options.expectedArtifactHash,
+      source: null,
+      baseline: null,
+      target: null,
+      proposal: proposalSummary(input.artifact, false),
+      checks,
+      errors,
+    })
+  }
+
+  const artifact = input.artifact
+  const artifactConfigPath = artifact.bundle.instance.configPath
+  let current
+  try {
+    current = await readCurrentInstanceManifest(
+      options.configPath ?? artifactConfigPath,
+      { cwd },
+    )
+  } catch (error) {
+    const detail = errorMessage(error)
+    checks.push({ id: 'current-manifest-readable', ok: false, detail })
+    errors.push(`current-manifest-readable: ${detail}`)
+    return freshnessReport({
+      status: 'blocked',
+      currentState: 'unavailable',
+      staleKind: null,
+      applyAllowed: false,
+      projectedCutoverReady: false,
+      artifactPath: input.displayPath,
+      configPath: options.configPath ?? artifactConfigPath,
+      instanceId: artifact.bundle.instance.id,
+      bundleHash: integrity.bundleHash,
+      artifactHash: integrity.artifactHash,
+      expectedBundleHash: options.expectedBundleHash,
+      expectedArtifactHash: options.expectedArtifactHash,
+      source: null,
+      baseline: null,
+      target: null,
+      proposal: proposalSummary(artifact, false),
+      checks,
+      errors,
+    })
+  }
+
+  const pathMatches = current.displayPath === artifactConfigPath
+  checks.push({
+    id: 'config-path',
+    ok: pathMatches,
+    detail: pathMatches
+      ? `matched ${artifactConfigPath}`
+      : `artifact expects ${artifactConfigPath}, current path is ${current.displayPath}`,
+  })
+  if (!pathMatches) errors.push(`config-path: artifact expects ${artifactConfigPath}, current path is ${current.displayPath}`)
+
+  const expectedInstanceId = artifact.bundle.instance.id
+  const currentInstanceId = current.manifest?.instanceId ?? null
+  const identityMatches = currentInstanceId === expectedInstanceId
+  checks.push({
+    id: 'instance-id',
+    ok: identityMatches,
+    detail: identityMatches
+      ? `matched ${expectedInstanceId}`
+      : `artifact expects ${expectedInstanceId}, current manifest is ${currentInstanceId ?? 'missing'}`,
+  })
+  if (!identityMatches) errors.push(`instance-id: artifact expects ${expectedInstanceId}, current manifest is ${currentInstanceId ?? 'missing'}`)
+
+  const sourceHash = sha256(current.source)
+  const canonicalHash = hashCanonical(current.manifest)
+  const exactSource = sourceHash === artifact.bundle.hashes.sourceManifestHash
+    && current.source === artifact.evidence.sourceManifest
+  const baselineMatches = canonicalHash === artifact.bundle.hashes.baselineManifestHash
+  const targetMatches = canonicalHash === artifact.bundle.hashes.targetManifestHash
+
+  checks.push({
+    id: 'source-bytes',
+    ok: exactSource,
+    detail: exactSource
+      ? `matched ${sourceHash}`
+      : `expected ${artifact.bundle.hashes.sourceManifestHash}, received ${sourceHash}`,
+  })
+  checks.push({
+    id: 'baseline-manifest',
+    ok: baselineMatches,
+    detail: baselineMatches
+      ? `matched ${canonicalHash}`
+      : `expected ${artifact.bundle.hashes.baselineManifestHash}, received ${canonicalHash}`,
+  })
+
+  if (!pathMatches || !identityMatches) {
+    return freshnessReport({
+      status: 'blocked',
+      currentState: targetMatches ? 'target' : baselineMatches ? 'baseline' : 'diverged',
+      staleKind: null,
+      applyAllowed: false,
+      projectedCutoverReady: false,
+      artifactPath: input.displayPath,
+      configPath: current.displayPath,
+      instanceId: expectedInstanceId,
+      bundleHash: integrity.bundleHash,
+      artifactHash: integrity.artifactHash,
+      expectedBundleHash: options.expectedBundleHash,
+      expectedArtifactHash: options.expectedArtifactHash,
+      source: sourceSummary(artifact, sourceHash, exactSource),
+      baseline: baselineSummary(artifact, canonicalHash, baselineMatches),
+      target: targetSummary(artifact, targetMatches),
+      proposal: proposalSummary(artifact, false),
+      checks,
+      errors,
+    })
+  }
+
+  const status = exactSource && baselineMatches ? 'fresh' : 'stale'
+  const currentState = targetMatches ? 'target' : baselineMatches ? 'baseline' : 'diverged'
+  const changed = artifact.bundle.proposal.changed === true
+  const staleKind = status === 'fresh'
+    ? null
+    : targetMatches && changed
+      ? 'already_applied'
+      : baselineMatches
+        ? 'formatting_drift'
+        : 'semantic_drift'
+  const applyAllowed = status === 'fresh' && changed
+  const projectedCutoverReady = artifact.bundle.cutoverReady === true
+    && artifact.bundle.provisioningDraft !== true
+
+  return freshnessReport({
+    status,
+    currentState,
+    staleKind,
+    applyAllowed,
+    projectedCutoverReady,
+    artifactPath: input.displayPath,
+    configPath: current.displayPath,
+    instanceId: expectedInstanceId,
+    bundleHash: integrity.bundleHash,
+    artifactHash: integrity.artifactHash,
+    expectedBundleHash: options.expectedBundleHash,
+    expectedArtifactHash: options.expectedArtifactHash,
+    source: sourceSummary(artifact, sourceHash, exactSource),
+    baseline: baselineSummary(artifact, canonicalHash, baselineMatches),
+    target: targetSummary(artifact, targetMatches),
+    proposal: proposalSummary(artifact, applyAllowed),
+    checks,
+    errors: status === 'fresh'
+      ? errors
+      : [...errors, freshnessFailure(staleKind)],
+  })
+}
+
+export async function readCurrentInstanceManifest(value, {
+  cwd = process.cwd(),
+  maxBytes = MAX_INSTANCE_MANIFEST_BYTES,
+  afterRead = null,
+} = {}) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Current manifest path is required')
+  if (/[\u0000\r\n]/.test(value)) throw new Error('Current manifest path cannot contain NUL or line breaks')
+  if (isAbsolute(value)) throw new Error('Current manifest path must be repository-relative')
+
+  const rootPath = resolve(cwd)
+  const configPath = resolve(rootPath, value)
+  const relativePath = relative(rootPath, configPath)
+  if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new Error('Current manifest path must stay inside the repository working directory')
+  }
+  const shown = relativePath.split(sep).join('/') || '.'
+  if (extname(configPath).toLowerCase() !== '.json') {
+    throw new Error('Current manifest path must use a .json extension')
+  }
+  const segments = shown.split('/')
+  if (segments.some((segment) => FORBIDDEN_CONFIG_DIRECTORIES.has(segment))) {
+    throw new Error('Current manifest path cannot read from .git, .generated or node_modules')
+  }
+
+  const [rootRealPath, parentRealPath] = await Promise.all([
+    realpath(rootPath),
+    realpath(resolve(configPath, '..')),
+  ])
+  const parentDisplay = relative(rootRealPath, parentRealPath)
+  if (parentDisplay === '..' || parentDisplay.startsWith(`..${sep}`)) {
+    throw new Error('Current manifest parent resolves outside the repository working directory')
+  }
+
+  const pathBefore = await lstat(configPath)
+  assertRegularManifestPath(pathBefore)
+
+  let handle
+  try {
+    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0
+    handle = await open(configPath, constants.O_RDONLY | noFollow)
+    const handleBefore = await handle.stat()
+    assertRegularManifestPath(handleBefore)
+    if (!sameFileIdentity(pathBefore, handleBefore)) {
+      throw new Error('Current manifest path changed before it was opened')
+    }
+    if (handleBefore.size === 0) throw new Error('Current manifest is empty')
+    if (handleBefore.size > maxBytes) throw new Error(`Current manifest exceeds the ${maxBytes}-byte read limit`)
+
+    const bytes = await handle.readFile()
+    const handleAfter = await handle.stat()
+    if (typeof afterRead === 'function') await afterRead({ configPath })
+    const pathAfter = await lstat(configPath)
+    assertRegularManifestPath(pathAfter)
+    if (!sameFileIdentity(handleBefore, handleAfter)
+      || !sameFileIdentity(handleAfter, pathAfter)
+      || handleBefore.size !== handleAfter.size
+      || handleAfter.size !== pathAfter.size
+      || bytes.length !== handleBefore.size) {
+      throw new Error('Current manifest path or content changed while it was being read')
+    }
+
+    let source
+    try {
+      source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+    } catch {
+      throw new Error('Current manifest must contain valid UTF-8')
+    }
+    if (Buffer.byteLength(source, 'utf8') !== bytes.length) {
+      throw new Error('Current manifest UTF-8 bytes did not round-trip exactly')
+    }
+    const manifest = parseStrictJson(source)
+    if (!isPlainObject(manifest)) throw new Error('Current manifest must parse to a JSON object')
+    return deepFreeze({
+      path: configPath,
+      displayPath: shown,
+      source,
+      manifest,
+    })
+  } finally {
+    await handle?.close()
+  }
+}
+
+export function renderInstanceBundleFreshnessText(report) {
+  const lines = [
+    `Mochi Bus change-bundle freshness: ${report.status.toUpperCase()}`,
+    `Artifact: ${report.artifactPath}`,
+    `Config: ${report.configPath ?? 'unavailable'}`,
+    `Instance: ${report.instanceId ?? 'unknown'}`,
+    `Bundle SHA-256: ${report.bundleHash ?? 'unavailable'}`,
+    `Artifact SHA-256: ${report.artifactHash ?? 'unavailable'}`,
+    `Current state: ${report.currentState}`,
+    `Apply allowed: ${report.applyAllowed ? 'yes' : 'no'}`,
+    `Projected cutover unblocked: ${report.projectedCutoverReady ? 'yes' : 'no'}`,
+  ]
+  if (report.staleKind) lines.push(`Staleness: ${report.staleKind}`)
+  if (report.applyAllowed && report.proposal.applyCommand) {
+    lines.push('', `Reviewed apply command: ${report.proposal.applyCommand}`)
+  }
+  if (report.errors.length > 0) {
+    lines.push('', report.status === 'blocked' ? 'Blockers:' : 'Reasons:')
+    for (const error of report.errors) lines.push(`x ${error}`)
+  }
+  lines.push('', 'NO FILES WERE CHANGED')
+  return `${lines.join('\n')}\n`
+}
+
+export function renderInstanceBundleFreshnessMarkdown(report) {
+  const lines = [
+    '## Instance change-bundle freshness',
+    '',
+    `**${report.status.toUpperCase()}** · ${markdownCodeSpan(report.instanceId ?? 'unknown instance')}`,
+    '',
+    `- Artifact: ${markdownCodeSpan(report.artifactPath)}`,
+    `- Config: ${markdownCodeSpan(report.configPath ?? 'unavailable')}`,
+    `- Bundle SHA-256: ${markdownCodeSpan(report.bundleHash ?? 'unavailable')}`,
+    `- Artifact SHA-256: ${markdownCodeSpan(report.artifactHash ?? 'unavailable')}`,
+    `- Current state: ${markdownCodeSpan(report.currentState)}`,
+    `- Apply allowed: **${report.applyAllowed ? 'yes' : 'no'}**`,
+    `- Projected cutover unblocked: **${report.projectedCutoverReady ? 'yes' : 'no'}**`,
+  ]
+  if (report.staleKind) lines.push(`- Staleness: ${markdownCodeSpan(report.staleKind)}`)
+  if (report.applyAllowed && report.proposal.applyCommand) {
+    lines.push('', '### Reviewed apply command', '', markdownCodeSpan(report.proposal.applyCommand))
+  }
+  if (report.errors.length > 0) {
+    lines.push('', report.status === 'blocked' ? '### Blockers' : '### Reasons', '')
+    for (const error of report.errors) lines.push(`- ${markdownCodeSpan(error)}`)
+  }
+  lines.push('', '> Read-only gate. The artifact, manifest, generated files and remote resources were not changed.', '')
+  return `${lines.join('\n')}\n`
+}
+
+export function instanceBundleFreshnessUsage() {
+  return `Check whether a reviewed Mochi Bus change-bundle artifact still matches the current manifest.\n\nUsage:\n  npm run instance:check-bundle-freshness -- --input <bundle.json>\n  npm run instance:check-bundle-freshness -- <bundle.json> --config <manifest.json>\n\nOptions:\n  --input <path>                  Self-contained bundle artifact\n  --config <path>                 Current manifest; defaults to the artifact configPath\n  --expect-hash <sha256>          Require the reviewed bundle SHA-256\n  --expect-artifact-hash <sha256> Require the exact artifact SHA-256\n  --json                          Print the complete freshness report\n  --github-summary                Append the report to GITHUB_STEP_SUMMARY\n  --help                          Show this help\n\nThe command is read-only. Fresh exits successfully; stale or blocked exits nonzero after printing the report.\n`
+}
+
+export async function main({
+  argv = process.argv.slice(2),
+  env = process.env,
+  cwd = process.cwd(),
+  stdout = process.stdout,
+} = {}) {
+  const options = parseInstanceBundleFreshnessArguments(argv)
+  if (options.help) {
+    stdout.write(instanceBundleFreshnessUsage())
+    return null
+  }
+
+  const report = await checkInstanceBundleFreshnessFile(options, { cwd })
+  stdout.write(options.json
+    ? `${JSON.stringify(report, null, 2)}\n`
+    : renderInstanceBundleFreshnessText(report))
+
+  if (options.githubSummary) {
+    const summaryPath = typeof env.GITHUB_STEP_SUMMARY === 'string' ? env.GITHUB_STEP_SUMMARY.trim() : ''
+    if (!summaryPath) throw new Error('--github-summary requires GITHUB_STEP_SUMMARY')
+    await appendFile(summaryPath, renderInstanceBundleFreshnessMarkdown(report), 'utf8')
+  }
+  if (report.status !== 'fresh') {
+    const error = new Error(`Change-bundle freshness gate returned ${report.status}`)
+    error.reported = true
+    throw error
+  }
+  return report
+}
+
+function sourceSummary(artifact, currentHash, matched) {
+  return {
+    expectedHash: artifact.bundle.hashes.sourceManifestHash,
+    currentHash,
+    matched,
+  }
+}
+
+function baselineSummary(artifact, currentHash, matched) {
+  return {
+    expectedHash: artifact.bundle.hashes.baselineManifestHash,
+    currentHash,
+    matched,
+  }
+}
+
+function targetSummary(artifact, currentMatched) {
+  return {
+    hash: artifact.bundle.hashes.targetManifestHash,
+    currentMatched,
+  }
+}
+
+function proposalSummary(artifact, includeApply) {
+  const proposal = artifact?.bundle?.proposal
+  return {
+    changed: proposal?.changed === true,
+    provisioningDraft: artifact?.bundle?.provisioningDraft === true,
+    cutoverReady: artifact?.bundle?.cutoverReady === true,
+    previewCommand: typeof proposal?.previewCommand === 'string' ? proposal.previewCommand : null,
+    applyCommand: includeApply && typeof proposal?.applyCommand === 'string'
+      ? proposal.applyCommand
+      : null,
+  }
+}
+
+function freshnessReport(values) {
+  const checks = values.checks
+  const errors = values.errors
+  return deepFreeze({
+    schemaVersion: 1,
+    ok: values.status === 'fresh',
+    status: values.status,
+    currentState: values.currentState,
+    staleKind: values.staleKind,
+    applyAllowed: values.applyAllowed,
+    projectedCutoverReady: values.projectedCutoverReady,
+    artifactPath: values.artifactPath,
+    configPath: values.configPath,
+    instanceId: values.instanceId,
+    bundleHash: values.bundleHash,
+    artifactHash: values.artifactHash,
+    expectedBundleHash: values.expectedBundleHash,
+    expectedArtifactHash: values.expectedArtifactHash,
+    source: values.source,
+    baseline: values.baseline,
+    target: values.target,
+    proposal: values.proposal,
+    summary: {
+      passed: checks.filter((item) => item.ok).length,
+      failed: checks.filter((item) => !item.ok).length,
+      total: checks.length,
+    },
+    checks,
+    errors,
+  })
+}
+
+function addExpectedCheck(checks, errors, id, expected, actual) {
+  if (!expected) return
+  const ok = expected === actual
+  const detail = ok
+    ? `matched ${expected}`
+    : `expected ${expected}, received ${actual ?? 'unavailable'}`
+  checks.push({ id, ok, detail })
+  if (!ok) errors.push(`${id}: ${detail}`)
+}
+
+function normalizeHash(value, optionName) {
+  const normalized = String(value).trim().toLowerCase()
+  if (!SHA256_PATTERN.test(normalized)) {
+    throw new Error(`${optionName} must be a 64-character SHA-256 hex digest`)
+  }
+  return normalized
+}
+
+function freshnessFailure(kind) {
+  if (kind === 'already_applied') return 'current-manifest: target manifest is already present; do not apply the reviewed command again'
+  if (kind === 'formatting_drift') return 'current-manifest: source bytes changed even though canonical manifest content still matches the reviewed baseline'
+  return 'current-manifest: canonical manifest content differs from both the reviewed baseline and target'
+}
+
+function assertRegularManifestPath(stat) {
+  if (stat.isSymbolicLink?.()) throw new Error('Current manifest cannot be a symbolic link')
+  if (!stat.isFile()) throw new Error('Current manifest must be a regular file')
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function markdownCodeSpan(value) {
+  const text = String(value).replace(/\r\n?|\n/g, ' ')
+  const runs = text.match(/`+/g) ?? []
+  const fence = '`'.repeat(Math.max(0, ...runs.map((run) => run.length)) + 1)
+  const padded = text.startsWith('`') || text.endsWith('`') || text.startsWith(' ') || text.endsWith(' ')
+  return `${fence}${padded ? ` ${text} ` : text}${fence}`
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  Object.freeze(value)
+  for (const child of Object.values(value)) deepFreeze(child)
+  return value
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch((error) => {
+    if (!error?.reported) process.stderr.write(`${errorMessage(error)}\n`)
+    process.exitCode = 1
+  })
+}
