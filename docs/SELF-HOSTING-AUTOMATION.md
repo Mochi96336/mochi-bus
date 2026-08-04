@@ -50,18 +50,24 @@ Fork 是放在自己帳號下、可以獨立設定 Secrets 與 Actions 的 repos
 
 ### 建議重新 clone fork
 
-操作位置：VS Code 終端機
+操作位置：先用 VS Code 開啟準備存放專案的上層資料夾，再在該資料夾開啟終端機
 
 最容易理解的方式，是把 fork 下載到另一個資料夾，不直接改動原本完成手動部署的資料夾。
 
-把 `YOUR_GITHUB_USERNAME` 換成自己的 GitHub 使用者名稱：
+先在 VS Code 選擇 **File → Open Folder**，開啟原本 `mochi-bus` 所在的上層專案資料夾，例如：
+
+- Windows：`C:\Users\你的名稱\Projects` 或 `D:\Projects`
+- macOS / Linux：`~/Projects`
+
+接著選擇 **Terminal → New Terminal**。把 `YOUR_GITHUB_USERNAME` 換成自己的 GitHub 使用者名稱，再執行：
 
 ```sh
-cd ..
 git clone https://github.com/YOUR_GITHUB_USERNAME/mochi-bus.git mochi-bus-fork
 cd mochi-bus-fork
 npm install
 ```
+
+`git clone` 會在終端機目前位置建立新的 `mochi-bus-fork` 子資料夾，不會把 repository 檔案散落到上層資料夾，也不需要先執行 `cd ..`。
 
 接著把原本資料夾中的 `instance.json` 複製到新資料夾根目錄。
 
@@ -190,6 +196,20 @@ npm run deploy -- --secrets-file .dev.vars
 
 之後的 GitHub Deploy workflow 不會讀取你電腦裡的 `.dev.vars`。既有 Worker Secret 會繼續保留；只有更換 TDX 憑證時，才需要另外更新 Worker Secrets。
 
+### 更換 TDX 憑證時要更新兩個位置
+
+同一組 TDX 憑證會分別供公開 Worker 與快照 workflow 使用。日後更換 Client ID 或 Client Secret 時，兩邊都要更新：
+
+1. 在 fork 的 GitHub Actions Repository Secrets 更新 `TDX_CLIENT_ID` 與 `TDX_CLIENT_SECRET`。
+2. 更新本機 `.dev.vars` 內的同名欄位。
+3. 在本機 fork 資料夾重新執行：
+
+```sh
+npm run deploy -- --secrets-file .dev.vars
+```
+
+只更新 GitHub Secrets 時，快照可能恢復正常，但公開網站查詢即時到站仍可能使用舊憑證；只重新部署 Worker 時，網站可能正常，但排程仍會因 GitHub Secrets 過期而失敗。
+
 ## 5. 設定城市資料自動更新
 
 > 只需要 Push 後自動部署 Worker、不需要城市資料排程時，可以跳過第 5、6 節，直接前往第 7 節。保留 `profile: "starter"` 與 `snapshotSchedule: "manual"`，也不需要建立快照 workflow 的 Token、Secrets 或 `SNAPSHOT_SMOKE_BASE_URL`。
@@ -247,9 +267,9 @@ SNAPSHOT_SMOKE_BASE_URL=https://你的公開網域
 > [!WARNING]
 > **TDX 免費額度不保證足以每天更新全台資料。**
 >
-> 快照工具會下載各個啟用城市的路線、站牌、站序、線形與班表。TDX 公車 API 目前同時計算呼叫次數與傳輸量，頁面標示的換算方式為每 1 點 1,500 次或 150 MB；實際扣點、存取頻率與可用額度仍依訂閱方案及 TDX 會員中心顯示為準。
+> 快照工具會下載各個啟用城市的路線、站牌、站序、線形與班表。TDX 公車 API 說明列有計次與計量兩種換算基準，目前分別為每 1 點 1,500 次與 150 MB；實際扣點方式、存取頻率與可用額度仍依訂閱方案及 TDX 會員中心顯示為準。
 >
-> 若把全台縣市都加入 `enabledCities` 並設定每日更新，資料量、重試或其他 TDX API 使用都可能讓免費額度不足。建議先從實際需要的少數城市開始，在 TDX 會員中心觀察用量後再逐步增加；需要長期每日更新全台時，應先評估適合的 TDX 訂閱方案。
+> 若把全台縣市都加入 `enabledCities` 並設定每日更新，資料量、重試或其他 TDX API 使用都可能讓免費額度不足。建議先從實際需要的少數城市開始，在 TDX 會員中心觀察用量後再逐步增加；城市較多時，優先考慮每週分片排程。
 >
 > TDX 的額度、計點與方案可能調整，設定前請查看 [TDX 公車 API 說明](https://tdx.transportdata.tw/api-service/swagger) 與會員中心的最新資訊。
 
@@ -260,16 +280,30 @@ Starter profile 強制使用：
 "snapshotSchedule": "manual"
 ```
 
-即使 fork 已建立、Secrets 也全部填好，`manual` 仍代表不會把城市加入每日自動發布。
+即使 fork 已建立、Secrets 也全部填好，`manual` 仍代表不會自動發布城市快照。
 
-要讓 `enabledCities` 中的城市加入每日排程，必須同時修改：
+Managed profile 可以依城市數量選擇兩種自動排程：
+
+| `snapshotSchedule` | 行為 | 建議用途 |
+|---|---|---|
+| `daily` | 每天處理所有 `enabledCities` | 只有少數城市，而且確實需要每日更新 |
+| `taipei-weekly-sharded` | 將啟用城市分散在一週七天，每個城市每週處理一次 | 城市較多或接近全台 |
+
+少數城市需要每日更新時：
 
 ```json
 "profile": "managed",
 "snapshotSchedule": "daily"
 ```
 
-只改成 `daily`、卻保留 `profile: "starter"`，會在 `instance:validate` 直接失敗。
+城市較多時，建議改用：
+
+```json
+"profile": "managed",
+"snapshotSchedule": "taipei-weekly-sharded"
+```
+
+只改成自動排程、卻保留 `profile: "starter"`，會在 `instance:validate` 直接失敗。
 
 修改後執行：
 
@@ -323,6 +357,9 @@ git config --global user.email "你的 GitHub 已驗證 email"
 
 公開 fork 的 scheduled workflows 預設停用；公開 repository 連續 60 天沒有活動時，排程也可能再次被 GitHub 自動停用。之後發現城市資料沒有更新時，先到 Actions 確認 **Sync transit snapshots** 仍為 enabled。詳細行為可參考 [GitHub 的 workflow 啟用說明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)。
 
+> [!NOTE]
+> `Sync transit snapshots` 預定每天在台北時間 03:17 啟動。GitHub Actions 的排程可能因平台負載延遲，不保證精確在該分鐘開始。使用 `taipei-weekly-sharded` 時，workflow 仍每天啟動，但只處理當天被分配到的啟用城市。
+
 > 若你在設定 Secrets 前就提早啟用 Actions，第一次 push 可能已產生一個失敗的 Deploy。這不代表原本線上的 Worker 被刪除；完成本篇設定後，手動重新執行即可。
 
 ## 8. 第一次驗證已啟用的 workflows
@@ -354,7 +391,9 @@ git config --global user.email "你的 GitHub 已驗證 email"
 /api/v1/map/routes?city=Chiayi
 ```
 
-完成後再讓 `managed` 的每日排程持續運作。
+每次把新的城市加入 `enabledCities` 後，都先用 `window_type=manual` 單獨成功執行一次，再交給 `daily` 或 `taipei-weekly-sharded` 排程。不要一次加入許多城市後，只用 Chiayi 判斷全部城市都能正常發布。
+
+完成後再讓 managed profile 依選定的排程持續運作。
 
 ## 9. 兩種自動化各自失敗時怎麼判斷
 
@@ -397,7 +436,29 @@ Fork 不會自動替你完成：
 
 Fork 的作用是提供長期維護與自動化的容器，不是按一下就完成所有部署。
 
-## 11. 同步 Mochi Bus upstream 更新
+## 11. 停止自動化或移除服務
+
+只想停止城市資料自動更新、但保留網站時，可以停用 **Sync transit snapshots** workflow；Deploy workflow 與目前線上的 Worker 不受影響。
+
+準備刪除 Cloudflare 資源或停止整套服務時，先到自己的 fork：
+
+1. 選擇 **Actions → Sync transit snapshots**。
+2. 從右上角的 `…` 選單選擇 **Disable workflow**。
+3. 再到 **Actions → Deploy**，同樣選擇 **Disable workflow**。
+4. 確認沒有仍在執行中的相關 workflow run。
+
+先停用 workflows，可以避免刪除 Worker、D1 或 R2 後，排程仍繼續啟動並反覆失敗或存取 TDX／Cloudflare。
+
+接著依[手動自架教學的移除服務清單](SELF-HOSTING.md#移除服務與停止可能的費用)刪除不再使用的 Cloudflare 資源。完成後再移除 fork 中不再需要的 Repository Secrets 與 Variables，並撤銷：
+
+- Cloudflare deploy API token
+- 快照使用的 Cloudflare API token
+- R2 Access Key ID／Secret Access Key
+- 不再使用的 TDX API 金鑰
+
+刪除 GitHub repository 或 Cloudflare Worker，不會自動撤銷其他平台上的 token，也不會自動清空 R2 bucket。
+
+## 12. 同步 Mochi Bus upstream 更新
 
 自己的 fork 和原始 Mochi Bus 是兩個 repository。原始專案更新後，fork 不會自動合併所有修改。
 
@@ -445,7 +506,9 @@ npm run instance:provision-plan -- --config instance.json
 - [ ] Deploy workflow 已啟用並可手動成功執行
 - [ ] Push 到 `main` 後會重新部署 Worker
 - [ ] 若啟用城市資料自動更新：快照 token、六個 Secrets 與 `SNAPSHOT_SMOKE_BASE_URL` 已設定
+- [ ] 若啟用城市資料自動更新：已依城市數量選擇 `daily` 或 `taipei-weekly-sharded`
 - [ ] 若啟用城市資料自動更新：Sync transit snapshots 已啟用，並以 `window_type=manual` 成功發布 `Chiayi`
+- [ ] 每個新加入的城市都已先手動成功發布一次
 - [ ] 若使用 managed profile：排程會處理已啟用城市
 - [ ] 公開網址與城市 API 驗證正常
 
