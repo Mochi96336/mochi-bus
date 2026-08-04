@@ -33,12 +33,20 @@ const arrivals = [
   },
 ]
 
-test('map deep link stays covered and returning restores the stable home frame', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
+async function installBoard(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript((savedBoard) => {
     localStorage.setItem('mochi.bus.boards.v2', JSON.stringify([savedBoard]))
     localStorage.setItem('mochi.bus.activeBoard.v2', savedBoard.id)
   }, board)
+}
+
+async function mockHomeArrivals(page: import('@playwright/test').Page): Promise<void> {
+  await page.route('**/api/v1/map/place/*/arrivals?*', (route) => route.fulfill({ json: { routes: arrivals } }))
+}
+
+test('map deep link stays covered and returning restores the stable home frame', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installBoard(page)
 
   let homeArrivalsCalls = 0
   let releaseHomeRefresh: (() => void) | undefined
@@ -104,4 +112,50 @@ test('map deep link stays covered and returning restores the stable home frame',
 
   await expect.poll(() => Boolean(releaseHomeRefresh)).toBe(true)
   releaseHomeRefresh?.()
+})
+
+test('a Back navigation releases an obsolete map boot gate immediately', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installBoard(page)
+  await mockHomeArrivals(page)
+  await page.route('**/api/v1/map/place/NWT%3Ajing-an?city=NewTaipei', (route) => route.fulfill({ json: {
+    place: { placeId: 'NWT:jing-an', name: '捷運景安站', latitude: 24.993, longitude: 121.505, distanceMeters: 0 },
+  } }))
+  await page.route('**/api/v1/map/place/NWT%3Ajing-an/arrivals?city=NewTaipei', async () => {
+    await new Promise(() => {})
+  })
+
+  await page.goto('/')
+  await expect(page.locator('.eta-value')).toHaveText(['5', '12'])
+  await page.getByRole('link', { name: '地圖' }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-mochi-map-booting', 'true')
+
+  await page.goBack()
+  await expect(page).toHaveURL(/\/map(?:\?city=NewTaipei)?$/)
+  await expect(page.locator('html')).not.toHaveAttribute('data-mochi-map-booting', 'true', { timeout: 1_000 })
+})
+
+test('a fresh home document restores the saved frame before eta.js loads', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installBoard(page)
+  await mockHomeArrivals(page)
+
+  await page.goto('/')
+  await expect(page.locator('.eta-value')).toHaveText(['5', '12'])
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('mochi.bus.home-view.v2'))).not.toBeNull()
+
+  let releaseEtaModule: (() => void) | undefined
+  await page.route('**/assets/eta.js', async (route) => {
+    await new Promise<void>((resolve) => { releaseEtaModule = resolve })
+    await route.continue()
+  })
+
+  await page.reload({ waitUntil: 'commit' })
+  await expect.poll(() => Boolean(releaseEtaModule)).toBe(true)
+  await expect(page.locator('.skeleton-row')).toHaveCount(0)
+  await expect(page.locator('.eta-value')).toHaveText(['5', '12'])
+  await expect(page.locator('html')).toHaveAttribute('data-mochi-home-snapshot', 'restored')
+
+  releaseEtaModule?.()
+  await page.waitForLoadState('load')
 })
