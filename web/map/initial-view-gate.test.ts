@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { drawerKeyMatchesMapView, initialMapViewIsSettled } from './initial-view-gate'
+import {
+  drawerKeyMatchesMapView,
+  initialMapViewIsSettled,
+  tileBatchIsReady,
+} from './initial-view-gate'
 
 describe('initial map view gate', () => {
   it('does not reveal a place deep link while the overview or catalogue is visible', () => {
@@ -25,5 +29,11 @@ describe('initial map view gate', () => {
       drawerKey: 'place:Taipei:TPE:123',
       statusText: '',
     })).toBe(true)
+  })
+
+  it('keeps the gate closed until the active tile batch has finished', () => {
+    expect(tileBatchIsReady({ loaded: 0, pending: 0 })).toBe(false)
+    expect(tileBatchIsReady({ loaded: 4, pending: 2 })).toBe(false)
+    expect(tileBatchIsReady({ loaded: 6, pending: 0 })).toBe(true)
   })
 })
