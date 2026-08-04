@@ -17,6 +17,7 @@ describe('return-home entry validation', () => {
       raw,
       currentPath: '/map',
       state: { __mochiReturnHomeToken: marker.token },
+      historyLength: 1,
       referrer: '',
       origin: 'https://bus.example',
       now: 2_000,
@@ -25,6 +26,7 @@ describe('return-home entry validation', () => {
       raw,
       currentPath: '/map',
       state: { __mochiReturnHomeToken: 'another-token' },
+      historyLength: 2,
       referrer: '',
       origin: 'https://bus.example',
       now: 2_000,
@@ -36,6 +38,7 @@ describe('return-home entry validation', () => {
       raw,
       currentPath: '/map',
       state: null,
+      historyLength: 2,
       referrer: 'https://bus.example/',
       origin: 'https://bus.example',
       now: 2_000,
@@ -44,6 +47,7 @@ describe('return-home entry validation', () => {
       raw,
       currentPath: '/map',
       state: null,
+      historyLength: 2,
       referrer: 'https://bus.example/route?city=NewTaipei&route=307',
       origin: 'https://bus.example',
       now: 2_000,
@@ -52,7 +56,20 @@ describe('return-home entry validation', () => {
       raw,
       currentPath: '/map',
       state: null,
+      historyLength: 2,
       referrer: 'https://other.example/',
+      origin: 'https://bus.example',
+      now: 2_000,
+    })).toBe(false)
+  })
+
+  it('rejects inherited storage in a new tab without a previous entry', () => {
+    expect(returnHomeEntryIsTrusted({
+      raw,
+      currentPath: '/map',
+      state: null,
+      historyLength: 1,
+      referrer: 'https://bus.example/',
       origin: 'https://bus.example',
       now: 2_000,
     })).toBe(false)
@@ -63,6 +80,7 @@ describe('return-home entry validation', () => {
       raw,
       currentPath: '/setup',
       state: { __mochiReturnHomeToken: marker.token },
+      historyLength: 2,
       referrer: 'https://bus.example/',
       origin: 'https://bus.example',
       now: 2_000,
