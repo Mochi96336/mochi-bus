@@ -130,3 +130,11 @@ npm run instance:apply-bundle -- \
 The JSON result includes readiness, write status, hashes, reviewed changes, warnings, deployment projection and the complete freshness report. It deliberately omits the internal source bytes, target bytes, file identity and temporary-write state.
 
 A blocked plan is printed before the command exits nonzero. A ready preview exits successfully without writing. A successful `--write` exits successfully only after post-write verification passes.
+
+## Apply through an isolated Draft PR
+
+Repository operators can use the manual `Apply reviewed instance bundle to Draft PR` workflow instead of writing a local checkout directly.
+
+The workflow downloads one exact review artifact from one same-repository review run, requires both trusted hashes, invokes this same atomic apply boundary, preserves apply evidence, verifies that exactly one manifest changed, and pushes only a deterministic isolated branch before opening a Draft PR.
+
+It does not compile or deploy, and a workflow-created PR is not a claim that formal repository CI ran. See [Apply a reviewed instance bundle to a Draft PR](./INSTANCE_BUNDLE_APPLY_PR_WORKFLOW.md) for the complete trust, Git, evidence and CI boundaries.
