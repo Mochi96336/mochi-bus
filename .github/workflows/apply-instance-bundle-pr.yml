@@ -98,7 +98,6 @@ jobs:
         with:
           name: instance-bundle-apply-${{ steps.apply.outputs.instance_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            .generated/apply-review-run.json
             .generated/apply-input
             .generated/apply-pr
           if-no-files-found: error
