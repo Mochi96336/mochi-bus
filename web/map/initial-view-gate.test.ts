@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   drawerKeyMatchesMapView,
   initialMapViewIsSettled,
+  mapGateTargetChanged,
   tileBatchIsReady,
 } from './initial-view-gate'
 
@@ -29,6 +30,21 @@ describe('initial map view gate', () => {
       drawerKey: 'place:Taipei:TPE:123',
       statusText: '',
     })).toBe(true)
+  })
+
+  it('releases the old gate when navigation changes the target URL', () => {
+    expect(mapGateTargetChanged(
+      'place',
+      new URLSearchParams('city=NewTaipei&place=NWT%3Ajing-an'),
+    )).toBe(false)
+    expect(mapGateTargetChanged(
+      'place',
+      new URLSearchParams('city=NewTaipei'),
+    )).toBe(true)
+    expect(mapGateTargetChanged(
+      'place',
+      new URLSearchParams(),
+    )).toBe(true)
   })
 
   it('keeps the gate closed until the active tile batch has finished', () => {
