@@ -244,6 +244,15 @@ SNAPSHOT_SMOKE_BASE_URL=https://你的公開網域
 
 ## 6. 從 starter 升級為 managed 排程（需要自動更新城市資料才做）
 
+> [!WARNING]
+> **TDX 免費額度不保證足以每天更新全台資料。**
+>
+> 快照工具會下載各個啟用城市的路線、站牌、站序、線形與班表。TDX 公車 API 目前同時計算呼叫次數與傳輸量，頁面標示的換算方式為每 1 點 1,500 次或 150 MB；實際扣點、存取頻率與可用額度仍依訂閱方案及 TDX 會員中心顯示為準。
+>
+> 若把全台縣市都加入 `enabledCities` 並設定每日更新，資料量、重試或其他 TDX API 使用都可能讓免費額度不足。建議先從實際需要的少數城市開始，在 TDX 會員中心觀察用量後再逐步增加；需要長期每日更新全台時，應先評估適合的 TDX 訂閱方案。
+>
+> TDX 的額度、計點與方案可能調整，設定前請查看 [TDX 公車 API 說明](https://tdx.transportdata.tw/api-service/swagger) 與會員中心的最新資訊。
+
 Starter profile 強制使用：
 
 ```json
