@@ -9,6 +9,7 @@ type ReturnHomeEntryOptions = {
   raw: string | null
   currentPath: string
   state: unknown
+  historyLength: number
   referrer: string
   origin: string
   now?: number
@@ -25,6 +26,10 @@ export function returnHomeEntryIsTrusted(options: ReturnHomeEntryOptions): boole
   if (!marker || marker.targetPath !== options.currentPath) return false
   if (historyToken(options.state) === marker.token) return true
 
+  // A new tab may inherit sessionStorage and document.referrer from the opener,
+  // but it has no previous home entry to return to. Only trust the referrer path
+  // when this browsing context actually has an earlier history entry.
+  if (!Number.isInteger(options.historyLength) || options.historyLength <= 1) return false
   try {
     const referrer = new URL(options.referrer)
     return referrer.origin === options.origin && referrer.pathname === marker.sourcePath
@@ -36,12 +41,14 @@ export function returnHomeEntryIsTrusted(options: ReturnHomeEntryOptions): boole
 /**
  * A session marker alone does not prove that this map/setup document came from
  * the tracked home entry. Reload/Forward carry the token in history.state;
- * a fresh cross-document navigation must carry a same-origin home referrer.
+ * a fresh cross-document navigation must carry a same-origin home referrer and
+ * an actual earlier history entry in this browsing context.
  */
 export function discardUntrustedReturnHomeEntry(options: {
   storage?: StorageLike
   currentPath?: string
   state?: unknown
+  historyLength?: number
   referrer?: string
   origin?: string
   now?: number
@@ -58,6 +65,7 @@ export function discardUntrustedReturnHomeEntry(options: {
     raw,
     currentPath: options.currentPath ?? window.location.pathname,
     state: options.state ?? window.history.state,
+    historyLength: options.historyLength ?? window.history.length,
     referrer: options.referrer ?? document.referrer,
     origin: options.origin ?? window.location.origin,
     now: options.now,
