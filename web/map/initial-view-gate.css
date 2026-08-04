@@ -1,0 +1,14 @@
+/* Hide the entire Leaflet scene while a deep link hydrates. Custom panes such
+   as routePane, stopPane, networkPane and vehiclePane live below map-pane, so
+   gating only Leaflet's default tile/overlay/marker panes can leak partial UI. */
+html[data-mochi-map-booting="true"] .leaflet-map-pane {
+  opacity: 0;
+}
+
+.leaflet-map-pane {
+  transition: opacity var(--motion-fast, 180ms) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaflet-map-pane { transition: none; }
+}
