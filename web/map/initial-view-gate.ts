@@ -28,6 +28,10 @@ export function mapViewFromUrl(params: URLSearchParams): MapView {
   return 'catalogue'
 }
 
+export function mapGateTargetChanged(expected: MapView, params: URLSearchParams): boolean {
+  return mapViewFromUrl(params) !== expected
+}
+
 const STYLE_ID = 'mochi-map-initial-view-gate'
 const LOADING_WORDS = ['正在', '載入中']
 
@@ -199,19 +203,24 @@ export function installInitialMapViewGate(maxWaitMs = 5_000): () => void {
   root.dataset.mochiMapBooting = 'true'
   let revealed = false
   let revealing = false
+  let fallback: number | undefined
+
+  const finishReveal = () => {
+    if (revealed) return
+    revealed = true
+    root.removeAttribute('data-mochi-map-booting')
+    root.removeAttribute('data-mochi-map-view-settled')
+    observer.disconnect()
+    window.removeEventListener('popstate', onPopState)
+    if (fallback !== undefined) window.clearTimeout(fallback)
+  }
 
   const reveal = async () => {
     if (revealed || revealing) return
     revealing = true
     await waitForTargetTileBatch()
     await twoFrames()
-    if (revealed) return
-    revealed = true
-    root.removeAttribute('data-mochi-map-booting')
-    root.removeAttribute('data-mochi-map-view-settled')
-    observer.disconnect()
-    window.removeEventListener('popstate', check)
-    window.clearTimeout(fallback)
+    finishReveal()
   }
 
   const check = () => {
@@ -225,19 +234,25 @@ export function installInitialMapViewGate(maxWaitMs = 5_000): () => void {
     void reveal()
   }
 
+  // The gate belongs only to the URL that created this document. If Back or
+  // Forward moves to another map target while hydration is still pending, drop
+  // the old gate immediately instead of covering the new target until fallback.
+  const onPopState = () => {
+    if (mapGateTargetChanged(expected, new URLSearchParams(location.search))) {
+      finishReveal()
+      return
+    }
+    check()
+  }
+
   const observer = new MutationObserver(check)
   observer.observe(drawer, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-view'] })
   observer.observe(status, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] })
-  window.addEventListener('popstate', check)
-  const fallback = window.setTimeout(() => void reveal(), maxWaitMs)
+  window.addEventListener('popstate', onPopState)
+  fallback = window.setTimeout(finishReveal, maxWaitMs)
   check()
 
   return () => {
-    revealed = true
-    observer.disconnect()
-    window.clearTimeout(fallback)
-    window.removeEventListener('popstate', check)
-    root.removeAttribute('data-mochi-map-booting')
-    root.removeAttribute('data-mochi-map-view-settled')
+    finishReveal()
   }
 }
