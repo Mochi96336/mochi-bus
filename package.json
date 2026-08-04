@@ -40,6 +40,7 @@
     "instance:apply-bundle": "node scripts/instance/apply-bundle.mjs",
     "instance:verify-apply-pr": "node scripts/instance/verify-apply-pr.mjs",
     "instance:reconcile-apply-merge": "node scripts/instance/reconcile-apply-merge.mjs",
+    "instance:release-attestation": "node scripts/instance/release-attestation.mjs",
     "instance:validate": "node scripts/instance/validate-config.mjs",
     "instance:compile": "node scripts/instance/compile-config.mjs",
     "instance:doctor": "node scripts/instance/doctor.mjs",
