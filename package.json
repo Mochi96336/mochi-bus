@@ -34,6 +34,8 @@
     "instance:update": "node scripts/instance/update.mjs",
     "instance:migration-plan": "node scripts/instance/migration-plan.mjs",
     "instance:change-bundle": "node scripts/instance/change-bundle.mjs",
+    "instance:bundle-artifact": "node scripts/instance/bundle-artifact.mjs",
+    "instance:verify-bundle": "node scripts/instance/verify-bundle.mjs",
     "instance:validate": "node scripts/instance/validate-config.mjs",
     "instance:compile": "node scripts/instance/compile-config.mjs",
     "instance:doctor": "node scripts/instance/doctor.mjs",
