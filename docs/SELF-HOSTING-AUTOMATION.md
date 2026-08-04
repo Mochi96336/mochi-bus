@@ -158,7 +158,7 @@ GitHub Deploy workflow 不會讀取你電腦裡的 `.dev.vars`，但既有 Worke
 
 ## 3. 選擇是否自動更新城市資料
 
-只需要 Push 後自動部署 Worker時，可以跳過本節，保留：
+只需要 Push 後自動部署 Worker 時，可以跳過本節，保留：
 
 ```json
 "profile": "starter",
@@ -238,7 +238,7 @@ Managed profile 可以使用：
 >
 > 網站使用者查詢即時到站、車輛與旅程估時也可能使用 TDX。啟用 `publicProbe` 後，workflow 每天還會透過公開 Worker 對每個啟用城市執行少量即時資料診斷，因此也會增加用量。
 >
-> 建議先從實際需要的少數城市開始，觀察用量後再增加；城市較多時優先使用每週分片。請查看 [TDX 公車 API 說明](https://tdx.transportdata.tw/api-service/swagger)、[TDX 首頁](https://tdx.transportdata.tw/)與會員中心的最新資訊。
+> 建議先從實際需要的少數城市開始，觀察用量後再增加；城市較多時優先使用每週分片。請查看 [TDX 公車 API 說明](https://tdx.transportdata.tw/api-service/swagger)、[TDX 首頁](https://tdx.transportdata.tw/)，以及會員中心的最新資訊。
 
 ### 決定是否啟用監測
 
