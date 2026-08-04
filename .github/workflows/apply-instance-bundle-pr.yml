@@ -163,11 +163,34 @@ jobs:
           PR_BODY_PATH: ${{ steps.apply.outputs.pr_body_path }}
         run: |
           set -euo pipefail
-          pr_url="$(gh pr create \
+          set +e
+          pr_output="$(gh pr create \
             --draft \
             --base "${BASE_BRANCH}" \
             --head "${APPLY_BRANCH}" \
             --title "${PR_TITLE}" \
-            --body-file "${PR_BODY_PATH}")"
-          printf 'pr_url=%s\n' "${pr_url}" >> "${GITHUB_OUTPUT}"
-          printf '\nDraft PR: %s\n' "${pr_url}" >> "${GITHUB_STEP_SUMMARY}"
+            --body-file "${PR_BODY_PATH}" 2>&1)"
+          pr_status=$?
+          set -e
+
+          if [[ "${pr_status}" -eq 0 ]]; then
+            printf 'pr_url=%s\n' "${pr_output}" >> "${GITHUB_OUTPUT}"
+            printf 'pr_creation_status=created\n' >> "${GITHUB_OUTPUT}"
+            printf '\nDraft PR: %s\n' "${pr_output}" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          if grep -Fq 'GitHub Actions is not permitted to create or approve pull requests' <<<"${pr_output}"; then
+            printf 'pr_creation_status=external_required\n' >> "${GITHUB_OUTPUT}"
+            {
+              printf '\n### Draft PR creation requires an external maintainer identity\n\n'
+              printf 'Repository policy blocked `GITHUB_TOKEN` from creating the Draft PR. '
+              printf 'The reviewed branch, commit and evidence artifact were created successfully. '
+              printf 'Create the Draft PR with the exact generated title and body, then run the read-only verifier.\n'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            printf '::warning::Repository policy requires external Draft PR creation for branch %s\n' "${APPLY_BRANCH}"
+            exit 0
+          fi
+
+          printf '%s\n' "${pr_output}" >&2
+          exit "${pr_status}"
