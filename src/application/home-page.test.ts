@@ -43,4 +43,26 @@ describe('instance homepage', () => {
     expect(html).not.toContain('"routeName":""')
     expect(html).not.toContain('"stopUid":""')
   })
+
+  it('validates and restores a saved frame before the deferred ETA module', () => {
+    const html = renderHomePage({
+      demoQuery: null,
+      defaultCity: 'Taipei',
+      requestUrl: 'https://example.com/',
+    })
+
+    const headBootstrap = html.indexOf('id="mochi-home-snapshot-first-paint"')
+    const headEnd = html.indexOf('</head>')
+    const inlineRestore = html.indexOf('id="mochi-home-snapshot-inline-restore"')
+    const etaBootstrap = html.indexOf('id="eta-bootstrap"')
+    const etaModule = html.indexOf('src="/assets/eta.js"')
+
+    expect(headBootstrap).toBeGreaterThan(0)
+    expect(headBootstrap).toBeLessThan(headEnd)
+    expect(inlineRestore).toBeGreaterThan(headEnd)
+    expect(inlineRestore).toBeLessThan(etaBootstrap)
+    expect(etaBootstrap).toBeLessThan(etaModule)
+    expect(html).toContain('__mochiHomeSnapshotCandidate')
+    expect(html).toContain('data-mochi-home-snapshot-pending')
+  })
 })
