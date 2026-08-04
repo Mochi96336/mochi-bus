@@ -1,12 +1,16 @@
-/// <reference types="vite/client" />
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import initialViewGateCss from './initial-view-gate.css?raw'
 import {
   drawerKeyMatchesMapView,
   initialMapViewIsSettled,
   mapGateTargetChanged,
   tileBatchIsReady,
 } from './initial-view-gate'
+
+const initialViewGateCss = readFileSync(
+  new URL('./initial-view-gate.css', import.meta.url),
+  'utf8',
+)
 
 describe('initial map view gate', () => {
   it('does not reveal a place deep link while the overview or catalogue is visible', () => {
