@@ -13,6 +13,13 @@ export function homeTypeScale(layoutWidth: number): HomeTypeScale {
   }
 }
 
+export function deferHomeScaleUpdate(
+  update: () => void,
+  requestFrame: (callback: () => void) => unknown,
+): void {
+  requestFrame(update)
+}
+
 export function installStableHomeLayout(): void {
   const root = document.documentElement
   let resizeTimer: number | undefined
@@ -32,7 +39,12 @@ export function installStableHomeLayout(): void {
 
   updateScale()
   window.addEventListener('resize', queueScaleUpdate)
-  window.addEventListener('pageshow', updateScale)
+  window.addEventListener('pageshow', () => {
+    // return-home clears the leaving flag in the same pageshow dispatch. Defer
+    // one frame so BFCache restores after rotation/split-view use the new width
+    // regardless of listener installation order.
+    deferHomeScaleUpdate(updateScale, (callback) => window.requestAnimationFrame(callback))
+  })
   window.addEventListener('orientationchange', queueScaleUpdate)
 
   if (document.getElementById(STYLE_ID)) return
