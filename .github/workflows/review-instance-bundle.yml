@@ -1,0 +1,59 @@
+name: Review instance change bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type REVIEW to create and verify a non-destructive review artifact
+        required: true
+        type: string
+      config_path:
+        description: Repository-relative instance manifest (instance.json or instances/*.json)
+        required: true
+        type: string
+      changes_json:
+        description: JSON array of instance:update arguments, excluding workflow control flags
+        required: true
+        default: '[]'
+        type: string
+      expected_bundle_hash:
+        description: Optional reviewed bundle SHA-256 that must match before artifact creation
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instance-bundle-review-${{ github.ref }}-${{ inputs.config_path }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Build and verify review artifact
+        id: review
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          INPUT_CONFIG_PATH: ${{ inputs.config_path }}
+          INPUT_CHANGES_JSON: ${{ inputs.changes_json }}
+          INPUT_EXPECTED_BUNDLE_HASH: ${{ inputs.expected_bundle_hash }}
+        run: node scripts/instance/review-bundle-workflow.mjs
+      - name: Upload verified review evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.review.outputs.artifact_name }}
+          path: ${{ steps.review.outputs.artifact_directory }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          include-hidden-files: true
