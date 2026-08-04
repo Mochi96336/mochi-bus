@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import initialViewGateCss from './initial-view-gate.css?raw'
 import {
   drawerKeyMatchesMapView,
   initialMapViewIsSettled,
@@ -51,5 +52,11 @@ describe('initial map view gate', () => {
     expect(tileBatchIsReady({ loaded: 0, pending: 0 })).toBe(false)
     expect(tileBatchIsReady({ loaded: 4, pending: 2 })).toBe(false)
     expect(tileBatchIsReady({ loaded: 6, pending: 0 })).toBe(true)
+  })
+
+  it('covers the complete Leaflet scene, including custom route and marker panes', () => {
+    expect(initialViewGateCss).toContain(
+      'html[data-mochi-map-booting="true"] .leaflet-map-pane',
+    )
   })
 })
