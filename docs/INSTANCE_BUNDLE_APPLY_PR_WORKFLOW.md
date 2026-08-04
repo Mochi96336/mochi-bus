@@ -2,13 +2,17 @@
 
 `Apply reviewed instance bundle to Draft PR` is a manual `workflow_dispatch` boundary that turns one previously reviewed instance change-bundle artifact into an isolated Draft PR.
 
-It does not rebuild the proposal from free-form arguments. It verifies that the supplied run is a completed successful execution of `.github/workflows/review-instance-bundle.yml`, downloads the exact artifact produced by that run, requires both trusted review hashes, repeats the complete atomic apply verification, and permits Git to commit exactly one manifest path.
+It does not rebuild the proposal from free-form arguments. It downloads the exact artifact produced by `Review instance change bundle`, requires both trusted review hashes, repeats the complete atomic apply verification, and permits Git to commit exactly one manifest path.
 
 The workflow changes repository content only on a new `agent/instance-bundle-apply-<run-id>-<attempt>` branch. It does not directly update the selected source branch.
 
 ## Inputs
 
 Dispatch `.github/workflows/apply-instance-bundle-pr.yml` from the branch that should become the Draft PR base.
+
+The review artifact must come from `.github/workflows/review-instance-bundle.yml`.
+
+The workflow reads the selected review run through the GitHub Actions API and binds its exact run attempt to the artifact name.
 
 Provide:
 
@@ -20,11 +24,11 @@ expected_bundle_hash     exact reviewed bundle SHA-256
 expected_artifact_hash   exact reviewed artifact SHA-256
 ```
 
-The artifact name is not only a download selector. The preflight parses its instance ID, review run ID and review run attempt, then requires its embedded run ID to equal `review_run_id` before any GitHub API request or artifact download begins.
+The artifact name is not only a download selector. The runner parses its instance ID, review run ID and review attempt, then requires its embedded run ID to equal `review_run_id` before any download begins.
 
 Both hashes must come from a trusted review channel. Internal artifact hashes alone are not sufficient authorization for a repository write.
 
-## Preflight, run identity and download
+## Preflight and download
 
 The first runner invocation validates:
 
@@ -36,19 +40,7 @@ The first runner invocation validates:
 - safe base and generated branch names
 - exact review-artifact naming convention
 
-The workflow then uses the repository `GITHUB_TOKEN` with `actions: read` to fetch one exact run record from the GitHub Actions API. The saved `.generated/apply-review-run.json` is read locally with strict duplicate-key rejection, valid UTF-8 enforcement, path-identity checks and a 1 MiB bound.
-
-Before any artifact is downloaded, the verifier requires:
-
-- run ID equals `review_run_id`
-- run attempt equals the attempt embedded in `artifact_name`
-- event is exactly `workflow_dispatch`
-- status is `completed` and conclusion is `success`
-- workflow path is exactly `.github/workflows/review-instance-bundle.yml`
-- both `repository.full_name` and `head_repository.full_name` equal the current repository
-- the run records a full head commit SHA and a non-empty head branch
-
-Only after that identity gate passes are the validated artifact name and run ID passed to the pinned `actions/download-artifact` action. The action downloads one named artifact from that exact same-repository run and treats an artifact digest mismatch as an error.
+Only validated outputs are passed to the pinned `actions/download-artifact` action. The action downloads one named artifact from one run in the current repository and treats an artifact digest mismatch as an error.
 
 The extracted directory must contain exactly:
 
@@ -65,17 +57,18 @@ Extra entries, missing entries, directories and symbolic links are rejected.
 
 Before invoking the atomic writer, the runner independently reads the two persisted reports with strict duplicate-key rejection and a 1 MiB bound per report.
 
-`verification.json` must contain the required successful review fields:
+`verification.json` must prove:
 
-- schema version 1 and `ok: true`
+- schema version 1
+- successful complete artifact verification
 - zero failed checks and zero errors
 - exact trusted bundle and artifact hashes
 - both expected hashes were pinned during review
 - instance identity matches the artifact name
 
-`freshness.json` must contain the required successful freshness fields:
+`freshness.json` must prove:
 
-- schema version 1, `ok: true` and `fresh`
+- schema version 1 and `fresh`
 - current state was the reviewed baseline
 - no staleness classification
 - exact source and canonical baseline matches
@@ -84,7 +77,7 @@ Before invoking the atomic writer, the runner independently reads the two persis
 - zero failed checks and zero errors
 - exact trusted hashes and instance identity
 
-The runner intentionally validates these required identities and success fields rather than treating the saved reports as the final authority. It then runs the current `instance:apply-bundle` implementation, which reopens the artifact and manifest and repeats complete hash, path, identity, freshness and source-byte validation immediately around the atomic write.
+These saved reports are evidence, not the final authority. The workflow then runs the current `instance:apply-bundle` implementation, which reopens the artifact and manifest and repeats hash, path, identity, freshness and source-byte validation immediately around the atomic write.
 
 ## Atomic apply and post-write verification
 
@@ -112,8 +105,6 @@ Only then does it create generated evidence for the apply workflow.
 Before any Git commit or push, the workflow uploads:
 
 ```text
-.generated/apply-review-run.json
-
 .generated/apply-input/
   bundle.json
   verification.json
@@ -125,7 +116,7 @@ Before any Git commit or push, the workflow uploads:
   pr-body.md
 ```
 
-This ordering preserves the GitHub run identity, review artifact and apply evidence even when a later Git push or PR API call fails.
+This ordering preserves audit evidence even when a later Git push or PR API call fails.
 
 `provenance.json` records the repository, review run, artifact name, trusted hashes, source ref and SHA, generated branch, manifest path, instance identity, reviewed change paths, and projected readiness flags. It contains no credentials or manifest source bytes.
 
@@ -167,17 +158,22 @@ GitHub generally suppresses new workflow runs caused by events created with the 
 
 When formal checks are required, dispatch the existing `CI` workflow on the generated apply branch, or use the repository's normal reviewed mechanism to trigger its `pull_request` checks.
 
-The apply-to-PR workflow itself verifies the successful review workflow run identity, artifact integrity, exact manifest freshness, the atomic write, the post-write target, and the exactly one manifest Git diff. Those checks do not replace the full CI workflow.
+The apply-to-PR workflow itself verifies artifact integrity, exact manifest freshness, the atomic write, the post-write target, and the exactly one manifest Git diff. Those checks do not replace the full CI workflow.
+
+## Read-only verification
+
+After the workflow creates the Draft PR, run `instance:verify-apply-pr` through **Verify reviewed instance bundle Draft PR**. It rechecks the persisted review/apply evidence against the live PR, current base and head SHAs, single commit, single modified manifest, complete base/head blobs and formal CI observations.
+
+The verification workflow never edits the PR or repository. See [Verify a generated reviewed-bundle Draft PR](./INSTANCE_BUNDLE_APPLY_PR_VERIFICATION.md).
 
 ## Operational boundaries
 
 The workflow:
 
-- uses the repository `GITHUB_TOKEN` only for the GitHub Actions run lookup, artifact download, isolated branch push and Draft PR creation
-- does not read repository secrets
 - does not install dependencies
 - does not compile generated instance files
 - does not run Wrangler
+- does not read repository secrets
 - does not contact Cloudflare
 - does not provision D1, R2, rate-limit or Worker resources
 - does not migrate D1 data or copy R2 objects
