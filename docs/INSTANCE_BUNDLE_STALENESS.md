@@ -139,20 +139,35 @@ The manual review workflow also performs this gate immediately after creating an
 
 `freshness.json` proves that the artifact source evidence matched the checked-out manifest when the review package was created. It does not prove the repository remained unchanged after the workflow ended.
 
-## Important race boundary
+## Apply the reviewed artifact
 
-The reader detects replacement or mutation observed while it opens and reads the manifest, but a freshness check does not lock the path. Another process can still change the file after the final identity check and before a human runs the reviewed command.
+The freshness reader detects replacement or mutation observed while it opens and reads the manifest, but it does not lock the path after its final identity check. The gate also does not execute the apply command.
+
+Use `instance:apply-bundle` when the reviewed proposal should be committed to the repository:
+
+```sh
+npm run instance:apply-bundle -- \
+  --input review/bundle.json \
+  --expect-hash <bundle-sha256> \
+  --expect-artifact-hash <artifact-sha256> \
+  --write
+```
+
+The apply command requires both trusted review hashes. It repeats the complete freshness verification using the current UTF-8 and path-identity rules, independently rechecks the source, baseline and target identities, prepares a same-directory temporary file, checks the source again immediately before atomic rename, and verifies the written target afterward.
+
+See [Apply a reviewed instance bundle](./INSTANCE_BUNDLE_APPLY.md) for the lock, atomic-write and remaining race boundaries.
 
 Recommended sequence:
 
 ```text
-verify artifact hashes
-→ check freshness
-→ inspect the reviewed apply command
-→ run the updater separately
+verify artifact hashes through the review channel
+→ optionally inspect with instance:check-bundle-freshness
+→ preview instance:apply-bundle
+→ run instance:apply-bundle --write
+→ validate or finish provisioning
 → compile
 → run the live doctor
 → deploy through the normal release process
 ```
 
-The gate does not execute the apply command and does not provide an atomic apply operation. A future apply-from-artifact command would need to repeat the source hash and path-identity checks and perform the write in one operation.
+Neither freshness nor apply compiles generated files or deploys remote resources. `projectedCutoverReady` remains a deterministic projection rather than proof of deployment readiness.
