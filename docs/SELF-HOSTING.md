@@ -30,12 +30,21 @@
 
 本篇以 **Visual Studio Code（VS Code）** 作為主要操作畫面。熟悉終端機與文字編輯器的人，可以自行換成其他工具。
 
-不展開任何摺疊區，也能完成部署。摺疊區主要使用兩種標籤：
+不展開任何摺疊區，也能完成部署。每個步驟最多只顯示一個「這一步需要更多說明？」入口：
 
-- **第一次操作：** 不熟悉 VS Code、終端機或 Cloudflare 畫面時展開
-- **深入了解：** 想知道工具和架構為什麼這樣設計時展開
+- 展開後先看到第一次操作需要的按鈕位置與具體步驟
+- 想理解工具或架構時，再展開裡面的「深入了解」
 
 費用、Secret、安全警告、必要指令和成功標誌不會藏在摺疊區裡。常見問題則保留成一般標題，方便用 `Ctrl+F` 搜尋錯誤訊息，或從 issue 直接連到特定項目。
+
+### 第一次使用終端機時，先知道這些規則
+
+- 一次執行一個指令區塊；不要把 `PS C:\...>`、`$`、`>` 等提示字元一起輸入。
+- `PASTE_YOUR_...`、`你的 Client ID`、範例 UUID 等文字要換成自己的實際值。
+- `sh`、`powershell`、`bat` 通常是指令；`json`、`dotenv` 是檔案內容；`text` 通常只是輸出、網址或示意。
+- 不要自行刪除引號、逗點、斜線或 `--`；指令結束並重新出現輸入位置後，再進行下一步。
+
+本篇每個主要步驟都會標示「操作位置」。同一步可能先在終端機執行指令，再到 VS Code 編輯檔案或到瀏覽器確認結果。
 
 ## 開始前先知道
 
@@ -62,43 +71,6 @@ R2 → Overview
 完成 checkout
 ```
 
-<details>
-<summary><strong>目前的 R2 免費額度包含什麼？</strong></summary>
-
-Cloudflare 目前為 R2 Standard storage 提供每月免費額度，包括：
-
-- 10 GB-month 儲存空間
-- 100 萬次 Class A operations
-- 1,000 萬次 Class B operations
-- 對外傳輸流量免費
-
-這些數字可能調整，請以 [Cloudflare 官方價格頁](https://developers.cloudflare.com/r2/pricing/)為準。
-
-<details>
-<summary><strong>深入了解：哪些操作會消耗 R2 額度？</strong></summary>
-
-```text
-保存城市快照檔案        → Storage
-建立、上傳、刪除物件    → Class A operations
-讀取線形、時刻表等物件  → Class B operations
-對外傳輸                → 目前不收 egress 費用
-```
-
-嘉義市 starter 的資料量通常不大，但免費額度不是「永遠不會收費」的承諾。加入更多縣市、頻繁重跑或提高流量後，使用量也會增加。
-
-</details>
-
-<details>
-<summary><strong>深入了解：刪除 Worker 為什麼不會停止 R2 使用量？</strong></summary>
-
-Worker、D1 和 R2 是三個獨立資源。刪除 Worker 只會移除網站程式，不會刪除 R2 裡已保存的城市快照，也不會自動取消 R2 subscription。
-
-不再使用服務時，要另外清空並刪除 R2 bucket，再到 Billing 與 R2 頁面確認帳務狀態。
-
-</details>
-
-</details>
-
 ### 這篇會建立哪些東西？
 
 ```text
@@ -115,7 +87,117 @@ Cloudflare Worker ────── 公開網址
 Worker 是網站程式；D1 和 R2 保存網站需要的公車資料。
 
 <details>
-<summary><strong>Worker、D1 和 R2 分別是什麼？</strong></summary>
+<summary><strong>開始前需要更多說明？</strong></summary>
+
+### 這篇需要哪些帳號與設備？
+
+| 項目 | 第一次手動部署需要嗎？ | 用途 |
+|---|---:|---|
+| Cloudflare 帳號 | 需要 | 建立 Worker、D1 和 R2 |
+| TDX 帳號 | 需要 | 取得公車資料 API 憑證 |
+| GitHub 帳號 | 不需要 | Fork、自動部署與長期維護時才需要 |
+| 自訂網域 | 不需要 | 第一次可以直接使用免費的 `workers.dev` 網址 |
+| R2 可用的付款方式 | 需要 | 完成 R2 checkout；實際費用仍依用量計算 |
+| 一台全天開機的電腦 | 不需要 | 部署完成後由 Cloudflare 執行網站 |
+
+這篇不要求你先購買網域，也不要求先 fork repository。第一次手動部署完成後，即使關閉自己的電腦，已部署的 Worker 仍會在 Cloudflare 上運作。
+
+### 檔案、Secret 與雲端設定地圖
+
+| 東西 | 放在哪裡 | 是否保密 | 是否提交 Git |
+|---|---|---:|---:|
+| `instance.json` | 專案根目錄 | 不是 Secret，但含資源名稱與 ID | 使用 fork 自動化時提交 |
+| `.dev.vars` | 本機專案根目錄 | 是 | 不可提交 |
+| `.snapshot.env` | 本機專案根目錄 | 是 | 不可提交 |
+| `.generated/instance/` | 本機自動產生 | 通常不是 Secret | 不要手動維護 |
+| Worker Secrets | Cloudflare | 是 | 不適用 |
+| GitHub Actions Secrets | 自己的 fork | 是 | 不會出現在 commit |
+| GitHub Actions Variables | 自己的 fork | 通常不是 Secret | 不會出現在 commit |
+
+```text
+.dev.vars
+   ├── 本機快照工具讀取 TDX 憑證
+   └── deploy 時寫入 Cloudflare Worker Secrets
+
+.snapshot.env
+   └── 本機快照工具直接存取 R2
+
+instance.json
+   └── 描述自己的 Worker、D1、R2、城市與操作模式
+
+.generated/instance/
+   └── 由 instance.json 重新產生，不是主要設定來源
+```
+
+Secret 建議保存在密碼管理器。不要只靠聊天紀錄、截圖或未加密的公開筆記保存。R2 Secret Access Key 遺失後通常無法再次顯示，只能建立新的 token。
+
+### 可以中途暫停嗎？
+
+- 大多數步驟完成一個指令後都可以關閉 VS Code，已建立的檔案與 Cloudflare 資源不會消失。
+- 重新開始時，用 VS Code 開啟 `mochi-bus` 資料夾，再建立新的終端機。
+- Worker 部署完成後，即使自己的電腦關機，公開網站仍由 Cloudflare 執行。
+- 第 10 步發布城市快照時不要主動關閉終端機；若意外中斷，保留第一個錯誤訊息，再重新設定公開網址並重跑。
+- `SNAPSHOT_SMOKE_BASE_URL` 只存在目前終端機。關閉終端機後，下一次發布前要重新設定。
+
+### 範例名稱可以改嗎？
+
+第一次建議先完整照抄本篇名稱，確認部署成功後再自訂，這樣比較容易比對輸出與排除錯誤。
+
+可以自訂：
+
+- Instance ID，例如 `my-chiayi-bus`
+- 網站顯示名稱，例如 `My Chiayi Bus`
+- Cloudflare 資源名稱，但建立後必須與 `instance.json` 保持一致
+- 日後啟用的城市
+
+不要自行更換：
+
+- 程式內固定 binding：`TRANSIT_DB`、`TRANSIT_SHAPES`
+- 指令中的 `--config`、`--remote` 等參數名稱
+- 城市代碼的拼字與大小寫，例如 `Chiayi`
+- JSON 的欄位名稱
+
+本篇固定使用嘉義市，只是為了讓所有指令、資源名稱與驗證結果一致，不代表 Mochi Bus 只能部署嘉義市。
+
+### R2 免費額度補充
+
+Cloudflare 目前為 R2 Standard storage 提供每月免費額度，包括：
+
+- 10 GB-month 儲存空間
+- 100 萬次 Class A operations
+- 1,000 萬次 Class B operations
+- 對外傳輸流量免費
+
+這些數字可能調整，請以 [Cloudflare 官方價格頁](https://developers.cloudflare.com/r2/pricing/)為準。
+
+Mochi Bus 儲存的是公車線形、時刻表、城市快照與少量版本狀態，不是影片、照片或使用者上傳檔案。以一般個人自架、正常更新頻率和正常清理舊版本來看：
+
+- 單一城市 starter 通常很難接近 R2 免費額度
+- 網站、D1、R2 和城市快照都完整啟用後，使用量通常仍會相對低
+- 逐步加入多個城市時，預期仍有相當餘裕，但應以 Dashboard 實際數字為準
+
+這是**使用量概念，不是費用保證**。「完整部署」不代表無限城市、無限流量、反覆強制發布，或永久保留所有舊版本。程式異常重跑、大量公開流量、頻繁 `force publish`、清理失敗或 Cloudflare 調整方案，都可能讓用量增加。
+
+<details>
+<summary><strong>深入了解：哪些操作會消耗 R2 額度？</strong></summary>
+
+```text
+保存城市快照檔案        → Storage
+建立、列出、上傳物件    → Class A operations
+讀取物件與 metadata     → Class B operations
+刪除物件或 bucket       → 目前屬免費 operations
+對外傳輸                → 目前不收 egress 費用
+```
+
+嘉義市 starter 的資料量通常不大，但免費額度不是「永遠不會收費」的承諾。加入更多縣市、頻繁重跑或提高流量後，使用量也會增加。
+
+Worker、D1 和 R2 是三個獨立資源。刪除 Worker 只會移除網站程式，不會刪除 R2 裡已保存的城市快照，也不會自動取消 R2 subscription。
+
+不再使用服務時，要另外清空並刪除 R2 bucket，再到 Billing 與 R2 頁面確認帳務狀態。
+
+</details>
+
+### Worker、D1 和 R2 分別是什麼？
 
 - **Worker：** Mochi Bus 真正上線執行的程式，負責網站和 API。
 - **D1：** Cloudflare 的 SQL 資料庫，保存路線、站牌、站序與目前啟用的資料版本。
@@ -145,16 +227,19 @@ Worker
 
 </details>
 
+### Starter 的技術限制
+
+- Starter 預設不包含 Cloudflare Rate Limiting binding。網站和 API 仍會運作，但受保護的 API 沒有實際限流；目前 middleware 會 fail-open，相關請求也可能在 Worker log 中出現 `api_rate_limit_binding_failed`。
+- `workers.dev` 可以完成部署與測試，但 Cloudflare Cache API 在 `*.workers.dev` 上不生效。Mochi Bus 的 isolate 記憶體快取仍在，失去的是同一 Cloudflare 機房內可跨請求／isolate 重用的第二層 Cache API。
+
+小規模測試可以先照本篇完成。打算長期公開使用時，再看文末的自訂網域與 API rate limit 說明。
+
 </details>
 
 ### Starter 是第一次上線路線，不是完整的長期公開設定
 
 > [!NOTE]
-> 這篇產生的 starter 設定預設不包含 Cloudflare Rate Limiting binding。網站和 API 仍會運作，但受保護的 API 沒有實際限流；目前 middleware 會 fail-open，相關請求也可能在 Worker log 中出現 `api_rate_limit_binding_failed`。
->
-> `workers.dev` 可以完成部署與測試，但 Cloudflare Cache API 在 `*.workers.dev` 上不生效。Mochi Bus 的 isolate 記憶體快取仍在，失去的是同一 Cloudflare 機房內可跨請求／isolate 重用的第二層 Cache API。
->
-> 小規模測試可以先照本篇完成。打算長期公開使用時，請看文末的「補上 API rate limit」與「綁定自訂網域不只是換網址」。
+> 這篇會完成一套可公開使用、由你手動維護的 starter。準備長期公開服務時，建議再設定自訂網域、API rate limit 與自動更新；這些不影響先完成本篇。
 
 ### 繼續前確認
 
@@ -166,6 +251,8 @@ Worker
 TDX 憑證位於「[TDX 會員中心](https://tdx.transportdata.tw/) → 資料服務 → API 金鑰」。還沒有帳號時，先完成[會員註冊](https://tdx.transportdata.tw/register/general)，再建立一組 API 金鑰。
 
 ## 1. 安裝需要的工具
+
+**操作位置：** 軟體下載頁面與 VS Code 終端機
 
 請安裝：
 
@@ -190,7 +277,9 @@ npm --version
 - npm 顯示版本號
 
 <details>
-<summary><strong>第一次操作：安裝 Git、Node.js 和 VS Code</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 第一次安裝 Git、Node.js 和 VS Code
 
 - Node.js 下載頁選擇 **LTS** 版本，安裝選項保留預設即可。
 - Git 安裝程式的選項保留預設即可。
@@ -198,10 +287,7 @@ npm --version
 - 不要把專案放進 `C:\Program Files` 等需要管理員權限的資料夾。
 - 安裝完成後，完全關閉再重新開啟 VS Code，讓新安裝的 Git 和 Node.js 可以被找到。
 
-</details>
-
-<details>
-<summary><strong>第一次操作：VS Code 的終端機在哪裡？</strong></summary>
+### VS Code 的終端機在哪裡？
 
 1. 開啟 VS Code。
 2. 從上方選單選擇 **Terminal → New Terminal**。
@@ -209,8 +295,6 @@ npm --version
 4. 把教學中的指令貼進去，再按 Enter。
 
 Windows 預設通常是 PowerShell；macOS 和 Linux 通常是自己的系統 shell。
-
-</details>
 
 <details>
 <summary><strong>深入了解：Node.js、npm 和 LTS 是什麼？</strong></summary>
@@ -234,7 +318,11 @@ LTS 是 Node.js 的長期支援版本，通常比剛發布的新版本更適合�
 
 </details>
 
+</details>
+
 ## 2. 取得程式碼
+
+**操作位置：** VS Code 終端機，之後用 VS Code 開啟 `mochi-bus` 資料夾
 
 在 VS Code 終端機執行：
 
@@ -264,7 +352,9 @@ npm install
 - 結尾可能出現 Mochi production 名稱，這是第一次安裝的預設編譯，不代表連線或部署到正式站
 
 <details>
-<summary><strong>第一次操作：如何確認目前位於 mochi-bus 資料夾？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 如何確認目前位於 `mochi-bus` 資料夾？
 
 PowerShell、macOS 和 Linux：
 
@@ -282,10 +372,7 @@ cd
 
 若關閉後重新開啟 VS Code，請用 **File → Open Recent** 開啟 `mochi-bus`，再建立新的終端機。
 
-</details>
-
-<details>
-<summary><strong>第一次操作：用 VS Code 開啟整個 mochi-bus</strong></summary>
+### 用 VS Code 開啟整個 `mochi-bus`
 
 1. 選擇 **File → Open Folder**。
 2. 找到剛才下載的 `mochi-bus` 資料夾。
@@ -295,8 +382,6 @@ cd
 6. 再選擇 **Terminal → New Terminal**。
 
 左側 Explorer 應該會看到 `README.md`、`package.json`、`docs` 等檔案。
-
-</details>
 
 <details>
 <summary><strong>深入了解：repository、工作資料夾與 npm install</strong></summary>
@@ -323,7 +408,11 @@ node_modules/
 
 </details>
 
+</details>
+
 ## 3. 登入 Cloudflare
+
+**操作位置：** VS Code 終端機；登入授權會暫時開啟瀏覽器
 
 執行：
 
@@ -339,7 +428,9 @@ npx wrangler whoami
 若 Wrangler 要你選擇帳號，選擇剛才完成 R2 checkout 的同一個帳號。
 
 <details>
-<summary><strong>第一次操作：Wrangler 登入時會看到什麼？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### Wrangler 登入時會看到什麼？
 
 1. 執行 `npx wrangler login`。
 2. 瀏覽器開啟 Cloudflare 授權頁。
@@ -348,8 +439,6 @@ npx wrangler whoami
 5. 回到 VS Code。
 6. 執行 `npx wrangler whoami`。
 7. 確認顯示的是預計使用的帳號。
-
-</details>
 
 <details>
 <summary><strong>深入了解：npx、Wrangler 和 whoami</strong></summary>
@@ -375,7 +464,11 @@ Wrangler 登入帳號 A
 
 </details>
 
+</details>
+
 ## 4. 放入 TDX 憑證
+
+**操作位置：** VS Code 終端機建立檔案，再用 VS Code 編輯 `.dev.vars`
 
 先複製範例檔，建立 `.dev.vars`。
 
@@ -404,7 +497,9 @@ TDX_CLIENT_SECRET="你的 Client Secret"
 `.dev.vars` 已被 Git 忽略，不會正常出現在 Git commit 裡。
 
 <details>
-<summary><strong>第一次操作：如何在 VS Code 編輯 .dev.vars？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 如何在 VS Code 編輯 `.dev.vars`？
 
 1. 在左側 Explorer 找到 `.dev.vars`。
 2. 點一下檔名開啟。
@@ -414,19 +509,14 @@ TDX_CLIENT_SECRET="你的 Client Secret"
 
 若沒有看到檔案，按一下 Explorer 上方的重新整理圖示。
 
-</details>
-
 <details>
-<summary><strong>深入了解：點開頭檔案、Secret 與 .gitignore</strong></summary>
+<summary><strong>深入了解：點開頭檔案、Secret 與兩個環境檔</strong></summary>
 
 點開頭檔案通常用來保存設定，而且在部分作業系統中會被視為隱藏檔案。`.dev.vars` 是完整檔名，不要改成 `.dev.vars.txt`。
 
 可以把 Client ID 想成程式使用的帳號，把 Client Secret 想成這個程式帳號的密碼。Mochi Bus 會使用它們向 TDX 交換短期 access token，再讀取公車資料。
 
 repository 的 `.gitignore` 已列出 `.dev.vars` 和 `.snapshot.env`。這是一層保護，不代表可以公開貼出內容；截圖、聊天、issue 和手動強制加入 Git 仍可能洩漏 Secret。
-
-<details>
-<summary><strong>深入了解：.dev.vars 和 .snapshot.env 有什麼不同？</strong></summary>
 
 ```text
 .dev.vars
@@ -446,6 +536,8 @@ repository 的 `.gitignore` 已列出 `.dev.vars` 和 `.snapshot.env`。這是�
 </details>
 
 ## 5. 建立自己的 instance 設定
+
+**操作位置：** VS Code 終端機建立設定，再用 VS Code 編輯 `instance.json`
 
 建立一套名為 `my-chiayi-bus`、只啟用嘉義市的設定：
 
@@ -483,19 +575,19 @@ npm run instance:compile -- --config instance.json
 
 > 只修改 `instance.json`。不要手動修改 `.generated/instance/`，因為下次 compile 會重新產生它們。
 
-`instance.json` 不在 `.gitignore`，所以 VS Code Source Control 顯示它是未追蹤檔案是正常的。它不是 Secret，但包含 Worker、D1、R2 等資源名稱與 ID。本篇的手動部署可以先留在本機；日後 fork repository 並使用 GitHub Actions 時，再提交這份檔案並設定 `MOCHI_BUS_INSTANCE_CONFIG`。
+`instance.json` 不在 `.gitignore`，所以 VS Code Source Control 顯示它是未追蹤檔案是正常的。它不是 Secret，但包含 Worker、D1、R2 等資源名稱與 ID。本篇的手動部署可以先留在本機；日後 fork repository 並使用 GitHub Actions 時，再把這份檔案提交到 repository 根目錄，現有 workflows 會自動讀取它。
 
 <details>
-<summary><strong>第一次操作：如何找到 instance.json？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 如何找到 `instance.json`？
 
 執行 `instance:init` 後，VS Code 左側 Explorer 的專案根目錄會出現 `instance.json`。
 
 若沒看到，按一下 Explorer 上方的重新整理圖示。不要到 `.generated/instance/` 裡尋找另一份來修改。
 
-</details>
-
 <details>
-<summary><strong>深入了解：Instance ID、validate 和 generated files</strong></summary>
+<summary><strong>深入了解：Instance ID、validate、generated files 與 provisioning plan</strong></summary>
 
 ```text
 Instance ID：my-chiayi-bus
@@ -520,8 +612,7 @@ instance.json
 
 `instance.json` 是你維護的來源設定；`.generated/instance/` 是自動產物。直接修改 generated files，下一次 compile 就會被覆蓋。
 
-<details>
-<summary><strong>進階工具：查看完整 provisioning plan</strong></summary>
+進階時可以查看完整 provisioning plan：
 
 ```sh
 npm run instance:provision-plan -- --config instance.json
@@ -540,6 +631,8 @@ NO CHANGES WERE APPLIED
 </details>
 
 ## 6. 建立 D1 和 R2
+
+**操作位置：** VS Code 終端機建立資源，再用 VS Code 編輯 `instance.json`
 
 > [!WARNING]
 > 從這一步開始，指令會真的在 Cloudflare 帳號建立遠端資源。先再確認一次：
@@ -599,7 +692,9 @@ npm run instance:compile -- --config instance.json
 ```
 
 <details>
-<summary><strong>第一次操作：如何把 database_id 填進 instance.json？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 如何把 `database_id` 填進 `instance.json`？
 
 Wrangler 輸出可能看起來像：
 
@@ -618,8 +713,6 @@ database_id = "12345678-abcd-1234-abcd-123456789012"
 5. 保留 ID 左右的雙引號。
 6. 保留行尾逗點。
 7. 儲存檔案。
-
-</details>
 
 <details>
 <summary><strong>深入了解：D1、R2、名稱、ID 和 binding</strong></summary>
@@ -645,7 +738,11 @@ D1 binding 使用 database ID 精確識別資料庫；R2 binding 使用 bucket n
 
 </details>
 
+</details>
+
 ## 7. 建立 R2 發布憑證
+
+**操作位置：** Cloudflare Dashboard 建立 token，再用 VS Code 建立並編輯 `.snapshot.env`
 
 城市快照會從你的電腦直接寫入 R2，因此還需要一組 R2 S3 credentials。
 
@@ -691,7 +788,9 @@ https://ACCOUNT_ID.r2.cloudflarestorage.com
 > `.snapshot.env` 已被 Git 忽略，只供本機快照發布工具使用，不會部署成 Worker secret。
 
 <details>
-<summary><strong>第一次操作：在 Cloudflare 建立 R2 token</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 在 Cloudflare 建立 R2 token
 
 1. 打開 Cloudflare Dashboard。
 2. 進入 **Storage & databases → R2 → Overview**。
@@ -704,10 +803,8 @@ https://ACCOUNT_ID.r2.cloudflarestorage.com
 9. 回到 R2 Account Details 取得 Account ID。
 10. 在 VS Code 打開 `.snapshot.env`，填入三個值並儲存。
 
-</details>
-
 <details>
-<summary><strong>深入了解：R2 token、三個 Key／ID 與最小權限</strong></summary>
+<summary><strong>深入了解：R2 token、三個 Key／ID、最小權限與 S3 credentials</strong></summary>
 
 - **User API token：** 綁定目前登入的 Cloudflare 使用者，個人自架通常選這個即可。
 - **Account API token：** 綁定整個 Cloudflare account，通常只有 Super Administrator 能建立。
@@ -726,9 +823,6 @@ Cloudflare Account ID
 
 將權限限制在單一 bucket，符合最小權限原則。即使 credential 意外外洩，它也不能碰帳號裡其他 R2 資料。
 
-<details>
-<summary><strong>深入了解：為什麼已有 Wrangler login，還要 S3 credentials？</strong></summary>
-
 ```text
 Wrangler login
   └── 適合 CLI 建立資源、migration、deploy
@@ -745,6 +839,8 @@ Wrangler 可以逐一上傳物件，但快照發布工具還需要讀取 manifes
 
 ## 8. 建立 D1 資料表
 
+**操作位置：** VS Code 終端機
+
 目前的 D1 是空的。執行 migration 建立 Mochi Bus 需要的資料表：
 
 ```sh
@@ -759,7 +855,9 @@ Wrangler 可能會詢問是否套用 migration。確認畫面中的 database 是
 完成時應顯示 migration 已成功套用，並回到可輸入指令的狀態。
 
 <details>
-<summary><strong>第一次操作：Wrangler 問 Yes／No 時要確認什麼？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### Wrangler 問 Yes／No 時要確認什麼？
 
 先看畫面中的：
 
@@ -768,8 +866,6 @@ Wrangler 可能會詢問是否套用 migration。確認畫面中的 database 是
 - migration 是否來自目前的 Mochi Bus 專案
 
 三項都正確，再輸入 `y`。若名稱或 ID 不對，先停止，不要急著刪除資料庫。
-
-</details>
 
 <details>
 <summary><strong>深入了解：migration、binding 與安全重跑</strong></summary>
@@ -793,7 +889,11 @@ Wrangler 會記錄已套用的 migration。再次執行時，只會處理尚未�
 
 </details>
 
+</details>
+
 ## 9. 部署 Worker
+
+**操作位置：** VS Code 終端機，完成後到瀏覽器開啟公開網址
 
 執行：
 
@@ -811,6 +911,11 @@ npm run deploy -- --secrets-file .dev.vars
 
 成功後，Wrangler 會顯示一個以 `.workers.dev` 結尾的完整網址。**直接複製終端機實際顯示的網址，不要自己猜 subdomain。**
 
+> [!IMPORTANT]
+> 這篇建立的是公開網站，不含登入畫面。知道網址的人可以開啟網站，也可以呼叫公開 API。不要把 Client Secret、Access Key、token 或其他 Secret 放進網站內容、網址參數或公開截圖。
+>
+> 不主動分享網址只能降低被看到的機率，不會把網站變成私人服務。不想繼續公開時，可以完成測試後刪除 Worker。
+
 把網址貼進瀏覽器。此時網站應該能開，但還沒有完整路線和站牌，因為嘉義市資料尚未發布。
 
 完成標誌：
@@ -820,7 +925,9 @@ npm run deploy -- --secrets-file .dev.vars
 - 瀏覽器可以載入網站頁面
 
 <details>
-<summary><strong>第一次操作：首次部署時 Wrangler 可能問什麼？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 首次部署時 Wrangler 可能問什麼？
 
 第一次使用 Workers，可能需要：
 
@@ -829,8 +936,6 @@ npm run deploy -- --secrets-file .dev.vars
 - 確認 Worker 名稱
 
 選擇完成 R2 checkout、並且 D1/R2 建立在其中的同一個帳號。部署完成後只使用 Wrangler 實際輸出的完整網址。
-
-</details>
 
 <details>
 <summary><strong>深入了解：deploy、Worker secret 和城市資料</strong></summary>
@@ -860,7 +965,11 @@ deploy 不會自動下載並發布 TDX 城市資料。下一步完成城市快�
 
 </details>
 
+</details>
+
 ## 10. 發布第一份城市快照
+
+**操作位置：** VS Code 終端機
 
 先把 Wrangler 顯示的完整 `workers.dev` 網址複製好。
 
@@ -1054,6 +1163,8 @@ D1 適合關聯查詢；R2 適合直接讀取完整檔案。
 
 ## 11. 確認結果
 
+**操作位置：** 瀏覽器
+
 把公開網址後面加上：
 
 ```text
@@ -1079,7 +1190,9 @@ https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 通過這些項目，就已經是一套能獨立運作的 Mochi Bus。
 
 <details>
-<summary><strong>第一次操作：瀏覽器顯示一整段 JSON 要看哪裡？</strong></summary>
+<summary><strong>這一步需要更多說明？</strong></summary>
+
+### 瀏覽器顯示一整段 JSON 要看哪裡？
 
 使用瀏覽器尋找功能：
 
@@ -1087,8 +1200,6 @@ https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 - macOS：`Command+F`
 
 搜尋 `Chiayi`。應找到嘉義市城市代碼；starter 設定不應把 Taipei 等其他城市當成已啟用城市。
-
-</details>
 
 <details>
 <summary><strong>深入驗證：如何確認城市快照已經生效？</strong></summary>
@@ -1100,6 +1211,51 @@ https://my-chiayi-bus.example.workers.dev/api/v1/map/cities
 ```
 
 回應應包含路線陣列，並帶有目前快照的來源或版本資訊。若網站能開但這個 API 沒有路線，通常表示城市快照尚未成功發布。
+
+</details>
+
+</details>
+
+## 這篇完成後，你現在擁有什麼？
+
+完成第 11 步後，你已經有一套**可以公開使用、但由你手動維護的 starter**：
+
+| 能力 | 本篇是否已完成 | 是否需要 fork |
+|---|---:|---:|
+| 建立 Worker、D1 和 R2 | 是 | 否 |
+| 部署公開網站 | 是 | 否 |
+| 發布第一份嘉義市資料 | 是 | 否 |
+| 手動更新程式 | 是 | 否 |
+| 手動更新城市快照 | 是 | 否 |
+| 綁定自訂網域 | 否 | 否 |
+| 補上 API rate limit | 否 | 否 |
+| 增加其他城市 | 否 | 否 |
+| Push 後自動部署 Worker | 否 | **需要** |
+| 定期自動更新城市資料 | 否 | **需要** |
+| 長期保存自己的設定並同步 upstream | 否 | **建議** |
+
+Fork 不是 Cloudflare 部署的必要條件。繼續在目前電腦手動更新，完全不需要 fork。
+
+需要 fork 的情況，主要是讓自己的 `instance.json`、GitHub Actions、Repository Secrets／Variables 和修改紀錄有固定歸屬。準備啟用 Push 自動部署、城市快照排程或長期同步 upstream 時，請接著閱讀[用 fork 啟用自動部署與城市資料更新](SELF-HOSTING-AUTOMATION.md)。
+
+<details>
+<summary><strong>要保存哪些內容？</strong></summary>
+
+建議保存：
+
+- `instance.json`
+- Cloudflare Account ID 與各資源的用途紀錄
+- TDX、Cloudflare 與 R2 憑證的取得或輪替方式
+- R2 token 的用途、權限範圍與建立日期
+- 自己的 fork repository（若已啟用自動化）
+
+不必特別備份：
+
+- `node_modules/`
+- `.generated/instance/`
+- 可以重新 clone 的未修改原始碼
+
+Secret 本身應放進密碼管理器，不要提交到 repository。`node_modules/` 可以重裝，`.generated/instance/` 可以由 `instance.json` 重新 compile。
 
 </details>
 
@@ -1298,7 +1454,9 @@ npm run deploy -- --secrets-file .dev.vars
 npm run instance:compile -- --config instance.json
 ```
 
-## 哪些步驟可以重跑？
+## 日後維護
+
+### 哪些操作可以重跑？
 
 通常可以安全重跑：
 
@@ -1327,7 +1485,7 @@ npx wrangler d1 create my-chiayi-transit
 npx wrangler r2 bucket create my-chiayi-transit-shapes
 ```
 
-## 之後如何更新 Mochi Bus
+### 更新 Mochi Bus
 
 回到 `mochi-bus` 資料夾後，依序執行：
 
@@ -1344,7 +1502,7 @@ npm run deploy -- --secrets-file .dev.vars
 - 若 pull 顯示有本機修改或無法 fast-forward，先停止並確認改過哪些檔案；不要為了更新直接執行 `git reset --hard`。
 - 一般程式更新不需要重新發布城市快照。若某次版本更新需要重建資料，應以該版本的 release note 為準。
 
-## 移除這套服務與停止可能的費用
+### 移除服務與停止可能的費用
 
 可以從 Cloudflare Dashboard 刪除：
 
@@ -1358,7 +1516,8 @@ R2 bucket 裡有城市快照時不能直接刪除，要先清空內容。刪除 
 
 如果不再使用任何 R2 功能，也請到 Cloudflare Billing 和 R2 頁面確認 subscription 與帳單狀態。不要只刪除 Worker，就假設所有可能計費的資源都已移除。
 
-## 接下來
+<details>
+<summary><strong>長期公開使用：自訂網域與 API rate limit</strong></summary>
 
 ### 綁定自訂網域不只是換網址
 
@@ -1394,14 +1553,17 @@ npm run instance:compile -- --config instance.json
 npm run deploy -- --secrets-file .dev.vars
 ```
 
-部署完成後，標準 API 使用每分鐘 120 次限制，較昂貴的路網與規劃 API 使用每分鐘 30 次限制。
+Mochi Bus 目前以 instance、限流級別和來源 IP 組成計數 key。每個 Cloudflare location 會各自計數：同一個 key 的標準 API 設定為 60 秒 120 次，較昂貴的路網與規劃 API 設定為 60 秒 30 次。
+
+Cloudflare Rate Limiting 的計數偏寬鬆、採最終一致，不是全球共用的精確總量，也不應作為帳務或唯一的安全邊界。完整語意請以 [Cloudflare Rate Limiting 文件](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)為準。
 
 完成 starter 部署後，也可以再選擇：
 
-- fork repository，長期維護自己的版本
 - 加入第二個縣市
-- 用 GitHub Actions 自動更新資料
 - 升級成 managed profile
-- 定期同步 upstream 的 Mochi Bus 更新
+- 啟用 public probe、release smoke 或 snapshot watchdog
+- 在 fork 中定期同步 upstream 的 Mochi Bus 更新
 
-這些進階路徑目前不屬於本篇的第一次安裝範圍。
+Fork、自動部署與自動更新城市資料的完整步驟，請見[用 fork 啟用自動部署與城市資料更新](SELF-HOSTING-AUTOMATION.md)。
+
+</details>

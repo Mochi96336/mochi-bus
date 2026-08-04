@@ -35,6 +35,7 @@ export default defineConfig({
         /map-navigation-equivalence\.spec\.ts/,
         /map-async-navigation\.spec\.ts/,
         /setup\.spec\.ts/,
+        /setup-modal\.spec\.ts/,
       ],
       use: { ...devices['Pixel 7'] },
     },
