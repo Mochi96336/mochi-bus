@@ -3,13 +3,11 @@
   "schemaVersion": 1,
   "instanceId": "chiayi-bus",
   "site": {
-    "name": "Mochi Bus E2E 2026-08-05",
+    "name": "Mochi Bus",
     "canonicalOrigin": "request"
   },
   "transit": {
-    "enabledCities": [
-      "Chiayi"
-    ],
+    "enabledCities": ["Chiayi"],
     "defaultCity": "Chiayi",
     "demoQuery": null
   },
