@@ -16,6 +16,7 @@ import {
   verifyInstanceBundleArtifact,
 } from './bundle-integrity.mjs'
 import { renderApplyPullRequestBody } from './apply-bundle-pr-workflow.mjs'
+import { classifyReviewedBundleApplyPurpose } from './check-apply-target-policy.mjs'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/
@@ -172,6 +173,20 @@ export async function prepareInstanceBundleApplyPrVerification(inputs, {
   if (provenance?.branchName !== expectedBranch) failures.push('provenance branch name is not the deterministic apply branch')
   if (baseBranch && provenance?.sourceRef !== `refs/heads/${baseBranch}`) failures.push('provenance source ref does not match base branch')
 
+  let targetPolicy = null
+  if (baseBranch && configPath) {
+    try {
+      targetPolicy = classifyReviewedBundleApplyPurpose({ baseBranch, configPath })
+    } catch (error) {
+      failures.push(`apply target policy: ${errorMessage(error)}`)
+    }
+  }
+  if (targetPolicy) {
+    if (provenance?.purpose !== targetPolicy.purpose) failures.push('provenance purpose differs from the derived apply target policy')
+    if (provenance?.testOnly !== targetPolicy.testOnly) failures.push('provenance testOnly differs from the derived apply target policy')
+    if (provenance?.e2eFixture !== targetPolicy.e2eFixture) failures.push('provenance E2E fixture differs from the derived apply target policy')
+  }
+
   let reviewArtifactIdentity = null
   try {
     reviewArtifactIdentity = parseReviewArtifactName(provenance?.artifactName)
@@ -228,6 +243,9 @@ export async function prepareInstanceBundleApplyPrVerification(inputs, {
     sourceSha,
     headBranch: expectedBranch,
     instanceId: provenance.instanceId,
+    purpose: targetPolicy.purpose,
+    testOnly: targetPolicy.testOnly,
+    e2eFixture: targetPolicy.e2eFixture,
     reviewRunId: String(provenance.reviewRunId),
     reviewRunAttempt: String(provenance.reviewRunAttempt),
     expectedPrTitle: `chore(instance): apply reviewed bundle for ${provenance.instanceId}`,
@@ -249,6 +267,8 @@ export async function runApplyPrVerificationPrepare(inputs, {
     source_sha: prepared.sourceSha,
     head_branch: prepared.headBranch,
     instance_id: prepared.instanceId,
+    apply_purpose: prepared.purpose,
+    test_only: prepared.testOnly ? 'true' : 'false',
   })
   await appendWorkflowOutputs(inputs.outputPath, outputs)
   await appendFile(inputs.summaryPath, renderPrepareMarkdown(prepared), 'utf8')
@@ -364,6 +384,9 @@ export async function verifyInstanceBundleApplyPullRequest(inputs, {
     pullRequestUrl: pr?.htmlUrl ?? null,
     instanceId: prepared.instanceId,
     configPath: prepared.configPath,
+    purpose: prepared.purpose,
+    testOnly: prepared.testOnly,
+    e2eFixture: prepared.e2eFixture,
     base: { branch: prepared.baseBranch, sha: prepared.sourceSha },
     head: { branch: prepared.headBranch, sha: pr?.head?.sha ?? null },
     hashes: {

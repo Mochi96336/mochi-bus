@@ -360,6 +360,9 @@ export function evaluateInstanceBundleApplyMerge({
     pullRequestUrl: pr?.htmlUrl ?? null,
     instanceId: prepared.instanceId,
     configPath: prepared.configPath,
+    purpose: prepared.purpose,
+    testOnly: prepared.testOnly,
+    e2eFixture: prepared.e2eFixture,
     current: {
       branch: inputs.currentBranch,
       sha: inputs.currentSha,
@@ -454,6 +457,8 @@ export function renderApplyMergeReconciliationMarkdown(report) {
     `**${report.status.toUpperCase()}** · PR ${markdownCodeSpan(`#${report.pullRequestNumber}`)} · ${markdownCodeSpan(report.instanceId)}`,
     '',
     `- Manifest: ${markdownCodeSpan(report.configPath)}`,
+    `- Purpose: ${markdownCodeSpan(report.purpose)}`,
+    `- Test-only: **${report.testOnly ? 'yes' : 'no'}**`,
     `- Current branch: ${markdownCodeSpan(`${report.current.branch}@${report.current.sha}`)}`,
     `- Merge commit: ${markdownCodeSpan(report.merge.sha ?? 'missing')}`,
     `- Commits after merge: ${markdownCodeSpan(report.current.commitsAfterMerge ?? 'unknown')}`,

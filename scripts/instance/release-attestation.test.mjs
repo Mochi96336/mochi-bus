@@ -116,6 +116,9 @@ function reconciliationFixture(overrides = {}) {
     pullRequestUrl: 'https://github.com/Mochi96336/mochi-bus/pull/321',
     instanceId: 'island-test',
     configPath: 'instances/island-test.json',
+    purpose: 'change',
+    testOnly: false,
+    e2eFixture: null,
     current: { branch: 'integration/instance-rollout', sha: RELEASE_SHA, commitsAfterMerge: 2 },
     merge: { sha: MERGE_SHA, mergedAt: '2026-08-03T00:00:00Z', mergedBy: 'Mochi96336' },
     hashes: {
@@ -264,6 +267,43 @@ describe('reconciled instance release attestation', () => {
     expect(evaluation.attestation.boundary.remoteVerified).toBe(false)
     expect(evaluation.attestation.boundary.deploymentReady).toBe(false)
     expect(evaluation.attestation.integrity.attestationHash).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('rejects test-only E2E reconciliation even when every readiness field is true', async () => {
+    const reconciliation = reconciliationFixture({
+      purpose: 'e2e',
+      testOnly: true,
+      e2eFixture: 'instances/starter-chiayi.example.json',
+      configPath: 'instances/starter-chiayi.example.json',
+    })
+    const evaluation = await evaluate({ reconciliation })
+    expect(evaluation.gatePassed).toBe(false)
+    expect(evaluation.attestation).toBe(null)
+    expect(evaluation.errors.join('\n')).toContain('reconciliation-purpose')
+  })
+
+  test('rejects forged change-purpose fields when branch and manifest still identify E2E', async () => {
+    const e2eBranch = 'e2e/instance-bundle-forged-purpose'
+    const reconciliation = reconciliationFixture({
+      purpose: 'change',
+      testOnly: false,
+      e2eFixture: null,
+      configPath: 'instances/starter-chiayi.example.json',
+      current: { branch: e2eBranch, sha: RELEASE_SHA, commitsAfterMerge: 2 },
+    })
+    const runEvidence = runEvidenceFixture()
+    runEvidence.branch.name = e2eBranch
+    runEvidence.reconciliationRun.headBranch = e2eBranch
+    const evaluation = await evaluate({
+      inputs: inputsFixture({ releaseBranch: e2eBranch }),
+      reconciliation,
+      runEvidence,
+      current: currentFixture({ configPath: 'instances/starter-chiayi.example.json' }),
+    })
+    expect(evaluation.gatePassed).toBe(false)
+    expect(evaluation.attestation).toBe(null)
+    expect(evaluation.errors.join('\n')).toContain('reconciliation-purpose-derived')
+    expect(evaluation.errors.join('\n')).toContain('reconciliation-purpose')
   })
 
   test('rejects locally_blocked reconciliation instead of treating content reconciliation as release readiness', async () => {

@@ -192,6 +192,9 @@ async function buildFixture(cwd, { warnings = [] } = {}) {
     configPath: 'instance.json',
     instanceId: 'island-test',
     changePaths: artifact.bundle.proposal.changes.map((change) => change.path),
+    purpose: 'change',
+    testOnly: false,
+    e2eFixture: null,
     provisioningDraft: artifact.bundle.provisioningDraft,
     cutoverReady: artifact.bundle.cutoverReady,
     deploymentReady: true,
@@ -351,6 +354,14 @@ describe('reviewed bundle apply PR verification', () => {
       const provenancePath = join(cwd, '.generated', 'verify-apply-pr', 'download', 'apply-pr', `workflow-${APPLY_RUN_ID}-${APPLY_RUN_ATTEMPT}`, 'provenance.json')
       await writeFile(provenancePath, `${JSON.stringify({ ...fixture.provenance, targetManifestHash: '0'.repeat(64) })}\n`, 'utf8')
       await expect(prepareInstanceBundleApplyPrVerification(fixture.inputs, { cwd })).rejects.toThrow('provenance target hash')
+    })
+
+    await withWorkspace(async ({ cwd }) => {
+      const fixture = await buildFixture(cwd)
+      const provenancePath = join(cwd, '.generated', 'verify-apply-pr', 'download', 'apply-pr', `workflow-${APPLY_RUN_ID}-${APPLY_RUN_ATTEMPT}`, 'provenance.json')
+      await writeFile(provenancePath, `${JSON.stringify({ ...fixture.provenance, purpose: 'e2e', testOnly: true, e2eFixture: 'instances/starter-chiayi.example.json' })}
+`, 'utf8')
+      await expect(prepareInstanceBundleApplyPrVerification(fixture.inputs, { cwd })).rejects.toThrow('provenance purpose differs')
     })
 
     await withWorkspace(async ({ cwd }) => {

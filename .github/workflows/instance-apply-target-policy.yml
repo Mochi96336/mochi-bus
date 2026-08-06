@@ -1,0 +1,94 @@
+name: Instance apply target policy
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: instance-apply-target-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Instance apply target policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate generated apply PR target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ github.token }}
+          retries: 2
+          script: |
+            const pr = context.payload.pull_request
+            const repository = context.payload.repository
+            if (!pr || !repository) {
+              core.setFailed('pull_request event payload is missing required repository metadata')
+              return
+            }
+
+            const generatedHead = /^agent\/instance-bundle-apply-\d+-\d+$/.test(pr.head.ref)
+            if (!generatedHead) {
+              core.info('Not a generated reviewed-bundle apply PR; policy passes.')
+              return
+            }
+
+            if (pr.head.repo.full_name !== repository.full_name || pr.base.repo.full_name !== repository.full_name) {
+              core.setFailed('Generated apply PR must use head and base branches from the workflow repository')
+              return
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            })
+            if (files.length !== 1) {
+              core.setFailed(`Generated apply PR must change exactly one file; received ${files.length}`)
+              return
+            }
+
+            const file = files[0]
+            if (file.status !== 'modified' || file.previous_filename) {
+              core.setFailed(`Generated apply PR must modify one existing manifest without rename; status=${file.status}`)
+              return
+            }
+
+            const configPath = file.filename
+            const pathSegments = configPath.split('/')
+            const unsafePath = configPath.includes('\\')
+              || configPath.includes('//')
+              || pathSegments.some((segment) => segment === '.' || segment === '..')
+              || /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u.test(configPath)
+            const manifestPath = configPath === 'instance.json'
+              || (configPath.startsWith('instances/') && configPath.endsWith('.json'))
+            if (unsafePath || !manifestPath) {
+              core.setFailed(`Generated apply PR changed an unsafe or unsupported manifest path: ${configPath}`)
+              return
+            }
+
+            const fixture = 'instances/starter-chiayi.example.json'
+            const defaultBranch = repository.default_branch
+            const exampleManifest = configPath.startsWith('instances/')
+              && configPath.toLowerCase().endsWith('.example.json')
+            const e2eBase = /^e2e\/instance-bundle-[a-z0-9](?:[a-z0-9._-]{0,80})$/.test(pr.base.ref)
+
+            if (exampleManifest && pr.base.ref === defaultBranch) {
+              core.setFailed(`Example manifest ${configPath} cannot target default branch ${defaultBranch}`)
+              return
+            }
+            if (e2eBase && configPath !== fixture) {
+              core.setFailed(`E2E base ${pr.base.ref} may receive only ${fixture}; received ${configPath}`)
+              return
+            }
+            if (exampleManifest && (!e2eBase || configPath !== fixture)) {
+              core.setFailed(`Example manifest ${configPath} requires an e2e/instance-bundle-* base and the fixed fixture path`)
+              return
+            }
+
+            core.info(`Apply target policy passed for ${pr.head.ref} -> ${pr.base.ref}: ${configPath}`)
