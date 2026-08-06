@@ -17,6 +17,7 @@ import {
 } from './apply-bundle.mjs'
 import { hashCanonical, parseStrictJson } from './bundle-integrity.mjs'
 import { readCurrentInstanceManifest } from './check-bundle-freshness.mjs'
+import { classifyReviewedBundleApplyPurpose } from './check-apply-target-policy.mjs'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/
@@ -138,6 +139,10 @@ export async function runInstanceBundleApplyPrWorkflow(inputs, {
     throw new Error(`Reviewed bundle cannot be applied: ${plan?.reason ?? 'unknown blocker'}`)
   }
   verifyPlanIdentity(inputs, evidence, plan)
+  const targetPolicy = classifyReviewedBundleApplyPurpose({
+    baseBranch: inputs.baseBranch,
+    configPath: plan.configPath,
+  })
 
   const written = await writeApply(plan)
   if (written !== true) throw new Error('Atomic bundle apply did not confirm a manifest write')
@@ -150,7 +155,7 @@ export async function runInstanceBundleApplyPrWorkflow(inputs, {
   const provenancePath = resolve(resultDirectoryPath, 'provenance.json')
   const prBodyPath = resolve(resultDirectoryPath, 'pr-body.md')
   const applyResult = renderInstanceBundleApplyJson(plan, { written: true })
-  const provenance = buildProvenance(inputs, plan)
+  const provenance = buildProvenance(inputs, plan, targetPolicy)
   const prBody = renderApplyPullRequestBody(inputs, plan, provenance)
 
   await writeExclusiveJson(resultPath, applyResult)
@@ -171,6 +176,7 @@ export async function runInstanceBundleApplyPrWorkflow(inputs, {
     plan,
     current,
     applyResult,
+    targetPolicy,
     provenance,
     prBody,
     outputs,
@@ -197,6 +203,12 @@ export function renderApplyPullRequestBody(inputs, plan, provenance) {
     `- Source commit: ${markdownCodeSpan(inputs.sourceSha)}`,
     `- Manifest: ${markdownCodeSpan(plan.configPath)}`,
     `- Instance: ${markdownCodeSpan(plan.instanceId)}`,
+    '',
+    '### Apply policy',
+    '',
+    `- Purpose: ${markdownCodeSpan(provenance.purpose)}`,
+    `- Test-only: **${provenance.testOnly ? 'yes' : 'no'}**.`,
+    ...(provenance.e2eFixture ? [`- E2E fixture: ${markdownCodeSpan(provenance.e2eFixture)}`] : []),
     '',
     '### Reviewed change paths',
     '',
@@ -357,7 +369,7 @@ function verifyWrittenManifest(plan, current) {
   if (failures.length > 0) throw new Error(`Post-write manifest verification failed: ${failures.join('; ')}`)
 }
 
-function buildProvenance(inputs, plan) {
+function buildProvenance(inputs, plan, targetPolicy) {
   return deepFreeze({
     schemaVersion: 1,
     kind: 'mochi-bus-instance-bundle-apply-pr-provenance',
@@ -378,6 +390,9 @@ function buildProvenance(inputs, plan) {
     configPath: plan.configPath,
     instanceId: plan.instanceId,
     changePaths: plan.changes.map((change) => change.path),
+    purpose: targetPolicy.purpose,
+    testOnly: targetPolicy.testOnly,
+    e2eFixture: targetPolicy.e2eFixture,
     provisioningDraft: plan.provisioningDraft,
     cutoverReady: plan.cutoverReady,
     deploymentReady: plan.deploymentReady,

@@ -40,6 +40,8 @@ validate exact inputs and release SHA
 → re-read the live release branch and require it to remain at the release SHA
 → verify reconciliation workflow identity and successful conclusion
 → require reconciliation status = reconciled
+→ re-derive purpose from release branch and manifest path
+→ require persisted purpose identity to match and resolve to change, testOnly = false and no E2E fixture
 → require contentReconciled and localDoctorReady
 → require remoteVerified = false and deploymentReady = false
 → compare trusted bundle, artifact, manifest and generated-set hashes
@@ -64,9 +66,12 @@ localDoctorReady: true
 remoteVerified: false
 deploymentReady: false
 summary.failed: 0
+purpose: change
+testOnly: false
+e2eFixture: null
 ```
 
-`locally_blocked` is intentionally rejected. Content may be reconciled in that state, but a release gate cannot claim the local doctor was ready.
+`locally_blocked` is intentionally rejected. Content may be reconciled in that state, but a release gate cannot claim the local doctor was ready. Test-only E2E reconciliation is also rejected even when all local readiness fields are true or its persisted purpose fields are forged as a normal change.
 
 A reconciliation artifact from a failed, cancelled, pending or differently named workflow run is also rejected.
 

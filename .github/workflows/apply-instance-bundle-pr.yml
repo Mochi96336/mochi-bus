@@ -84,6 +84,10 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.preflight.outputs.review_run_id }}
           digest-mismatch: error
+      - name: Enforce default-branch apply policy
+        env:
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/instance/check-apply-target-policy.mjs
       - name: Atomically apply and verify reviewed manifest
         id: apply
         env:

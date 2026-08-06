@@ -20,6 +20,7 @@ import {
   parseStrictJson,
   sha256,
 } from './bundle-integrity.mjs'
+import { classifyReviewedBundleApplyPurpose } from './check-apply-target-policy.mjs'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/
@@ -184,6 +185,28 @@ export async function evaluateInstanceReleaseAttestationEvidence({
     `expected ${inputs.repository}, received ${reconciliation?.repository ?? 'missing'}`)
   check('reconciliation-instance', reconciliation?.instanceId === inputs.artifactInstanceId,
     `expected ${inputs.artifactInstanceId}, received ${reconciliation?.instanceId ?? 'missing'}`)
+
+  let derivedPurpose = null
+  let derivedPurposeError = null
+  try {
+    derivedPurpose = classifyReviewedBundleApplyPurpose({
+      baseBranch: reconciliation?.current?.branch,
+      configPath: reconciliation?.configPath,
+    })
+  } catch (error) {
+    derivedPurposeError = errorMessage(error)
+  }
+  check('reconciliation-purpose-derived', derivedPurpose !== null
+    && reconciliation?.purpose === derivedPurpose.purpose
+    && reconciliation?.testOnly === derivedPurpose.testOnly
+    && reconciliation?.e2eFixture === derivedPurpose.e2eFixture,
+  derivedPurposeError
+    ?? `derived purpose=${derivedPurpose?.purpose ?? 'missing'} testOnly=${String(derivedPurpose?.testOnly)} fixture=${derivedPurpose?.e2eFixture ?? 'none'}; evidence purpose=${reconciliation?.purpose ?? 'missing'} testOnly=${String(reconciliation?.testOnly)} fixture=${reconciliation?.e2eFixture ?? 'none'}`)
+  check('reconciliation-purpose', derivedPurpose?.purpose === 'change'
+    && derivedPurpose?.testOnly === false
+    && derivedPurpose?.e2eFixture === null,
+  derivedPurposeError
+    ?? `derived purpose=${derivedPurpose?.purpose ?? 'missing'} testOnly=${String(derivedPurpose?.testOnly)} fixture=${derivedPurpose?.e2eFixture ?? 'none'}`)
   check('reconciliation-release', reconciliation?.current?.branch === inputs.releaseBranch
     && reconciliation?.current?.sha === inputs.releaseSha,
   `expected ${inputs.releaseBranch}@${inputs.releaseSha}, received ${reconciliation?.current?.branch ?? 'missing'}@${reconciliation?.current?.sha ?? 'missing'}`)
