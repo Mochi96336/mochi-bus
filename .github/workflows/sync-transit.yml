@@ -132,6 +132,13 @@ jobs:
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
           SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+          # Free D1 is 100k rows_written/account/day. Scheduled publishers share
+          # 75k and reserve only after their exact source hash is known to have
+          # changed; unchanged cities still run the normal health probe. Keep
+          # 25k outside this publisher for window records and estimator drift.
+          SNAPSHOT_D1_WRITE_BUDGET: ${{ github.event_name == 'schedule' && '75000' || '' }}
+          SNAPSHOT_D1_WRITE_BUDGET_FILE: .transit-snapshot/d1-write-budget.json
+          SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR: '1.10'
         run: |
           set -euo pipefail
           repair_mode="${INPUT_REPAIR_LEGACY_PREVIOUS:-false}"
