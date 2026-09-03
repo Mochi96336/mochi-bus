@@ -168,6 +168,7 @@ async function readPreviousCleanupRows(city, state, env) {
     accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
     apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
     databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
+    fetchImpl: fetch,
     sql: `
       SELECT
         (SELECT COUNT(*) FROM routes WHERE version = ? AND city_code = ?)
