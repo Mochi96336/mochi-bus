@@ -18,6 +18,7 @@ import {
   readBoundedResponseJson,
   readBoundedResponseText,
 } from './transit-snapshot/active-probe.mjs'
+import { reserveScheduledD1Budget } from './transit-snapshot/d1-write-budget.mjs'
 import { queryD1 as queryD1Rest } from './transit-snapshot/window-d1.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
@@ -197,6 +198,26 @@ if (previousState && process.env.SNAPSHOT_FORCE !== '1') {
     })))
     console.log(JSON.stringify({ city: CITY, skipped: true, reason: 'unchanged', version: previousState.version }))
     process.exit(0)
+  }
+}
+
+// Budget only after the exact source hash says this city really changed. Large
+// unchanged cities still run their normal health probe and consume no publish
+// reservation. The ledger is shared by sequential city publishers in one job.
+if (process.env.SNAPSHOT_D1_WRITE_BUDGET) {
+  const budget = await reserveScheduledD1Budget({
+    city: CITY,
+    env: process.env,
+    readState: async () => previousState,
+  })
+  console.log(JSON.stringify({ event: 'snapshot_d1_write_budget', action: 'reserve', ...budget }))
+  if (!budget.allowed) {
+    console.error(JSON.stringify({
+      event: 'snapshot_d1_write_budget_deferred',
+      city: CITY,
+      ...budget.decision,
+    }))
+    process.exit(2)
   }
 }
 
