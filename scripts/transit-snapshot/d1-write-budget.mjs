@@ -40,8 +40,9 @@ export function estimateScheduledPublishRowsWritten(counts, options = {}) {
     cleanupRows,
     growthFactor,
     // The next source snapshot may be larger than the currently published one.
-    // Cleanup is counted exactly for the retained previous version when reserve
-    // runs in CI. Keep a small fixed reserve for pointer/window-record writes.
+    // Cleanup is counted from D1 for every stale non-active version so failed
+    // staging leftovers are included. Keep a small fixed reserve for pointer /
+    // window-record writes around the publication.
     estimatedRows: Math.ceil(stageRows * growthFactor) + cleanupRows + FIXED_RESERVE_ROWS,
     fixedReserveRows: FIXED_RESERVE_ROWS,
   })
@@ -65,7 +66,7 @@ export async function reserveScheduledD1Budget({
   city,
   env = process.env,
   readState = (targetCity) => readPublishedState(targetCity, env),
-  readCleanupRows = (targetCity, state) => readPreviousCleanupRows(targetCity, state, env),
+  readCleanupRows = (targetCity) => readScheduledCleanupRows(targetCity, env),
   now = () => new Date(),
 }) {
   const budgetRows = parseOptionalPositiveInteger(env.SNAPSHOT_D1_WRITE_BUDGET)
@@ -73,7 +74,7 @@ export async function reserveScheduledD1Budget({
 
   const state = await readState(city)
   if (!state?.counts) throw new Error(`D1 write budget requires published snapshot counts for ${city}`)
-  const cleanupRows = await readCleanupRows(city, state)
+  const cleanupRows = await readCleanupRows(city)
   const estimate = estimateScheduledPublishRowsWritten(state.counts, {
     growthFactor: env.SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR,
     cleanupRows,
@@ -161,9 +162,7 @@ async function readPublishedState(city, env) {
   return await response.json()
 }
 
-async function readPreviousCleanupRows(city, state, env) {
-  const previousVersion = nullableString(state?.previousVersion)
-  if (!previousVersion) return 0
+async function readScheduledCleanupRows(city, env) {
   const rows = await queryD1({
     accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
     apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
@@ -171,20 +170,27 @@ async function readPreviousCleanupRows(city, state, env) {
     fetchImpl: fetch,
     sql: `
       SELECT
-        (SELECT COUNT(*) FROM routes WHERE version = ? AND city_code = ?)
-        + (SELECT COUNT(*) FROM patterns WHERE version = ? AND city_code = ?)
-        + (SELECT COUNT(*) FROM stops WHERE version = ? AND city_code = ?)
-        + (SELECT COUNT(*) FROM stop_places WHERE version = ? AND city_code = ?)
-        + (SELECT COUNT(*) FROM pattern_stops WHERE version = ?)
+        (SELECT COUNT(*) FROM routes
+          WHERE city_code = ? AND version <> COALESCE(
+            (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
+        + (SELECT COUNT(*) FROM patterns
+          WHERE city_code = ? AND version <> COALESCE(
+            (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
+        + (SELECT COUNT(*) FROM stops
+          WHERE city_code = ? AND version <> COALESCE(
+            (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
+        + (SELECT COUNT(*) FROM stop_places
+          WHERE city_code = ? AND version <> COALESCE(
+            (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
+        + (SELECT COUNT(*) FROM pattern_stops
+          WHERE version IN (
+            SELECT DISTINCT version FROM patterns
+            WHERE city_code = ? AND version <> COALESCE(
+              (SELECT active_version FROM dataset_versions WHERE city_code = ?), '')
+          ))
         AS cleanup_rows
     `,
-    params: [
-      previousVersion, city,
-      previousVersion, city,
-      previousVersion, city,
-      previousVersion, city,
-      previousVersion,
-    ],
+    params: [city, city, city, city, city, city, city, city, city, city],
   })
   const cleanupRows = Number(rows[0]?.cleanup_rows)
   if (!Number.isSafeInteger(cleanupRows) || cleanupRows < 0) {
@@ -245,11 +251,6 @@ function parseOptionalPositiveInteger(value) {
   const number = Number(value)
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error('SNAPSHOT_D1_WRITE_BUDGET must be a positive integer')
   return number
-}
-
-function nullableString(value) {
-  if (value === undefined || value === null || String(value).trim() === '') return null
-  return String(value).trim()
 }
 
 function required(value, name) {
