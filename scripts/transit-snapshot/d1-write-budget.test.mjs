@@ -51,6 +51,22 @@ describe('D1 snapshot write budget', () => {
     })
   })
 
+  it('uses the exact previous-version cleanup count when supplied', () => {
+    const estimate = estimateScheduledPublishRowsWritten({
+      routes: 106,
+      patterns: 373,
+      stops: 4073,
+      places: 1472,
+      patternStops: 13884,
+    }, { growthFactor: 1, cleanupRows: 123 })
+
+    expect(estimate).toMatchObject({
+      stageRows: 63797,
+      cleanupRows: 123,
+      estimatedRows: 63984,
+    })
+  })
+
   it('fails closed when the workflow-wide reservation would exceed the budget', () => {
     expect(budgetDecision({
       budgetRows: 75000,
