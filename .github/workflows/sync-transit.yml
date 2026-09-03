@@ -132,6 +132,12 @@ jobs:
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
           SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+          # Free D1 is 100k rows_written/account/day. Keep 25k outside this
+          # snapshot workflow for window records, application writes, and
+          # estimator drift. Manual operator runs intentionally bypass the guard.
+          SNAPSHOT_D1_WRITE_BUDGET: ${{ github.event_name == 'schedule' && '75000' || '' }}
+          SNAPSHOT_D1_WRITE_BUDGET_FILE: .transit-snapshot/d1-write-budget.json
+          SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR: '1.10'
         run: |
           set -euo pipefail
           repair_mode="${INPUT_REPAIR_LEGACY_PREVIOUS:-false}"
@@ -174,7 +180,32 @@ jobs:
           fi
           failed=""
           for city in $cities; do
-            if ! npm run snapshot:window -- "$city"; then
+            if [ -n "${SNAPSHOT_D1_WRITE_BUDGET:-}" ]; then
+              budget_status=0
+              node scripts/transit-snapshot/d1-write-budget.mjs reserve "$city" || budget_status=$?
+              if [ "$budget_status" -ne 0 ]; then
+                if [ "$budget_status" -eq 2 ]; then
+                  echo "D1 scheduled write budget deferred $city; active snapshot remains unchanged" >&2
+                else
+                  echo "D1 scheduled write budget preflight failed for $city" >&2
+                fi
+                failed="$failed $city"
+                continue
+              fi
+            fi
+
+            if npm run snapshot:window -- "$city"; then
+              if [ -n "${SNAPSHOT_D1_WRITE_BUDGET:-}" ]; then
+                outcome="$(node -e 'const fs=require("node:fs"); const city=process.argv[1]; const item=JSON.parse(fs.readFileSync(`.transit-snapshot/window-results/${city}.json`, "utf8")); process.stdout.write(item.result)' "$city")"
+                if ! node scripts/transit-snapshot/d1-write-budget.mjs settle "$city" "$outcome"; then
+                  echo "D1 scheduled write budget settlement failed for $city" >&2
+                  failed="$failed $city"
+                fi
+              fi
+            else
+              if [ -n "${SNAPSHOT_D1_WRITE_BUDGET:-}" ]; then
+                node scripts/transit-snapshot/d1-write-budget.mjs settle "$city" failed || true
+              fi
               failed="$failed $city"
             fi
           done
