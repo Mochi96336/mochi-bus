@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { queryD1 } from './window-d1.mjs'
 
 const DEFAULT_LEDGER = join('.transit-snapshot', 'd1-write-budget.json')
 const DEFAULT_GROWTH_FACTOR = 1.10
@@ -31,15 +32,16 @@ export function estimateStageRowsWritten(counts) {
 export function estimateScheduledPublishRowsWritten(counts, options = {}) {
   const growthFactor = positiveNumber(options.growthFactor, DEFAULT_GROWTH_FACTOR)
   const stageRows = estimateStageRowsWritten(counts)
-  const cleanupRows = logicalSnapshotRows(counts)
+  const cleanupRows = options.cleanupRows === undefined
+    ? logicalSnapshotRows(counts)
+    : nonNegativeInteger(options.cleanupRows, 'cleanupRows')
   return Object.freeze({
     stageRows,
     cleanupRows,
     growthFactor,
     // The next source snapshot may be larger than the currently published one.
-    // Cleanup is charged approximately one rows_written per deleted logical row
-    // in current D1 execution metadata. Keep a small fixed reserve for pointer /
-    // window-record writes around the publication.
+    // Cleanup is counted exactly for the retained previous version when reserve
+    // runs in CI. Keep a small fixed reserve for pointer/window-record writes.
     estimatedRows: Math.ceil(stageRows * growthFactor) + cleanupRows + FIXED_RESERVE_ROWS,
     fixedReserveRows: FIXED_RESERVE_ROWS,
   })
@@ -63,6 +65,7 @@ export async function reserveScheduledD1Budget({
   city,
   env = process.env,
   readState = (targetCity) => readPublishedState(targetCity, env),
+  readCleanupRows = (targetCity, state) => readPreviousCleanupRows(targetCity, state, env),
   now = () => new Date(),
 }) {
   const budgetRows = parseOptionalPositiveInteger(env.SNAPSHOT_D1_WRITE_BUDGET)
@@ -70,14 +73,20 @@ export async function reserveScheduledD1Budget({
 
   const state = await readState(city)
   if (!state?.counts) throw new Error(`D1 write budget requires published snapshot counts for ${city}`)
+  const cleanupRows = await readCleanupRows(city, state)
   const estimate = estimateScheduledPublishRowsWritten(state.counts, {
     growthFactor: env.SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR,
+    cleanupRows,
   })
   const ledgerPath = env.SNAPSHOT_D1_WRITE_BUDGET_FILE || DEFAULT_LEDGER
   const ledger = await readLedger(ledgerPath, budgetRows)
   const existing = ledger.reservations.find((item) => item.city === city && item.status === 'reserved')
   if (existing) {
-    const decision = budgetDecision({ budgetRows, reservedRows: ledger.reservedRows - existing.estimatedRows, estimatedRows: existing.estimatedRows })
+    const decision = budgetDecision({
+      budgetRows,
+      reservedRows: ledger.reservedRows - existing.estimatedRows,
+      estimatedRows: existing.estimatedRows,
+    })
     return Object.freeze({ enabled: true, allowed: true, city, estimate, decision, reused: true })
   }
 
@@ -98,6 +107,8 @@ export async function reserveScheduledD1Budget({
       city,
       estimatedRows: estimate.estimatedRows,
       fixedReserveRows: estimate.fixedReserveRows,
+      stageRows: estimate.stageRows,
+      cleanupRows: estimate.cleanupRows,
       status: 'reserved',
       reservedAt: now().toISOString(),
     }],
@@ -148,6 +159,37 @@ async function readPublishedState(city, env) {
     throw new Error(`R2 snapshot state read failed for ${city} (${response.status})`)
   }
   return await response.json()
+}
+
+async function readPreviousCleanupRows(city, state, env) {
+  const previousVersion = nullableString(state?.previousVersion)
+  if (!previousVersion) return 0
+  const rows = await queryD1({
+    accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
+    apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
+    databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
+    sql: `
+      SELECT
+        (SELECT COUNT(*) FROM routes WHERE version = ? AND city_code = ?)
+        + (SELECT COUNT(*) FROM patterns WHERE version = ? AND city_code = ?)
+        + (SELECT COUNT(*) FROM stops WHERE version = ? AND city_code = ?)
+        + (SELECT COUNT(*) FROM stop_places WHERE version = ? AND city_code = ?)
+        + (SELECT COUNT(*) FROM pattern_stops WHERE version = ?)
+        AS cleanup_rows
+    `,
+    params: [
+      previousVersion, city,
+      previousVersion, city,
+      previousVersion, city,
+      previousVersion, city,
+      previousVersion,
+    ],
+  })
+  const cleanupRows = Number(rows[0]?.cleanup_rows)
+  if (!Number.isSafeInteger(cleanupRows) || cleanupRows < 0) {
+    throw new Error(`D1 cleanup row count is invalid for ${city}`)
+  }
+  return cleanupRows
 }
 
 async function readLedger(path, budgetRows) {
@@ -202,6 +244,11 @@ function parseOptionalPositiveInteger(value) {
   const number = Number(value)
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error('SNAPSHOT_D1_WRITE_BUDGET must be a positive integer')
   return number
+}
+
+function nullableString(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null
+  return String(value).trim()
 }
 
 function required(value, name) {
