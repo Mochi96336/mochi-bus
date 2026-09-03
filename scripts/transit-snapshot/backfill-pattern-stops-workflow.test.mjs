@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest'
 const workflow = readFileSync(new URL('../../.github/workflows/backfill-pattern-stops.yml', import.meta.url), 'utf8')
 
 describe('pattern-stop R2 backfill workflow', () => {
-  it('is a one-shot Taichung active canary plus manual operator workflow', () => {
+  it('is manual-only after the one-shot production canary was launched', () => {
     expect(workflow).toContain('workflow_dispatch:')
-    expect(workflow).toContain('push:')
-    expect(workflow).toContain('- .github/workflows/backfill-pattern-stops.yml')
-    expect(workflow).toContain("inputs.city || 'Taichung'")
-    expect(workflow).toContain("inputs.target || 'active'")
+    expect(workflow).not.toContain('push:')
     expect(workflow).not.toContain('schedule:')
+    expect(workflow).toContain('CITY: ${{ inputs.city }}')
+    expect(workflow).toContain('TARGET: ${{ inputs.target }}')
+    expect(workflow).toContain('group: pattern-stop-backfill-${{ inputs.city }}')
   })
 
   it('runs only the read-only exporter with the provisioned D1 and R2 resources', () => {
