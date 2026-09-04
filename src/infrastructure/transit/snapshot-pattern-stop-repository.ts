@@ -84,9 +84,9 @@ async function readPatternStops(
   version: string,
   patternId: string,
 ): Promise<PatternStop[] | null> {
-  const object = await env.TRANSIT_SHAPES.get(patternStopArtifactKey(version, city, patternId))
-  if (!object) return null
   try {
+    const object = await env.TRANSIT_SHAPES.get(patternStopArtifactKey(version, city, patternId))
+    if (!object) return null
     const artifact = parsePatternStopArtifact(await object.json<unknown>(), city, version, patternId)
     return artifact?.stops ?? null
   } catch {
