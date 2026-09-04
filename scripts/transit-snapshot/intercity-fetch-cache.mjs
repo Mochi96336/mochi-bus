@@ -41,6 +41,7 @@ export function createIntercityFetchCache({
   fetchImpl = globalThis.fetch,
   root = join('.transit-snapshot', 'tdx-intercity-cache'),
   scope = intercityCacheScope(),
+  persistent = null,
   logger = console,
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function')
@@ -52,32 +53,61 @@ export function createIntercityFetchCache({
 
     const resource = intercityCacheResource(input)
     const cachePath = join(root, safeScope, `${resource}.json`)
-    const cached = await readCache(cachePath)
+    const cached = await readCacheFailOpen(cachePath, resource, logger)
     if (cached !== null) {
       logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'hit' }))
       return jsonResponse(cached)
+    }
+
+    let sourceVersion = null
+    if (persistent?.resolve) {
+      try {
+        const resolved = await persistent.resolve({ resource, input, init })
+        sourceVersion = resolved?.sourceVersion ?? null
+        if (resolved?.body) {
+          await writeCacheFailOpen(cachePath, resolved.body, resource, logger)
+          logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'persistent-hit' }))
+          return jsonResponse(resolved.body)
+        }
+      } catch (error) {
+        logger?.warn?.(`TDX InterCity persistent cache resolve failed for ${resource}: ${errorMessage(error)}`)
+      }
     }
 
     const response = await fetchImpl(input, init)
     if (!response.ok) return response
 
     const body = Buffer.from(await response.arrayBuffer())
-    try {
-      await writeCache(cachePath, body)
-      logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'miss' }))
-    } catch (error) {
-      logger?.warn?.(`TDX InterCity cache write failed for ${resource}: ${errorMessage(error)}`)
+    await writeCacheFailOpen(cachePath, body, resource, logger)
+    if (persistent?.store) {
+      try {
+        await persistent.store({ resource, body, sourceVersion })
+      } catch (error) {
+        logger?.warn?.(`TDX InterCity persistent cache store failed for ${resource}: ${errorMessage(error)}`)
+      }
     }
+    logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'miss' }))
     return jsonResponse(body, response.status)
   }
 }
 
-async function readCache(path) {
+async function readCacheFailOpen(path, resource, logger) {
   try {
     return await readFile(path)
   } catch (error) {
     if (error && typeof error === 'object' && error.code === 'ENOENT') return null
-    throw error
+    logger?.warn?.(`TDX InterCity run cache read failed for ${resource}: ${errorMessage(error)}`)
+    return null
+  }
+}
+
+async function writeCacheFailOpen(path, body, resource, logger) {
+  try {
+    await writeCache(path, body)
+    return true
+  } catch (error) {
+    logger?.warn?.(`TDX InterCity run cache write failed for ${resource}: ${errorMessage(error)}`)
+    return false
   }
 }
 
