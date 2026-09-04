@@ -1,19 +1,51 @@
+import { createCityFetchCache } from './city-fetch-cache.mjs'
+import { createCitySourceCache } from './city-source-cache.mjs'
 import { createIntercityFetchCache, intercityCacheScope } from './intercity-fetch-cache.mjs'
-import { createR2IntercitySourceCache } from './intercity-source-cache.mjs'
+import { createIntercitySourceCache } from './intercity-source-cache.mjs'
+import { createR2StaticSourceStorage } from './tdx-static-source-cache.mjs'
 
-const INSTALL_MARKER = Symbol.for('mochi-bus.tdx-intercity-cache-installed')
+const INSTALL_MARKER = Symbol.for('mochi-bus.tdx-static-cache-installed')
 const scope = intercityCacheScope()
 
-if (!globalThis[INSTALL_MARKER] && scope && typeof globalThis.fetch === 'function') {
-  const fetchImpl = globalThis.fetch
-  const persistent = createR2IntercitySourceCache({ fetchImpl })
-  globalThis.fetch = createIntercityFetchCache({ fetchImpl, scope, persistent })
+if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
+  const upstreamFetch = globalThis.fetch
+  const storage = createR2StaticSourceStorage()
+  let fetchImpl = upstreamFetch
+
+  // City snapshots are already sharded one city per scheduled slot, so they do
+  // not need another on-disk run cache. Persist the exact static payload in R2
+  // and use a tiny UpdateTime probe to decide whether it can be reused.
+  if (storage) {
+    const cityCaches = new Map()
+    fetchImpl = createCityFetchCache({
+      fetchImpl,
+      persistentForCity: (city) => {
+        let cache = cityCaches.get(city)
+        if (!cache) {
+          cache = createCitySourceCache({ city, fetchImpl: upstreamFetch, storage })
+          cityCaches.set(city, cache)
+        }
+        return cache
+      },
+    })
+  }
+
+  // InterCity still keeps its workflow-attempt disk layer because multiple city
+  // publishers in the same job consume the same national source payload.
+  if (scope) {
+    const persistent = storage
+      ? createIntercitySourceCache({ fetchImpl: upstreamFetch, storage })
+      : null
+    fetchImpl = createIntercityFetchCache({ fetchImpl, scope, persistent })
+  }
+
+  globalThis.fetch = fetchImpl
   globalThis[INSTALL_MARKER] = true
 }
 
 // run-snapshot-window.mjs spawns the city publisher with process.execPath.
 // Propagate this preload through NODE_OPTIONS so every city process in the same
-// workflow run shares the same on-disk InterCity cache.
+// workflow run gets the same static-source cache policy.
 if (scope) {
   const option = `--import=${import.meta.url}`
   const current = process.env.NODE_OPTIONS?.trim() ?? ''
