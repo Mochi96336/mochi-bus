@@ -2,12 +2,17 @@ import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { AwsClient } from 'aws4fetch'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
-import { patternStopExportManifestKey } from './export-pattern-stops.mjs'
+import {
+  patternStopArtifactKey,
+  patternStopExportManifestKey,
+} from './export-pattern-stops.mjs'
 import { queryD1 } from './window-d1.mjs'
 
 const DEFAULT_READ_CONCURRENCY = 8
 const DEFAULT_WRITE_CONCURRENCY = 8
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+// Keep this identical to src/domain/map/journey-segment.ts. The exporter stores
+// the result so request-time direct routing never needs an extra shape R2 read.
 const CIRCULAR_SHAPE_MAX_GAP_METERS = 500
 
 export function placeRoutingArtifactKey(version, city, placeId) {
@@ -78,9 +83,14 @@ export function buildPlaceRoutingArtifacts({ city, version, patterns, places, re
     patterns: new Map(),
     occurrences: [],
   }]))
+  const resolvedIds = new Set()
   let occurrences = 0
 
   for (const resolved of resolvedPatterns) {
+    if (!resolved?.patternId || resolvedIds.has(resolved.patternId)) {
+      throw new Error(`Duplicate or invalid resolved pattern ${resolved?.patternId ?? 'unknown'}`)
+    }
+    resolvedIds.add(resolved.patternId)
     const metadata = patternById.get(resolved.patternId)
     if (!metadata) throw new Error(`Pattern artifact ${resolved.patternId} has no D1 metadata`)
     if (resolved.shapeKey !== metadata.shapeKey) throw new Error(`Pattern ${resolved.patternId} shape key mismatch`)
@@ -98,6 +108,8 @@ export function buildPlaceRoutingArtifacts({ city, version, patterns, places, re
       const builder = builders.get(stop.placeId)
       if (!builder) throw new Error(`Pattern ${resolved.patternId} references unknown place ${stop.placeId}`)
       builder.patterns.set(resolved.patternId, pattern)
+      // Do not deduplicate by StopUID: a circular pattern can visit the same stop
+      // more than once at different sequences, and direct routing needs both.
       builder.occurrences.push(Object.freeze({
         patternId: resolved.patternId,
         stopUid: stop.stopUid,
@@ -107,6 +119,10 @@ export function buildPlaceRoutingArtifacts({ city, version, patterns, places, re
       occurrences += 1
     }
   }
+  if (resolvedIds.size !== patternById.size
+    || [...patternById.keys()].some((patternId) => !resolvedIds.has(patternId))) {
+    throw new Error('Resolved pattern metadata is incomplete')
+  }
 
   const artifacts = []
   for (const [placeId, builder] of builders) {
@@ -114,7 +130,9 @@ export function buildPlaceRoutingArtifacts({ city, version, patterns, places, re
     const patternList = [...builder.patterns.values()]
       .sort((a, b) => a.patternId.localeCompare(b.patternId))
     const occurrenceList = [...builder.occurrences]
-      .sort((a, b) => a.patternId.localeCompare(b.patternId) || a.stopSequence - b.stopSequence || a.stopUid.localeCompare(b.stopUid))
+      .sort((a, b) => a.patternId.localeCompare(b.patternId)
+        || a.stopSequence - b.stopSequence
+        || a.stopUid.localeCompare(b.stopUid))
     artifacts.push(Object.freeze({
       placeId,
       key: placeRoutingArtifactKey(version, city, placeId),
@@ -182,7 +200,8 @@ export async function exportPlaceRouting({
   }
 
   const version = await resolveTargetVersion({ city, target, query, getR2Json })
-  const upstreamManifest = await getR2Json(patternStopExportManifestKey(version, city))
+  const upstreamManifestKey = patternStopExportManifestKey(version, city)
+  const upstreamManifest = await getR2Json(upstreamManifestKey)
   const upstreamEntries = parsePatternExportManifest(upstreamManifest, city, version)
 
   const [patterns, places] = await Promise.all([
@@ -208,6 +227,7 @@ export async function exportPlaceRouting({
 
   // Resolve every upstream pattern and its route shape before issuing any R2 PUT.
   const metadataByPattern = new Map(patterns.map((row) => [row.pattern_id, row]))
+  if (metadataByPattern.size !== patterns.length) throw new Error('Duplicate D1 pattern metadata')
   const resolvedPatterns = await mapParallel(upstreamEntries, readConcurrency, async (entry) => {
     const metadata = metadataByPattern.get(entry.patternId)
     if (!metadata) throw new Error(`Pattern export ${entry.patternId} has no D1 metadata`)
@@ -220,7 +240,9 @@ export async function exportPlaceRouting({
       throw new Error(`Pattern ${entry.patternId} stop count mismatch: ${stops.length} != ${entry.stops}`)
     }
     const coordinates = shape?.geometry?.coordinates
-    if (!Array.isArray(coordinates) || coordinates.length < 2 || coordinates.some((point) => !isCoordinate(point))) {
+    if (shape?.type !== 'Feature' || shape?.geometry?.type !== 'LineString'
+      || !Array.isArray(coordinates) || coordinates.length < 2
+      || coordinates.some((point) => !isCoordinate(point))) {
       throw new Error(`Pattern ${entry.patternId} has invalid route shape`)
     }
     return Object.freeze({
@@ -258,7 +280,7 @@ export async function exportPlaceRouting({
     city,
     version,
     generatedAt: now().toISOString(),
-    upstreamPatternStopManifest: patternStopExportManifestKey(version, city),
+    upstreamPatternStopManifest: upstreamManifestKey,
     places: artifacts.length,
     patterns: upstreamEntries.length,
     occurrences: staged.occurrences,
@@ -291,15 +313,25 @@ function parsePatternExportManifest(value, city, version) {
     throw new Error(`Invalid pattern stop export manifest for ${city} ${version}`)
   }
   const seen = new Set()
-  return value.artifacts.map((entry, index) => {
+  let entryStops = 0
+  const entries = value.artifacts.map((entry, index) => {
     const stops = Number(entry?.stops)
     if (!entry?.patternId || !entry?.key || !Number.isSafeInteger(stops) || stops < 2) {
       throw new Error(`Invalid pattern stop export manifest entry ${index}`)
     }
     if (seen.has(entry.patternId)) throw new Error(`Duplicate pattern stop export ${entry.patternId}`)
     seen.add(entry.patternId)
+    const expectedKey = patternStopArtifactKey(version, city, entry.patternId)
+    if (entry.key !== expectedKey) {
+      throw new Error(`Pattern stop export key mismatch for ${entry.patternId}`)
+    }
+    entryStops += stops
     return Object.freeze({ patternId: entry.patternId, key: entry.key, stops })
   })
+  if (entryStops !== Number(value.patternStops)) {
+    throw new Error(`Pattern stop export occurrence parity failed: ${entryStops} != ${value.patternStops}`)
+  }
+  return entries
 }
 
 function parsePatternStops(value, city, version, patternId) {
