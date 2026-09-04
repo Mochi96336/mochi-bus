@@ -56,6 +56,34 @@ describe('intercity fetch cache', () => {
     expect(upstream).toHaveBeenCalledTimes(1)
   })
 
+  it('hydrates the run cache from persistent storage before downloading the full endpoint', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mochi-intercity-cache-'))
+    roots.push(root)
+    const upstream = vi.fn()
+    const persistent = {
+      resolve: vi.fn(async () => ({
+        body: Buffer.from('[{"RouteUID":"THB1"}]'),
+        sourceVersion: '2026-09-05T00:00:00+08:00',
+      })),
+      store: vi.fn(),
+    }
+    const fetchCached = createIntercityFetchCache({
+      fetchImpl: upstream,
+      root,
+      scope: 'run-persistent',
+      persistent,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    })
+    const url = 'https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/InterCity?$format=JSON'
+
+    await expect((await fetchCached(url)).json()).resolves.toEqual([{ RouteUID: 'THB1' }])
+    await expect((await fetchCached(url)).json()).resolves.toEqual([{ RouteUID: 'THB1' }])
+
+    expect(persistent.resolve).toHaveBeenCalledTimes(1)
+    expect(persistent.store).not.toHaveBeenCalled()
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
   it('keeps cache scope inside one GitHub workflow attempt', () => {
     expect(intercityCacheScope({ GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2' }))
       .toBe('github-123-2')
