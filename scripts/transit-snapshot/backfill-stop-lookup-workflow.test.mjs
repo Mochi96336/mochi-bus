@@ -4,14 +4,15 @@ import { describe, expect, it } from 'vitest'
 const workflow = readFileSync(new URL('../../.github/workflows/backfill-stop-lookup.yml', import.meta.url), 'utf8')
 
 describe('stop-lookup R2 backfill workflow', () => {
-  it('has only the deliberate one-shot Taichung push canary plus manual dispatch', () => {
+  it('is manual-only after the production canary', () => {
     expect(workflow).toContain('workflow_dispatch:')
-    expect(workflow).toContain('push:')
+    expect(workflow).not.toContain('push:')
     expect(workflow).not.toContain('schedule:')
-    expect(workflow).toContain('- .github/workflows/backfill-stop-lookup.yml')
-    expect(workflow).toContain("CITY: ${{ inputs.city || 'Taichung' }}")
-    expect(workflow).toContain("TARGET: ${{ inputs.target || 'active' }}")
-    expect(workflow).toContain("group: stop-lookup-backfill-${{ inputs.city || 'Taichung' }}")
+    expect(workflow).toContain('CITY: ${{ inputs.city }}')
+    expect(workflow).toContain('TARGET: ${{ inputs.target }}')
+    expect(workflow).toContain('group: stop-lookup-backfill-${{ inputs.city }}')
+    expect(workflow).not.toContain("|| 'Taichung'")
+    expect(workflow).not.toContain("|| 'active'")
     expect(workflow).toContain('cancel-in-progress: false')
   })
 

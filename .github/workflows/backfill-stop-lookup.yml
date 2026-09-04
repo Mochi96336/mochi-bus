@@ -39,16 +39,9 @@ on:
         options:
           - active
           - previous
-  # One-shot production canary: merging the workflow itself launches Taichung
-  # exactly once. A follow-up removes this push trigger and keeps manual dispatch.
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/backfill-stop-lookup.yml
 
 concurrency:
-  group: stop-lookup-backfill-${{ inputs.city || 'Taichung' }}
+  group: stop-lookup-backfill-${{ inputs.city }}
   cancel-in-progress: false
 
 jobs:
@@ -71,7 +64,7 @@ jobs:
         run: node scripts/instance/operation-scope.mjs snapshot
       - name: Validate backfill scope
         env:
-          CITY: ${{ inputs.city || 'Taichung' }}
+          CITY: ${{ inputs.city }}
           SNAPSHOT_ENABLED: ${{ steps.operation.outputs.enabled }}
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
@@ -83,8 +76,8 @@ jobs:
           node scripts/instance/assert-operation-city.mjs "$CITY"
       - name: Export stop lookup
         env:
-          CITY: ${{ inputs.city || 'Taichung' }}
-          TARGET: ${{ inputs.target || 'active' }}
+          CITY: ${{ inputs.city }}
+          TARGET: ${{ inputs.target }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
