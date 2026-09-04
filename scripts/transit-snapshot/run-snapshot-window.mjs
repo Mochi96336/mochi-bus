@@ -200,7 +200,7 @@ export async function runPublisherProcess(city, env = process.env) {
     let terminal = null
     let probe = null
     let settled = false
-    const child = spawn(process.execPath, ['scripts/sync-transit-snapshot.mjs', city], {
+    const child = spawn(process.execPath, ['scripts/sync-transit-snapshot-cached.mjs', city], {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
