@@ -58,7 +58,7 @@
     "snapshot:export-place-routing": "node scripts/transit-snapshot/export-place-routing.mjs"
   },
   "dependencies": {
-    "hono": "^4.12.29",
+    "hono": "^4.12.33",
     "leaflet": "^1.9.4"
   },
   "devDependencies": {
