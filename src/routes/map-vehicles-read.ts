@@ -19,6 +19,17 @@ import {
   type MapEnv,
 } from './map-http-context'
 
+const VEHICLE_SELECT = [
+  'PlateNumb',
+  'RouteUID',
+  'Direction',
+  'BusPosition',
+  'Speed',
+  'Azimuth',
+  'GPSTime',
+  'UpdateTime',
+].join(',')
+
 type VehicleItem = {
   PlateNumb?: string
   RouteUID?: string
@@ -46,7 +57,14 @@ export async function readVehicles(c: Context<MapEnv>) {
     const url = new URL(
       `https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/${tdxRouteScope(city, routeUid)}/${encodeURIComponent(routeName)}`,
     )
+    // Keep $format first for cache-key continuity with the existing route-specific request,
+    // then narrow fields and identities so a cache miss transfers only records this handler can use.
     url.searchParams.set('$format', 'JSON')
+    url.searchParams.set('$select', VEHICLE_SELECT)
+    const filters: string[] = []
+    if (routeUid) filters.push(`RouteUID eq '${escapeODataString(routeUid)}'`)
+    if (direction !== undefined) filters.push(`Direction eq ${direction}`)
+    if (filters.length) url.searchParams.set('$filter', filters.join(' and '))
 
     let items: VehicleItem[] = []
     let warning: TDXWarning | undefined
@@ -67,6 +85,8 @@ export async function readVehicles(c: Context<MapEnv>) {
       }))
     }
 
+    // Keep local identity filtering as a defensive boundary even though stable identities are
+    // now also pushed upstream; malformed/out-of-scope rows must not leak into the public response.
     const identityMatchedItems = items
       .filter((item) => !routeUid || item.RouteUID === routeUid)
       .filter((item) => direction === undefined || item.Direction === direction)
@@ -99,4 +119,8 @@ export async function readVehicles(c: Context<MapEnv>) {
   } catch (error) {
     return completeMapError(c, tracker, error, '車輛位置讀取失敗')
   }
+}
+
+function escapeODataString(value: string): string {
+  return value.replaceAll("'", "''")
 }
