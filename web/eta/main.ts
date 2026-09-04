@@ -11,6 +11,7 @@ import { isTdxTokenRejectedError, requestMochiJson } from '../tdx/api-client'
 import type { EtaSource } from '../../src/domain/eta-presentation'
 import { resolveHomeBoardState } from './home-board-state'
 import { createEtaRow, updateEtaRow, type EtaRowViewModel } from './eta-row-view'
+import { recoverLegacyBoardPlace, type StopPlaceIdentity } from './legacy-place-recovery'
 
 type EtaBootstrap = {
   initialBoard: FavoriteBoard | null
@@ -123,8 +124,18 @@ const refreshButton = requiredElement<HTMLButtonElement>('#refresh')
 const refreshStatusNode = requiredElement<HTMLSpanElement>('#refresh-status')
 const onboardNode = requiredElement<HTMLDivElement>('#onboard')
 const onboardSignNode = requiredElement<HTMLDivElement>('#onboard-sign')
-const mapLink = document.querySelector<HTMLAnchorElement>('.top-actions a')
-if (!mapLink) throw new Error('ETA page is missing the map link')
+const mapLink = requiredElement<HTMLAnchorElement>('.top-actions a')
+
+function updateMapLink(): void {
+  if (demoBoard) return
+  const firstBus = currentBoard.buses[0]
+  const city = currentBoard.city || firstBus?.city
+  if (!city) return
+  const mapParams = new URLSearchParams({ city })
+  if (currentBoard.placeId) mapParams.set('place', currentBoard.placeId)
+  if (firstBus?.stopUid) mapParams.set('stopUid', firstBus.stopUid)
+  mapLink.href = '/map?' + mapParams
+}
 
 function paramsFor(bus: FavoriteBus): URLSearchParams {
   const params = new URLSearchParams({ city: bus.city || currentBoard.city || '', route: bus.routeName, direction: String(bus.direction) })
@@ -252,7 +263,30 @@ async function repairBusFromPlace(bus: FavoriteBus): Promise<boolean> {
   } catch { return false }
 }
 
+let placeRecoveryPromise: Promise<void> | undefined
+async function recoverCurrentBoardPlace(): Promise<void> {
+  if (currentBoard.placeId) return
+  placeRecoveryPromise ||= (async () => {
+    const recovered = await recoverLegacyBoardPlace(currentBoard, async (city, stopUid) => {
+      try {
+        const params = new URLSearchParams({ city, stopUid })
+        const body = await requestMochiJson<{ place?: StopPlaceIdentity }>(
+          '/api/v1/map/stop-place?' + params,
+        )
+        return body.place ?? null
+      } catch {
+        return null
+      }
+    })
+    if (recovered === currentBoard) return
+    currentBoard = recovered
+    updateMapLink()
+  })()
+  await placeRecoveryPromise
+}
+
 async function loadPlaceArrivals(): Promise<PlaceArrivalsLoad> {
+  await recoverCurrentBoardPlace()
   const city = currentBoard.city || currentBoard.buses[0]?.city
   if (!city || !currentBoard.placeId) return { routes: null }
   try {
@@ -413,10 +447,7 @@ if (useLocalBoard) {
     // 否則使用者從沒去過台北,打開地圖卻直接跳台北而不是台灣總覽。
     if (city && !demoBoard) {
       setActiveCity(city)
-      const mapParams = new URLSearchParams({ city })
-      if (currentBoard.placeId) mapParams.set('place', currentBoard.placeId)
-      if (firstBus?.stopUid) mapParams.set('stopUid', firstBus.stopUid)
-      mapLink.href = '/map?' + mapParams
+      updateMapLink()
     }
     const initialBus = initialBoard?.buses[0]
     if (!initialBoard || currentBoard.id !== initialBoard.id || currentBoard.buses.length > 1 || firstBus?.stopUid !== initialBus?.stopUid || firstBus?.routeName !== initialBus?.routeName || firstBus?.direction !== initialBus?.direction) {
