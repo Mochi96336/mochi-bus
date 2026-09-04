@@ -439,6 +439,22 @@ function samePatternMetadata(endpoint: PlaceRoutingPattern, shard: TransferRouti
     && endpoint.maxSequence === shard.maxSequence
 }
 
+function sameEndpointSequences(
+  placeId: string,
+  endpointOccurrences: PlaceRoutingOccurrence[],
+  shard: TransferRoutingPattern,
+): boolean {
+  const endpointSequences = endpointOccurrences
+    .map((occurrence) => occurrence.stopSequence)
+    .sort((left, right) => left - right)
+  const shardSequences = shard.occurrences
+    .filter((occurrence) => occurrence.placeId === placeId)
+    .map((occurrence) => occurrence.stopSequence)
+    .sort((left, right) => left - right)
+  return endpointSequences.length === shardSequences.length
+    && endpointSequences.every((sequence, index) => sequence === shardSequences[index])
+}
+
 function legStopCount(
   pattern: TransferRoutingPattern,
   boardSequence: number,
@@ -528,7 +544,9 @@ function isDirection(value: unknown): value is 0 | 1 | 2 {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  const digestInput = new Uint8Array(bytes.byteLength)
+  digestInput.set(bytes)
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', digestInput.buffer)
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
@@ -599,8 +617,14 @@ export async function getOneTransferRoutes(
     if (!shardPattern) return fallback()
     const fromPattern = fromPatternById.get(patternId)
     const toPattern = toPatternById.get(patternId)
-    if ((fromPattern && !samePatternMetadata(fromPattern, shardPattern))
-      || (toPattern && !samePatternMetadata(toPattern, shardPattern))) return fallback()
+    const fromPatternOccurrences = fromOccurrences.get(patternId)
+    const toPatternOccurrences = toOccurrences.get(patternId)
+    if ((fromPattern && (!samePatternMetadata(fromPattern, shardPattern)
+      || !fromPatternOccurrences
+      || !sameEndpointSequences(fromPlaceId, fromPatternOccurrences, shardPattern)))
+      || (toPattern && (!samePatternMetadata(toPattern, shardPattern)
+        || !toPatternOccurrences
+        || !sameEndpointSequences(toPlaceId, toPatternOccurrences, shardPattern)))) return fallback()
   }
 
   return pairTransferLegs(
