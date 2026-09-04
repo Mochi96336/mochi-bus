@@ -4,6 +4,7 @@ import {
   tdxStaticProbeUrl,
 } from './tdx-static-source-cache.mjs'
 
+// City code becomes part of an R2 object key, so keep this narrower than a URL segment.
 const CITY_CODE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 
 export function createCitySourceCache({ city, fetchImpl, storage, logger = console }) {
