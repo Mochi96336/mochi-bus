@@ -75,12 +75,18 @@ function databaseFor(rowsForQuery: (query: string) => unknown[]) {
   return { database, queries, bindings }
 }
 
-function bucket({ manifest = true, missingArtifact = false, throwArtifact = false } = {}) {
+function bucket({
+  manifest = true,
+  missingArtifact = false,
+  throwArtifact = false,
+  throwHead = false,
+} = {}) {
   const heads: string[] = []
   const reads: string[] = []
   const r2 = {
     async head(key: string) {
       heads.push(key)
+      if (throwHead) throw new Error('temporary R2 HEAD failure')
       return manifest ? {} as R2Object : null
     },
     async get(key: string) {
@@ -160,6 +166,39 @@ describe('R2-first snapshot route variants', () => {
     expect(legacy.getSnapshotRouteVariants).toHaveBeenCalledWith(env, 'Taichung', '300')
     expect(db.queries).toEqual([])
     expect(r2.reads).toEqual([])
+  })
+
+  it('caches a missing export manifest within the 60-second gate window', async () => {
+    const fallback = [{ variantKey: 'legacy' }]
+    legacy.getSnapshotRouteVariants.mockResolvedValue(fallback)
+    const db = databaseFor(() => { throw new Error('metadata query must not run') })
+    const r2 = bucket({ manifest: false })
+    const env: TransitBindings = { TRANSIT_DB: db.database, TRANSIT_SHAPES: r2.r2 }
+
+    await getSnapshotRouteVariants(env, 'Taichung', '300')
+    await getSnapshotRouteVariants(env, 'Taichung', '300')
+
+    expect(r2.heads).toEqual(['snapshots/v1/cities/Taichung/pattern-stops-export.json'])
+    expect(legacy.getSnapshotRouteVariants).toHaveBeenCalledTimes(2)
+    expect(db.queries).toEqual([])
+  })
+
+  it('does not cache a transient export-manifest HEAD failure', async () => {
+    const fallback = [{ variantKey: 'legacy' }]
+    legacy.getSnapshotRouteVariants.mockResolvedValue(fallback)
+    const db = databaseFor(() => { throw new Error('metadata query must not run') })
+    const r2 = bucket({ throwHead: true })
+    const env: TransitBindings = { TRANSIT_DB: db.database, TRANSIT_SHAPES: r2.r2 }
+
+    await getSnapshotRouteVariants(env, 'Taichung', '300')
+    await getSnapshotRouteVariants(env, 'Taichung', '300')
+
+    expect(r2.heads).toEqual([
+      'snapshots/v1/cities/Taichung/pattern-stops-export.json',
+      'snapshots/v1/cities/Taichung/pattern-stops-export.json',
+    ])
+    expect(legacy.getSnapshotRouteVariants).toHaveBeenCalledTimes(2)
+    expect(db.queries).toEqual([])
   })
 })
 
