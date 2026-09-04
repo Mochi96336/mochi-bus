@@ -1,10 +1,13 @@
 import { createIntercityFetchCache, intercityCacheScope } from './intercity-fetch-cache.mjs'
+import { createR2IntercitySourceCache } from './intercity-source-cache.mjs'
 
 const INSTALL_MARKER = Symbol.for('mochi-bus.tdx-intercity-cache-installed')
 const scope = intercityCacheScope()
 
 if (!globalThis[INSTALL_MARKER] && scope && typeof globalThis.fetch === 'function') {
-  globalThis.fetch = createIntercityFetchCache({ fetchImpl: globalThis.fetch, scope })
+  const fetchImpl = globalThis.fetch
+  const persistent = createR2IntercitySourceCache({ fetchImpl })
+  globalThis.fetch = createIntercityFetchCache({ fetchImpl, scope, persistent })
   globalThis[INSTALL_MARKER] = true
 }
 
