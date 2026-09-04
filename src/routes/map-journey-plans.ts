@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { supportedCityCodes } from '../config'
 import { QueryValidationError } from '../domain/bus-query'
 import { getDirectRoutes } from '../infrastructure/transit/snapshot-place-routing-repository'
-import { getOneTransferRoutes } from '../infrastructure/transit/snapshot-repository'
+import { getOneTransferRoutes } from '../infrastructure/transit/snapshot-transfer-routing-repository'
 import { requiredQueryString } from '../lib/api-input'
 import { mapJsonError, type MapEnv } from './map-http-context'
 
