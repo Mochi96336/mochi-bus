@@ -75,7 +75,7 @@ function databaseFor(rowsForQuery: (query: string) => unknown[]) {
   return { database, queries, bindings }
 }
 
-function bucket({ manifest = true, missingArtifact = false } = {}) {
+function bucket({ manifest = true, missingArtifact = false, throwArtifact = false } = {}) {
   const heads: string[] = []
   const reads: string[] = []
   const r2 = {
@@ -86,6 +86,7 @@ function bucket({ manifest = true, missingArtifact = false } = {}) {
     async get(key: string) {
       reads.push(key)
       if (key.endsWith('/patterns/P1/stops.json')) {
+        if (throwArtifact) throw new Error('temporary R2 failure')
         if (missingArtifact) return null
         return { json: async <T>() => artifact() as T } as unknown as R2ObjectBody
       }
@@ -204,6 +205,19 @@ describe('R2-first journey stop refs', () => {
     legacy.getJourneyLegStopRefs.mockResolvedValue(fallback)
     const db = databaseFor(() => { throw new Error('metadata query must not run') })
     const r2 = bucket({ missingArtifact: true })
+    const env: TransitBindings = { TRANSIT_DB: db.database, TRANSIT_SHAPES: r2.r2 }
+    const legs = [{ key: 'a', patternId: 'P1', sequence: 1 }]
+
+    await expect(getJourneyLegStopRefs(env, 'Taichung', legs)).resolves.toBe(fallback)
+    expect(legacy.getJourneyLegStopRefs).toHaveBeenCalledWith(env, 'Taichung', legs)
+    expect(db.queries).toEqual([])
+  })
+
+  it('falls back to D1 when an artifact R2 read fails transiently', async () => {
+    const fallback = [{ key: 'legacy', patternId: 'P1', routeUid: 'R1', direction: 0, routeName: '300', stopUid: 'S1' }]
+    legacy.getJourneyLegStopRefs.mockResolvedValue(fallback)
+    const db = databaseFor(() => { throw new Error('metadata query must not run') })
+    const r2 = bucket({ throwArtifact: true })
     const env: TransitBindings = { TRANSIT_DB: db.database, TRANSIT_SHAPES: r2.r2 }
     const legs = [{ key: 'a', patternId: 'P1', sequence: 1 }]
 
