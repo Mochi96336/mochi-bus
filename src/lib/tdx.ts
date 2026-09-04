@@ -40,6 +40,7 @@ import {
 } from './tdx/resolution-cache'
 import { createTDXBusRouteQueries } from './tdx/bus-route-queries'
 import { createTDXCommuteRoutePresentation } from './tdx/commute-route-presentation'
+import { tdxRealtimeCacheSeconds } from './tdx/realtime-cache-policy'
 import { createTDXScheduleEndpoint, tdxTelemetryCity } from './tdx/schedule-endpoint'
 
 export { formatETALabel, formatStopStatus, toETAResult } from './tdx/eta-formatting'
@@ -175,9 +176,8 @@ const resolutionCache = createTDXResolutionCache({
   recordCircuitSuccess: circuitBreaker.recordSuccess,
 })
 
-export const fetchTDXJson = resolutionCache.fetchTDXJson
-export const resolveTDXJson = resolutionCache.resolveTDXJson
-
+export const fetchTDXJson = <T>(env: TDXEnv, url: URL, ttlSeconds: number, options?: TDXResolutionOptions<T>): Promise<T> => resolutionCache.fetchTDXJson(env, url, tdxRealtimeCacheSeconds(url, ttlSeconds, Boolean(env.TDX_USER_ACCESS_TOKEN)), options)
+export const resolveTDXJson = <T>(env: TDXEnv, url: URL, ttlSeconds: number, options?: TDXResolutionOptions<T>): Promise<TDXResolvedData<T>> => resolutionCache.resolveTDXJson(env, url, tdxRealtimeCacheSeconds(url, ttlSeconds, Boolean(env.TDX_USER_ACCESS_TOKEN)), options)
 const busRouteQueries = createTDXBusRouteQueries({
   fetchTDXJson,
   telemetryCity: tdxTelemetryCity,
