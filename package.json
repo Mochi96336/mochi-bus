@@ -49,7 +49,7 @@
     "measure:shape-pattern": "node scripts/shape-pattern-measurement/run.mjs",
     "verify:shape-pattern-report": "node scripts/shape-pattern-measurement/verify-report.mjs",
     "snapshot:city": "node scripts/sync-transit-snapshot.mjs",
-    "snapshot:window": "node scripts/transit-snapshot/run-snapshot-window.mjs",
+    "snapshot:window": "node --import ./scripts/transit-snapshot/install-intercity-fetch-cache.mjs scripts/transit-snapshot/run-snapshot-window.mjs",
     "snapshot:watchdog": "node scripts/transit-snapshot/run-window-watchdog.mjs",
     "snapshot:public-probe": "node scripts/transit-snapshot/run-public-probe.mjs",
     "snapshot:repair-legacy-previous": "node scripts/transit-snapshot/repair-legacy-previous.mjs",
