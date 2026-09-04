@@ -5,6 +5,7 @@ import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { queryD1 } from './window-d1.mjs'
 
 const DEFAULT_PAGE_SIZE = 2_000
+const DEFAULT_WRITE_CONCURRENCY = 8
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 export function buildPatternStopArtifact({ city, version, patternId, rows }) {
@@ -67,10 +68,14 @@ export async function exportPatternStops({
   env = process.env,
   fetchImpl = fetch,
   pageSize = DEFAULT_PAGE_SIZE,
+  writeConcurrency = DEFAULT_WRITE_CONCURRENCY,
   now = () => new Date(),
 }) {
   if (!city) throw new Error('City is required')
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 10_000) throw new Error('Invalid page size')
+  if (!Number.isSafeInteger(writeConcurrency) || writeConcurrency < 1 || writeConcurrency > 32) {
+    throw new Error('Invalid R2 write concurrency')
+  }
 
   const resources = loadOperationalResources()
   const accountId = required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID')
@@ -119,21 +124,22 @@ export async function exportPatternStops({
     throw new Error(`No pattern stops found for ${city} ${version}`)
   }
 
-  const artifacts = []
+  // Build and parity-check the complete logical export before issuing any R2 PUT.
+  // This keeps a count mismatch at zero R2 writes. Pattern-stop payloads are small
+  // enough for an Actions runner; R2 writes happen only after this gate passes.
+  const stagedArtifacts = []
   let exportedPatternStops = 0
   let cursor = Object.freeze({ patternId: '', stopSequence: -1 })
   let currentPatternId = null
   let currentRows = []
-  const flush = async () => {
+  const flush = () => {
     if (!currentPatternId) return
     const artifact = buildPatternStopArtifact({ city, version, patternId: currentPatternId, rows: currentRows })
-    const key = patternStopArtifactKey(version, city, currentPatternId)
-    const fingerprint = await putR2Json(key, artifact)
-    artifacts.push(Object.freeze({
+    stagedArtifacts.push(Object.freeze({
       patternId: currentPatternId,
-      key,
+      key: patternStopArtifactKey(version, city, currentPatternId),
       stops: artifact.stops.length,
-      ...fingerprint,
+      artifact,
     }))
     exportedPatternStops += artifact.stops.length
     currentPatternId = null
@@ -162,21 +168,31 @@ export async function exportPatternStops({
     if (!rows.length) break
 
     for (const row of rows) {
-      if (currentPatternId !== null && row.pattern_id !== currentPatternId) await flush()
+      if (currentPatternId !== null && row.pattern_id !== currentPatternId) flush()
       if (currentPatternId === null) currentPatternId = row.pattern_id
       currentRows.push(row)
     }
     cursor = nextPatternStopCursor(rows, cursor)
     if (rows.length < pageSize) break
   }
-  await flush()
+  flush()
 
-  if (artifacts.length !== expectedPatterns || exportedPatternStops !== expectedPatternStops) {
+  if (stagedArtifacts.length !== expectedPatterns || exportedPatternStops !== expectedPatternStops) {
     throw new Error(
-      `Pattern stop export parity failed: ${artifacts.length}/${exportedPatternStops}`
+      `Pattern stop export parity failed: ${stagedArtifacts.length}/${exportedPatternStops}`
       + ` != ${expectedPatterns}/${expectedPatternStops}`,
     )
   }
+
+  const artifacts = await mapParallel(stagedArtifacts, writeConcurrency, async (item) => {
+    const fingerprint = await putR2Json(item.key, item.artifact)
+    return Object.freeze({
+      patternId: item.patternId,
+      key: item.key,
+      stops: item.stops,
+      ...fingerprint,
+    })
+  })
 
   const manifest = Object.freeze({
     schemaVersion: 1,
@@ -207,6 +223,22 @@ async function resolveTargetVersion({ city, target, query, getR2Json }) {
   }
   if (!SAFE_VERSION.test(target)) throw new Error('Invalid snapshot version')
   return target
+}
+
+async function mapParallel(items, concurrency, worker) {
+  if (!items.length) return []
+  const results = new Array(items.length)
+  let nextIndex = 0
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const index = nextIndex
+      nextIndex += 1
+      if (index >= items.length) return
+      results[index] = await worker(items[index], index)
+    }
+  })
+  await Promise.all(runners)
+  return results
 }
 
 function objectUrl(baseUrl, key) {
