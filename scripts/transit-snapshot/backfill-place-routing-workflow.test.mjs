@@ -4,13 +4,17 @@ import { describe, expect, it } from 'vitest'
 const workflow = readFileSync(new URL('../../.github/workflows/backfill-place-routing.yml', import.meta.url), 'utf8')
 
 describe('place-routing R2 backfill workflow', () => {
-  it('is manual-only and serializes runs per city', () => {
+  it('keeps manual dispatch and narrows the one-shot Taichung canary trigger', () => {
     expect(workflow).toContain('workflow_dispatch:')
-    expect(workflow).not.toContain('push:')
+    expect(workflow).toContain('push:')
+    expect(workflow).toContain('branches:')
+    expect(workflow).toContain('- main')
+    expect(workflow).toContain('paths:')
+    expect(workflow).toContain('- .github/workflows/backfill-place-routing.yml')
     expect(workflow).not.toContain('schedule:')
-    expect(workflow).toContain('CITY: ${{ inputs.city }}')
-    expect(workflow).toContain('TARGET: ${{ inputs.target }}')
-    expect(workflow).toContain('group: place-routing-backfill-${{ inputs.city }}')
+    expect(workflow).toContain("CITY: ${{ inputs.city || 'Taichung' }}")
+    expect(workflow).toContain("TARGET: ${{ inputs.target || 'active' }}")
+    expect(workflow).toContain("group: place-routing-backfill-${{ inputs.city || 'Taichung' }}")
     expect(workflow).toContain('cancel-in-progress: false')
   })
 
