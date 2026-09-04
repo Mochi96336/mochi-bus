@@ -115,23 +115,36 @@ describe('Map journey ETA handler', () => {
     vi.restoreAllMocks()
   })
 
-  it('resolves each route once and preserves the realtime response contract', async () => {
+  it('batches multiple city routes into one realtime TDX request', async () => {
+    const secondLeg = { key: 'leg-2', patternId: 'pattern-2', sequence: 2 }
     patternStops.getJourneyLegStopRefs.mockResolvedValue([
       ref,
-      { ...ref, key: 'leg-2', patternId: 'pattern-2' },
+      {
+        ...secondLeg,
+        routeUid: 'TPE2',
+        direction: 1 as const,
+        routeName: '299',
+        stopUid: 'STOP2',
+      },
     ])
-    tdx.fetchTDXJson.mockResolvedValue([{
-      RouteUID: 'TPE1',
-      Direction: 0,
-      StopUID: 'STOP1',
-      EstimateTime: 180,
-      StopStatus: 0,
-    }])
+    tdx.fetchTDXJson.mockResolvedValue([
+      {
+        RouteUID: 'TPE1',
+        Direction: 0,
+        StopUID: 'STOP1',
+        EstimateTime: 180,
+        StopStatus: 0,
+      },
+      {
+        RouteUID: 'TPE2',
+        Direction: 1,
+        StopUID: 'STOP2',
+        EstimateTime: 420,
+        StopStatus: 0,
+      },
+    ])
 
-    const response = await request({
-      city: 'Taipei',
-      legs: [leg, { key: 'leg-2', patternId: 'pattern-2', sequence: 2 }],
-    })
+    const response = await request({ city: 'Taipei', legs: [leg, secondLeg] })
     const body = await response.json<{
       schemaVersion: number
       city: string
@@ -146,16 +159,26 @@ describe('Map journey ETA handler', () => {
       city: 'Taipei',
       estimates: [
         { key: 'leg-1', source: 'realtime', minutes: 3 },
-        { key: 'leg-2', source: 'realtime', minutes: 3 },
+        { key: 'leg-2', source: 'realtime', minutes: 7 },
       ],
     })
     expect(Number.isNaN(Date.parse(body.fetchedAt))).toBe(false)
     expect(tdx.fetchTDXJson).toHaveBeenCalledTimes(1)
     const [env, url, ttl, options] = tdx.fetchTDXJson.mock.calls[0]
     expect(env).toMatchObject({ TDX_CLIENT_ID: 'shared-id', TDX_CLIENT_SECRET: 'shared-secret' })
-    expect(String(url)).toContain('/Bus/EstimatedTimeOfArrival/City/Taipei/307?%24format=JSON')
+    const requestUrl = new URL(String(url))
+    expect(requestUrl.pathname).toBe('/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei')
+    expect(requestUrl.searchParams.get('$filter')).toContain("StopUID eq 'STOP1'")
+    expect(requestUrl.searchParams.get('$filter')).toContain("StopUID eq 'STOP2'")
+    expect(requestUrl.searchParams.get('$filter')).toContain("RouteUID eq 'TPE1'")
+    expect(requestUrl.searchParams.get('$filter')).toContain("RouteUID eq 'TPE2'")
+    expect(requestUrl.searchParams.get('$select')).toBe('RouteUID,SubRouteUID,StopUID,Direction,EstimateTime,StopStatus')
     expect(ttl).toBe(15)
-    expect(options).toMatchObject({ operation: 'journey_eta', city: 'Taipei' })
+    expect(options).toMatchObject({
+      operation: 'journey_eta',
+      city: 'Taipei',
+      maxResponseBytes: 512 * 1024,
+    })
     expect(repository.getSnapshotSchedule).not.toHaveBeenCalled()
     expect(tdx.getBusSchedule).not.toHaveBeenCalled()
     expect(capturedEvent(log)).toMatchObject({
