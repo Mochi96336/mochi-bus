@@ -1,0 +1,106 @@
+name: Backfill place routing to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      city:
+        description: Transit city to backfill
+        required: true
+        type: choice
+        default: Taichung
+        options:
+          - Taipei
+          - NewTaipei
+          - Taoyuan
+          - Taichung
+          - Tainan
+          - Kaohsiung
+          - Keelung
+          - Hsinchu
+          - HsinchuCounty
+          - MiaoliCounty
+          - ChanghuaCounty
+          - NantouCounty
+          - YunlinCounty
+          - Chiayi
+          - ChiayiCounty
+          - PingtungCounty
+          - YilanCounty
+          - HualienCounty
+          - TaitungCounty
+          - KinmenCounty
+          - PenghuCounty
+          - LienchiangCounty
+      target:
+        description: Snapshot pointer to export
+        required: true
+        type: choice
+        default: active
+        options:
+          - active
+          - previous
+
+concurrency:
+  group: place-routing-backfill-${{ inputs.city }}
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Resolve snapshot resources
+        id: operation
+        run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Validate backfill scope
+        env:
+          CITY: ${{ inputs.city }}
+          SNAPSHOT_ENABLED: ${{ steps.operation.outputs.enabled }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+        run: |
+          set -euo pipefail
+          test "$SNAPSHOT_ENABLED" = "true"
+          test -n "$TRANSIT_DATABASE_ID"
+          test -n "$TRANSIT_R2_BUCKET_NAME"
+          node scripts/instance/assert-operation-city.mjs "$CITY"
+      - name: Export place routing
+        env:
+          CITY: ${{ inputs.city }}
+          TARGET: ${{ inputs.target }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+        run: |
+          set -euo pipefail
+          node scripts/transit-snapshot/export-place-routing.mjs "$CITY" "$TARGET" | tee place-routing-export.log
+          node -e '
+            const fs = require("node:fs");
+            const lines = fs.readFileSync("place-routing-export.log", "utf8").trim().split(/\r?\n/);
+            const result = JSON.parse(lines.at(-1));
+            if (result.event !== "place_routing_export_completed") throw new Error("missing completion marker");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+              "## Place-routing R2 backfill",
+              "",
+              `- City: \`${result.city}\``,
+              `- Version: \`${result.version}\``,
+              `- Places: ${result.places}`,
+              `- Patterns: ${result.patterns}`,
+              `- Occurrences: ${result.occurrences}`,
+              `- Manifest: \`${result.manifestKey}\``,
+              "",
+            ].join("\n"));
+          '

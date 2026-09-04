@@ -54,7 +54,8 @@
     "snapshot:public-probe": "node scripts/transit-snapshot/run-public-probe.mjs",
     "snapshot:repair-legacy-previous": "node scripts/transit-snapshot/repair-legacy-previous.mjs",
     "snapshot:rollback": "node scripts/transit-snapshot/rollback.mjs",
-    "snapshot:reconcile": "node scripts/transit-snapshot/rollback.mjs reconcile"
+    "snapshot:reconcile": "node scripts/transit-snapshot/rollback.mjs reconcile",
+    "snapshot:export-place-routing": "node scripts/transit-snapshot/export-place-routing.mjs"
   },
   "dependencies": {
     "hono": "^4.12.29",
