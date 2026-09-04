@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetMemoryCacheForTests } from '../../lib/memory-cache'
 
@@ -95,26 +94,31 @@ function shardArtifact(shard: number, shardCount: number, patterns: ReturnType<t
   }
 }
 
-function fingerprint(value: unknown) {
-  const body = JSON.stringify(value)
+async function fingerprint(value: unknown) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value))
+  const digestInput = new Uint8Array(bytes.byteLength)
+  digestInput.set(bytes)
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', digestInput.buffer)
   return {
-    bytes: Buffer.byteLength(body),
-    sha256: createHash('sha256').update(body).digest('hex'),
+    bytes: bytes.byteLength,
+    sha256: [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join(''),
   }
 }
 
-function dataset(shards: ReturnType<typeof shardArtifact>[], mapping: Array<[string, number]>) {
+async function dataset(shards: ReturnType<typeof shardArtifact>[], mapping: Array<[string, number]>) {
   const shardCount = shards.length
-  const shardDescriptors = shards.map((artifact, shard) => {
+  const shardDescriptors = await Promise.all(shards.map(async (artifact, shard) => {
     const occurrences = artifact.patterns.reduce((sum, item) => sum + item.occurrences.length, 0)
     return {
       shard,
       key: `snapshots/v1/cities/Taichung/routing/transfers/shards/${String(shard).padStart(2, '0')}.json`,
       patterns: artifact.patterns.length,
       occurrences,
-      ...fingerprint(artifact),
+      ...await fingerprint(artifact),
     }
-  })
+  }))
   const manifest = {
     schemaVersion: 1,
     kind: 'transfer-routing-export',
@@ -166,7 +170,7 @@ function env(r2: R2Bucket): TransitBindings {
   return { TRANSIT_DB: {} as D1Database, TRANSIT_SHAPES: r2 }
 }
 
-function baseData() {
+async function baseData() {
   const p1 = pattern('P1', 'R1', 'Route 1', 1, 3)
   const p2 = pattern('P2', 'R2', 'Route 2', 2, 4)
   const p3 = pattern('P3', 'R3', 'Unused', 1, 2)
@@ -185,7 +189,7 @@ function baseData() {
     ])]),
     shardArtifact(3, 4, []),
   ]
-  const data = dataset(shards, [['P1', 0], ['P3', 1], ['P2', 2]])
+  const data = await dataset(shards, [['P1', 0], ['P3', 1], ['P2', 2]])
   data.objects['snapshots/v1/cities/Taichung/routing/places/from.json'] = endpointArtifact('from', [p1], [['P1', 1]])
   data.objects['snapshots/v1/cities/Taichung/routing/places/to.json'] = endpointArtifact('to', [p2], [['P2', 4]])
   return { ...data, p1, p2, p3, shards }
@@ -199,7 +203,7 @@ beforeEach(() => {
 
 describe('R2-first one-transfer routes', () => {
   it('plans from endpoint artifacts and only reads shards used by endpoint patterns', async () => {
-    const data = baseData()
+    const data = await baseData()
     const r2 = bucket({ objects: data.objects })
 
     const plans = await getOneTransferRoutes(env(r2.r2), 'Taichung', 'from', 'to')
@@ -239,7 +243,7 @@ describe('R2-first one-transfer routes', () => {
         { placeId: 'to', placeName: 'To', latitude: 24.2, longitude: 120.7, stopSequence: 3 },
       ])]),
     ]
-    const data = dataset(shards, [['LOOP', 0], ['P2', 1]])
+    const data = await dataset(shards, [['LOOP', 0], ['P2', 1]])
     data.objects['snapshots/v1/cities/Taichung/routing/places/from.json'] = endpointArtifact('from', [loop], [['LOOP', 4]])
     data.objects['snapshots/v1/cities/Taichung/routing/places/to.json'] = endpointArtifact('to', [second], [['P2', 3]])
     const r2 = bucket({ objects: data.objects })
@@ -282,7 +286,7 @@ describe('R2-first one-transfer routes', () => {
   it('falls back when a required shard is missing', async () => {
     const fallback = [{ transferPlaceId: 'legacy' }]
     legacy.getOneTransferRoutes.mockResolvedValue(fallback)
-    const data = baseData()
+    const data = await baseData()
     delete data.objects['snapshots/v1/cities/Taichung/routing/transfers/shards/02.json']
     const r2 = bucket({ objects: data.objects })
     const bindings = env(r2.r2)
@@ -294,7 +298,7 @@ describe('R2-first one-transfer routes', () => {
   it('falls back when a shard no longer matches the manifest fingerprint', async () => {
     const fallback = [{ transferPlaceId: 'legacy' }]
     legacy.getOneTransferRoutes.mockResolvedValue(fallback)
-    const data = baseData()
+    const data = await baseData()
     const key = 'snapshots/v1/cities/Taichung/routing/transfers/shards/00.json'
     const changed = structuredClone(data.objects[key]) as { patterns: Array<{ routeName: string }> }
     changed.patterns[0].routeName = 'Corrupted after manifest'
@@ -308,9 +312,20 @@ describe('R2-first one-transfer routes', () => {
   it('falls back when endpoint metadata disagrees with its sharded pattern', async () => {
     const fallback = [{ transferPlaceId: 'legacy' }]
     legacy.getOneTransferRoutes.mockResolvedValue(fallback)
-    const data = baseData()
+    const data = await baseData()
     const mismatched = pattern('P1', 'R1', 'Different route name', 1, 3)
     data.objects['snapshots/v1/cities/Taichung/routing/places/from.json'] = endpointArtifact('from', [mismatched], [['P1', 1]])
+    const r2 = bucket({ objects: data.objects })
+
+    await expect(getOneTransferRoutes(env(r2.r2), 'Taichung', 'from', 'to')).resolves.toBe(fallback)
+    expect(legacy.getOneTransferRoutes).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back when endpoint stop sequences disagree with the fingerprinted shard', async () => {
+    const fallback = [{ transferPlaceId: 'legacy' }]
+    legacy.getOneTransferRoutes.mockResolvedValue(fallback)
+    const data = await baseData()
+    data.objects['snapshots/v1/cities/Taichung/routing/places/from.json'] = endpointArtifact('from', [data.p1], [['P1', 2]])
     const r2 = bucket({ objects: data.objects })
 
     await expect(getOneTransferRoutes(env(r2.r2), 'Taichung', 'from', 'to')).resolves.toBe(fallback)
