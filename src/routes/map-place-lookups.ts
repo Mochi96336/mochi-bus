@@ -1,11 +1,11 @@
 import type { Context } from 'hono'
 import { supportedCityCodes } from '../config'
 import { QueryValidationError } from '../domain/bus-query'
+import { getStopPlaceRoutes } from '../infrastructure/transit/snapshot-place-routing-repository'
 import {
   findNearbyStopPlaces,
   getStopPlace,
   getStopPlaceByStopUid,
-  getStopPlaceRoutes,
   searchStopPlaces,
 } from '../infrastructure/transit/snapshot-repository'
 import {
