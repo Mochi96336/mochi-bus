@@ -67,9 +67,9 @@ describe('pattern stop export artifacts', () => {
 })
 
 describe('exportPatternStops', () => {
-  it('preserves a pattern split across D1 pages and writes the manifest last', async () => {
+  it('preserves page-split patterns, bounds R2 writes, and writes the manifest last', async () => {
     const d1 = fakeD1({ expectedPatternStops: 5, expectedPatterns: 2 })
-    const writes = installR2Recorder()
+    const r2 = installR2Recorder({ delayMs: 5 })
 
     const result = await exportPatternStops({
       city: 'Taichung',
@@ -77,6 +77,7 @@ describe('exportPatternStops', () => {
       env,
       fetchImpl: d1.fetch,
       pageSize: 2,
+      writeConcurrency: 2,
       now: () => new Date('2026-09-04T00:00:00.000Z'),
     })
 
@@ -92,15 +93,18 @@ describe('exportPatternStops', () => {
       ['P1', 2],
       ['P2', 1],
     ])
-    expect(writes.map((item) => item.key)).toEqual([
+    expect(r2.maxActiveWrites).toBe(2)
+    expect(r2.writes.at(-1).key).toBe('snapshots/v1/cities/Taichung/pattern-stops-export.json')
+    expect(new Set(r2.writes.slice(0, -1).map((item) => item.key))).toEqual(new Set([
       'snapshots/v1/cities/Taichung/patterns/P1/stops.json',
       'snapshots/v1/cities/Taichung/patterns/P2/stops.json',
-      'snapshots/v1/cities/Taichung/pattern-stops-export.json',
-    ])
-    expect(writes[0].value.stops).toHaveLength(3)
-    expect(writes[0].value.stops.map((stop) => stop.stopUid)).toEqual(['S1', 'S2', 'S3'])
-    expect(writes[1].value.stops).toHaveLength(2)
-    expect(writes[2].value).toMatchObject({
+    ]))
+    const p1 = r2.writes.find((item) => item.key.endsWith('/patterns/P1/stops.json'))
+    const p2 = r2.writes.find((item) => item.key.endsWith('/patterns/P2/stops.json'))
+    expect(p1.value.stops).toHaveLength(3)
+    expect(p1.value.stops.map((stop) => stop.stopUid)).toEqual(['S1', 'S2', 'S3'])
+    expect(p2.value.stops).toHaveLength(2)
+    expect(r2.writes.at(-1).value).toMatchObject({
       schemaVersion: 1,
       kind: 'pattern-stop-export',
       patterns: 2,
@@ -108,15 +112,23 @@ describe('exportPatternStops', () => {
     })
   })
 
-  it('fails closed on D1/export parity mismatch and never publishes a manifest', async () => {
+  it('does zero R2 writes when D1/export parity fails', async () => {
     const d1 = fakeD1({ expectedPatternStops: 6, expectedPatterns: 2 })
-    const writes = installR2Recorder()
+    const r2 = installR2Recorder()
 
     await expect(exportPatternStops({
       city: 'Taichung', target: 'active', env, fetchImpl: d1.fetch, pageSize: 2,
     })).rejects.toThrow('Pattern stop export parity failed')
 
-    expect(writes.some((item) => item.key.endsWith('/pattern-stops-export.json'))).toBe(false)
+    expect(r2.writes).toEqual([])
+  })
+
+  it('rejects unsafe write concurrency before querying D1', async () => {
+    const fetchImpl = vi.fn()
+    await expect(exportPatternStops({
+      city: 'Taichung', target: 'active', env, fetchImpl, writeConcurrency: 0,
+    })).rejects.toThrow('Invalid R2 write concurrency')
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
 
@@ -147,8 +159,10 @@ function fakeD1({ expectedPatternStops, expectedPatterns }) {
   }
 }
 
-function installR2Recorder() {
+function installR2Recorder({ delayMs = 0 } = {}) {
   const writes = []
+  let activeWrites = 0
+  let maxActiveWrites = 0
   vi.stubGlobal('fetch', vi.fn(async (request, init) => {
     const url = typeof request === 'string' ? request : request.url
     const method = init?.method ?? request.method ?? 'GET'
@@ -157,10 +171,20 @@ function installR2Recorder() {
     const prefix = 'https://account.r2.cloudflarestorage.com/bucket/'
     expect(url.startsWith(prefix)).toBe(true)
     const key = url.slice(prefix.length).split('/').map(decodeURIComponent).join('/')
-    writes.push({ key, value: JSON.parse(body) })
-    return new Response('', { status: 200 })
+    activeWrites += 1
+    maxActiveWrites = Math.max(maxActiveWrites, activeWrites)
+    try {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))
+      writes.push({ key, value: JSON.parse(body) })
+      return new Response('', { status: 200 })
+    } finally {
+      activeWrites -= 1
+    }
   }))
-  return writes
+  return {
+    writes,
+    get maxActiveWrites() { return maxActiveWrites },
+  }
 }
 
 function jsonResponse(value) {
