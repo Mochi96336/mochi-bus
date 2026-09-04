@@ -8,14 +8,17 @@ import {
   type JourneyEstimate,
 } from '../domain/map/journey-estimate'
 import type { ScheduleItem } from '../domain/schedule'
+import {
+  buildStopArrivalBatches,
+  parseStopArrivalBatchPayload,
+  STOP_ARRIVAL_MAX_RESPONSE_BYTES,
+} from '../infrastructure/tdx/stop-arrivals'
 import { getJourneyLegStopRefs } from '../infrastructure/transit/snapshot-pattern-stop-repository'
 import { getSnapshotSchedule } from '../infrastructure/transit/snapshot-repository'
 import {
   fetchTDXJson,
   getBusSchedule,
   isRejectedUserTdxToken,
-  isTDXRecordArray,
-  tdxRouteScope,
   tdxWarningFromError,
   type BusETAItem,
   type TDXWarning,
@@ -43,7 +46,7 @@ export const journeyEtaBodyLimit = bodyLimit({
   }),
 })
 
-// This module owns both journey ETA middleware and handling: bounded input, per-route
+// This module owns both journey ETA middleware and handling: bounded input, batched
 // realtime resolution, snapshot-first schedule fallback, warning aggregation, and telemetry.
 export async function readJourneyEta(c: Context<MapEnv>) {
   const tracker = beginMapOperation(c, 'map_journey_eta', null)
@@ -57,32 +60,50 @@ export async function readJourneyEta(c: Context<MapEnv>) {
     let warning: TDXWarning | undefined
 
     const refs = await getJourneyLegStopRefs(env, city, legs)
-    // Resolve each route once even when multiple journey legs use the same route.
-    const uniqueRouteRefs = [...new Map(refs.map((ref) => [ref.routeUid, ref])).values()]
-    const etaItemsByRouteUid = new Map(await Promise.all(uniqueRouteRefs.map(async (ref) => {
+    const batches = buildStopArrivalBatches(city, refs.map((ref) => ({
+      routeUid: ref.routeUid,
+      routeName: ref.routeName,
+      stopUid: ref.stopUid,
+    })))
+    const etaItems = (await Promise.all(batches.map(async (batch) => {
+      const routeUids = [...new Set(batch.candidates.map((candidate) => candidate.routeUid))]
       try {
-        return [ref.routeUid, await fetchTDXJson<BusETAItem[]>(
+        const data = await fetchTDXJson<unknown[]>(
           env,
-          routeEtaUrl(city, ref.routeName, ref.routeUid),
+          batch.url,
           15,
           {
             operation: 'journey_eta',
             city: telemetryCity(city),
-            validate: isTDXRecordArray<BusETAItem>,
+            maxResponseBytes: STOP_ARRIVAL_MAX_RESPONSE_BYTES,
+            validate: (value): value is unknown[] => (
+              parseStopArrivalBatchPayload(value, batch.stopUids, routeUids).ok
+            ),
           },
-        )] as const
+        )
+        const parsed = parseStopArrivalBatchPayload(data, batch.stopUids, routeUids)
+        return parsed.ok ? parsed.data : []
       } catch (error) {
         if (isRejectedUserTdxToken(error, c.req.header('Authorization'))) throw error
         warning = strongerTDXWarning(warning, tdxWarningFromError(error) ?? 'tdx-unavailable')
         console.error(JSON.stringify({
           message: 'journey_eta_upstream_failed',
           city,
-          routeName: ref.routeName,
+          tdxScope: batch.scope,
+          stopUidCount: batch.stopUids.length,
+          routeUidCount: routeUids.length,
           error: error instanceof Error ? error.message : String(error),
         }))
-        return [ref.routeUid, [] as BusETAItem[]] as const
+        return [] as BusETAItem[]
       }
-    })))
+    }))).flat()
+    const etaItemsByRouteUid = new Map<string, BusETAItem[]>()
+    for (const item of etaItems) {
+      if (typeof item.RouteUID !== 'string') continue
+      const current = etaItemsByRouteUid.get(item.RouteUID)
+      if (current) current.push(item)
+      else etaItemsByRouteUid.set(item.RouteUID, [item])
+    }
     const realtimeEstimates = new Map<string, JourneyEstimate>(refs.map((ref) => {
       return [ref.key, realtimeJourneyEstimate(ref, etaItemsByRouteUid.get(ref.routeUid) ?? [])] as const
     }))
@@ -151,12 +172,4 @@ function strongerTDXWarning(current: TDXWarning | undefined, next: TDXWarning | 
   }
   if (!next || (current && priority[current] >= priority[next])) return current
   return next
-}
-
-function routeEtaUrl(city: string, routeName: string, routeUid?: string): URL {
-  const url = new URL(
-    `https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/${tdxRouteScope(city, routeUid)}/${encodeURIComponent(routeName)}`,
-  )
-  url.searchParams.set('$format', 'JSON')
-  return url
 }
