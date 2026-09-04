@@ -34,6 +34,21 @@ import type {
   TDXResolutionOptions,
 } from './resolution-cache'
 
+const ETA_API_BASE = 'https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival'
+const SINGLE_STOP_ETA_SELECT = [
+  'RouteUID',
+  'SubRouteUID',
+  'StopUID',
+  'StopName',
+  'Direction',
+  'EstimateTime',
+  'StopStatus',
+  'DataTime',
+  'SrcUpdateTime',
+  'SrcTransTime',
+  'UpdateTime',
+].join(',')
+
 // 「estimated 淡墨」保留給未來的時刻表 fallback；Route timeline目前只呈現即時ETA。
 // 空白不可解讀為已過站，因為也可能是缺漏、支線對應或尚未發車。
 export type RouteEtaTone = 'live' | 'urgent' | 'muted'
@@ -95,13 +110,13 @@ export function createTDXCommuteRoutePresentation(
 ) {
   const now = dependencies.now ?? (() => new Date())
 
-  const getBusETA = async (env: TDXEnv, query: BusQuery): Promise<BusETAItem[]> => {
-    const url = new URL(
-      `https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/${tdxRouteScope(query.city, query.routeUid)}/${encodeURIComponent(query.routeName)}`,
-    )
-    url.searchParams.set('$format', 'JSON')
-    return dependencies.fetchTDXJson<BusETAItem[]>(env, url, BUS_ETA_CACHE_SECONDS)
-  }
+  const getRouteETA = async (env: TDXEnv, query: BusQuery): Promise<BusETAItem[]> => (
+    dependencies.fetchTDXJson<BusETAItem[]>(env, routeEtaUrl(query), BUS_ETA_CACHE_SECONDS)
+  )
+
+  const getStopETA = async (env: TDXEnv, query: ResolvedBusQuery): Promise<BusETAItem[]> => (
+    dependencies.fetchTDXJson<BusETAItem[]>(env, singleStopEtaUrl(query), BUS_ETA_CACHE_SECONDS)
+  )
 
   const getCommuteETA = async (
     env: TDXEnv & Partial<TransitBindings>,
@@ -110,7 +125,7 @@ export function createTDXCommuteRoutePresentation(
     let items: BusETAItem[] = []
     let warning: TDXWarning | undefined
     try {
-      items = await getBusETA(env, query)
+      items = await getStopETA(env, query)
     } catch (error) {
       if (isRejectedUserTdxToken(error, env.TDX_USER_ACCESS_TOKEN)) throw error
       warning = tdxWarningFromError(error)
@@ -196,7 +211,7 @@ export function createTDXCommuteRoutePresentation(
     // fallback station-order cache write, turning a degradable response into 429.
     const [groupsResult, etaItemsResult] = await Promise.allSettled([
       dependencies.getRouteStopGroups(env, query.city, query.routeName, query.routeUid),
-      getBusETA(env, query),
+      getRouteETA(env, query),
     ])
     if (groupsResult.status === 'rejected') throw groupsResult.reason
     if (etaItemsResult.status === 'rejected') throw etaItemsResult.reason
@@ -250,4 +265,32 @@ export function createTDXCommuteRoutePresentation(
   }
 
   return { getCommuteETA, getRouteDetail }
+}
+
+function routeEtaUrl(query: BusQuery): URL {
+  const url = new URL(
+    `${ETA_API_BASE}/${tdxRouteScope(query.city, query.routeUid)}/${encodeURIComponent(query.routeName)}`,
+  )
+  url.searchParams.set('$format', 'JSON')
+  return url
+}
+
+function singleStopEtaUrl(query: ResolvedBusQuery): URL {
+  // RouteUID is the stable identity needed to use the collection endpoint safely.
+  // Legacy/ambiguous callers without it keep the previous route-scoped behavior.
+  if (!query.routeUid) return routeEtaUrl(query)
+
+  const url = new URL(`${ETA_API_BASE}/${tdxRouteScope(query.city, query.routeUid)}`)
+  url.searchParams.set('$filter', [
+    `StopUID eq '${escapeODataString(query.stopUid)}'`,
+    `RouteUID eq '${escapeODataString(query.routeUid)}'`,
+    `Direction eq ${query.direction}`,
+  ].join(' and '))
+  url.searchParams.set('$select', SINGLE_STOP_ETA_SELECT)
+  url.searchParams.set('$format', 'JSON')
+  return url
+}
+
+function escapeODataString(value: string): string {
+  return value.replaceAll("'", "''")
 }

@@ -77,7 +77,7 @@ afterEach(() => {
 })
 
 describe('TDX commute and route presentation boundary', () => {
-  it('selects the exact realtime route, subroute, stop and direction without reading schedules', async () => {
+  it('filters a single-stop realtime read by stable route, stop and direction identity', async () => {
     const fetchTDXJson = vi.fn(async () => [
       {
         RouteUID: 'TPE307', SubRouteUID: 'OTHER', StopUID: 'STOP-2', Direction: 0,
@@ -99,11 +99,57 @@ describe('TDX commute and route presentation boundary', () => {
     expect(result).not.toHaveProperty('warning')
     expect(getSnapshotSchedule).not.toHaveBeenCalled()
     expect(getBusSchedule).not.toHaveBeenCalled()
-    expect(fetchTDXJson).toHaveBeenCalledWith(
-      env,
-      expect.objectContaining({ pathname: expect.stringContaining('/EstimatedTimeOfArrival/City/Taipei/307') }),
-      12,
+
+    const realtimeUrl = vi.mocked(fetchTDXJson).mock.calls[0]![1]
+    expect(realtimeUrl.pathname).toBe('/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei')
+    expect(realtimeUrl.searchParams.get('$filter')).toBe(
+      "StopUID eq 'STOP-2' and RouteUID eq 'TPE307' and Direction eq 0",
     )
+    expect(realtimeUrl.searchParams.get('$select')).toBe(
+      'RouteUID,SubRouteUID,StopUID,StopName,Direction,EstimateTime,StopStatus,DataTime,SrcUpdateTime,SrcTransTime,UpdateTime',
+    )
+    expect(realtimeUrl.searchParams.get('$format')).toBe('JSON')
+    expect(vi.mocked(fetchTDXJson).mock.calls[0]![2]).toBe(12)
+  })
+
+  it('keeps the previous route-scoped ETA endpoint when RouteUID is unavailable', async () => {
+    const legacyQuery = { ...query, routeUid: undefined } satisfies ResolvedBusQuery
+    const fetchTDXJson = vi.fn(async () => [{
+      StopUID: 'STOP-2', Direction: 0, EstimateTime: 120,
+    }]) as TDXCommuteRoutePresentationDependencies['fetchTDXJson']
+    const { presentation } = harness({ fetchTDXJson })
+
+    await expect(presentation.getCommuteETA(env, legacyQuery)).resolves.toMatchObject({
+      minutes: 2,
+      source: 'realtime',
+    })
+
+    const realtimeUrl = vi.mocked(fetchTDXJson).mock.calls[0]![1]
+    expect(realtimeUrl.pathname).toBe('/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei/307')
+    expect(realtimeUrl.searchParams.has('$filter')).toBe(false)
+    expect(realtimeUrl.searchParams.has('$select')).toBe(false)
+  })
+
+  it('uses the InterCity collection for filtered THB single-stop ETA reads', async () => {
+    const intercityQuery = {
+      ...query,
+      city: 'Taichung',
+      routeUid: 'THB1234',
+      subRouteUid: undefined,
+    } satisfies ResolvedBusQuery
+    const fetchTDXJson = vi.fn(async () => [{
+      RouteUID: 'THB1234', StopUID: 'STOP-2', Direction: 0, EstimateTime: 180,
+    }]) as TDXCommuteRoutePresentationDependencies['fetchTDXJson']
+    const { presentation } = harness({ fetchTDXJson })
+
+    await expect(presentation.getCommuteETA(env, intercityQuery)).resolves.toMatchObject({
+      minutes: 3,
+      source: 'realtime',
+    })
+
+    const realtimeUrl = vi.mocked(fetchTDXJson).mock.calls[0]![1]
+    expect(realtimeUrl.pathname).toBe('/api/basic/v2/Bus/EstimatedTimeOfArrival/InterCity')
+    expect(realtimeUrl.searchParams.get('$filter')).toContain("RouteUID eq 'THB1234'")
   })
 
   it('falls back from a shared realtime failure to an exact stop timetable and keeps the warning', async () => {
@@ -198,7 +244,7 @@ describe('TDX commute and route presentation boundary', () => {
     expect(result).not.toHaveProperty('warning')
   })
 
-  it('maps the route timeline to urgent, live, no-estimate and missing presentation states', async () => {
+  it('keeps route timeline reads on the route-scoped endpoint', async () => {
     const fetchTDXJson = vi.fn(async () => [
       {
         RouteUID: 'TPE307', SubRouteUID: 'TPE307-A', StopUID: 'STOP-1', Direction: 0,
@@ -230,6 +276,11 @@ describe('TDX commute and route presentation boundary', () => {
       { source: 'realtime', status: 'estimated' },
       { source: 'realtime', status: 'not-departed' },
     ])
+
+    const routeUrl = vi.mocked(fetchTDXJson).mock.calls[0]![1]
+    expect(routeUrl.pathname).toBe('/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei/307')
+    expect(routeUrl.searchParams.has('$filter')).toBe(false)
+    expect(routeUrl.searchParams.has('$select')).toBe(false)
   })
 
   it('throws the exact route-direction resolution error when no stop group matches', async () => {
