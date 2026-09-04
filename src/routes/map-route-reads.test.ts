@@ -4,14 +4,17 @@ import type { RouteMapVariant } from '../domain/map/map-model'
 import type { MapEnv } from './map-http-context'
 import { readRouteMap, readRouteTimetable } from './map-route-reads'
 
-const repository = vi.hoisted(() => ({
+const patternStops = vi.hoisted(() => ({
   getSnapshotRouteVariants: vi.fn(),
+}))
+const repository = vi.hoisted(() => ({
   getSnapshotSchedule: vi.fn(),
 }))
 const tdxMap = vi.hoisted(() => ({ getRouteMapVariants: vi.fn() }))
 const tdx = vi.hoisted(() => ({ getBusSchedule: vi.fn() }))
 const timetableDomain = vi.hoisted(() => ({ buildRouteTimetable: vi.fn() }))
 
+vi.mock('../infrastructure/transit/snapshot-pattern-stop-repository', () => patternStops)
 vi.mock('../infrastructure/transit/snapshot-repository', () => repository)
 vi.mock('../infrastructure/tdx/map', () => tdxMap)
 vi.mock('../domain/map/timetable', () => timetableDomain)
@@ -73,6 +76,7 @@ const outbound = routeVariant('PATTERN-OUT', 0, 'SUB-OUT', 'STOP-OUT')
 const inbound = routeVariant('PATTERN-IN', 1, 'SUB-IN', 'STOP-IN')
 
 beforeEach(() => {
+  Object.values(patternStops).forEach((mock) => mock.mockReset())
   Object.values(repository).forEach((mock) => mock.mockReset())
   Object.values(tdxMap).forEach((mock) => mock.mockReset())
   Object.values(tdx).forEach((mock) => mock.mockReset())
@@ -88,7 +92,7 @@ afterEach(() => {
 
 describe('Map route read handlers', () => {
   it('serves route variants from snapshot with the long-lived cache contract', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([outbound])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([outbound])
 
     const response = await request('/api/v1/map/route?city=Taipei&route=307')
 
@@ -105,7 +109,7 @@ describe('Map route read handlers', () => {
   })
 
   it('falls back to TDX route variants with the short cache contract', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([])
     tdxMap.getRouteMapVariants.mockResolvedValue([inbound])
 
     const response = await request('/api/v1/map/route?city=Taipei&route=307')
@@ -123,7 +127,7 @@ describe('Map route read handlers', () => {
   })
 
   it('preserves the route-map not-found response after both sources are empty', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([])
     tdxMap.getRouteMapVariants.mockResolvedValue([])
 
     const response = await request('/api/v1/map/route?city=Taipei&route=307')
@@ -133,7 +137,7 @@ describe('Map route read handlers', () => {
   })
 
   it('selects the timetable variant by every supplied identity field', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([outbound, inbound])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([outbound, inbound])
     repository.getSnapshotSchedule.mockResolvedValue([])
     timetableDomain.buildRouteTimetable.mockReturnValue({ rows: ['snapshot-result'] })
 
@@ -163,7 +167,7 @@ describe('Map route read handlers', () => {
   })
 
   it('falls back to TDX schedules and reports the schedule source', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([outbound])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([outbound])
     repository.getSnapshotSchedule.mockResolvedValue(null)
     tdx.getBusSchedule.mockResolvedValue([{ RouteUID: 'TPE307' }])
     timetableDomain.buildRouteTimetable.mockReturnValue({ rows: ['tdx-result'] })
@@ -180,7 +184,7 @@ describe('Map route read handlers', () => {
   })
 
   it('keeps timetable source tied to schedules when variants came from TDX', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([])
     tdxMap.getRouteMapVariants.mockResolvedValue([outbound])
     repository.getSnapshotSchedule.mockResolvedValue([])
     timetableDomain.buildRouteTimetable.mockReturnValue({ rows: [] })
@@ -193,7 +197,7 @@ describe('Map route read handlers', () => {
   })
 
   it('returns 404 before schedule lookup when no variant matches', async () => {
-    repository.getSnapshotRouteVariants.mockResolvedValue([outbound])
+    patternStops.getSnapshotRouteVariants.mockResolvedValue([outbound])
 
     const response = await request('/api/v1/map/timetable?city=Taipei&route=307&direction=1')
 
@@ -209,6 +213,6 @@ describe('Map route read handlers', () => {
     expect(response.status).toBe(400)
     expect(response.headers.get('Cache-Control')).toBe('no-store')
     await expect(response.json()).resolves.toEqual({ error: '請選擇行駛方向' })
-    expect(repository.getSnapshotRouteVariants).not.toHaveBeenCalled()
+    expect(patternStops.getSnapshotRouteVariants).not.toHaveBeenCalled()
   })
 })

@@ -8,7 +8,7 @@ import {
 import {
   getSnapshotRouteVariants,
   type TransitBindings,
-} from '../infrastructure/transit/snapshot-repository'
+} from '../infrastructure/transit/snapshot-pattern-stop-repository'
 import type { RouteDetail } from '../lib/tdx'
 
 export type SnapshotRoutePage = {

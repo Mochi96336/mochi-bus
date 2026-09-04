@@ -8,10 +8,8 @@ import {
   type JourneyEstimate,
 } from '../domain/map/journey-estimate'
 import type { ScheduleItem } from '../domain/schedule'
-import {
-  getJourneyLegStopRefs,
-  getSnapshotSchedule,
-} from '../infrastructure/transit/snapshot-repository'
+import { getJourneyLegStopRefs } from '../infrastructure/transit/snapshot-pattern-stop-repository'
+import { getSnapshotSchedule } from '../infrastructure/transit/snapshot-repository'
 import {
   fetchTDXJson,
   getBusSchedule,

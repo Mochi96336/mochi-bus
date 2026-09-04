@@ -8,10 +8,8 @@ import {
   getPinnedSnapshotRouteVariant,
   getPinnedSnapshotRouteVariants,
 } from '../infrastructure/transit/snapshot-probe-repository'
-import {
-  getSnapshotRouteVariants,
-  getSnapshotSchedule,
-} from '../infrastructure/transit/snapshot-repository'
+import { getSnapshotRouteVariants } from '../infrastructure/transit/snapshot-pattern-stop-repository'
+import { getSnapshotSchedule } from '../infrastructure/transit/snapshot-repository'
 import { getBusSchedule } from '../lib/tdx'
 import {
   ApiInputError,
