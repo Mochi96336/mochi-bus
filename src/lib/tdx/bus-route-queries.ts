@@ -14,6 +14,18 @@ import type {
 export const BUS_ETA_CACHE_SECONDS = 12
 const STATIC_CACHE_SECONDS = 60 * 60
 const BUS_API_BASE = 'https://tdx.transportdata.tw/api/basic/v2/Bus'
+const ROUTE_CATALOG_SELECT = 'RouteUID,RouteName,DepartureStopNameZh,DestinationStopNameZh'
+const STOP_SUGGESTION_ETA_SELECT = [
+  'RouteUID',
+  'RouteName',
+  'SubRouteUID',
+  'StopUID',
+  'StopName',
+  'Direction',
+  'EstimateTime',
+  'StopStatus',
+].join(',')
+const STOP_SUGGESTION_STOP_SELECT = 'StopUID,StopPosition'
 
 type StopOfRouteItem = {
   RouteUID?: string
@@ -197,9 +209,12 @@ export function createTDXBusRouteQueries(dependencies: TDXBusRouteQueryDependenc
   }
 
   const getRouteCatalog = async (env: TDXEnv, city: string): Promise<RouteCatalogItem[]> => {
+    const url = busUrl(`Route/City/${encodeURIComponent(city)}`)
+    url.searchParams.set('$select', ROUTE_CATALOG_SELECT)
+    url.searchParams.set('$format', 'JSON')
     const data = await dependencies.fetchTDXJson<RouteItem[]>(
       env,
-      formattedBusUrl(`Route/City/${encodeURIComponent(city)}`),
+      url,
       STATIC_CACHE_SECONDS,
       {
         operation: 'route_catalog',
@@ -212,7 +227,7 @@ export function createTDXBusRouteQueries(dependencies: TDXBusRouteQueryDependenc
 
   const getIntercityRouteCatalog = async (env: TDXEnv): Promise<RouteCatalogItem[]> => {
     const url = busUrl('Route/InterCity')
-    url.searchParams.set('$select', 'RouteUID,RouteName,DepartureStopNameZh,DestinationStopNameZh')
+    url.searchParams.set('$select', ROUTE_CATALOG_SELECT)
     url.searchParams.set('$format', 'JSON')
     const data = await dependencies.fetchTDXJson<RouteItem[]>(env, url, STATIC_CACHE_SECONDS, {
       operation: 'route_catalog',
@@ -229,9 +244,10 @@ export function createTDXBusRouteQueries(dependencies: TDXBusRouteQueryDependenc
     anchorStopUid?: string,
   ): Promise<StopRouteSuggestion[]> => {
     const filter = `StopName/Zh_tw eq '${stopName.replaceAll("'", "''")}'`
-    const filteredUrl = (path: string) => {
+    const filteredUrl = (path: string, select: string) => {
       const url = busUrl(path)
       url.searchParams.set('$filter', filter)
+      url.searchParams.set('$select', select)
       url.searchParams.set('$format', 'JSON')
       return url
     }
@@ -240,23 +256,23 @@ export function createTDXBusRouteQueries(dependencies: TDXBusRouteQueryDependenc
     const [data, stops, routes, intercityEta, intercityStops, intercityRoutes] = await Promise.all([
       dependencies.fetchTDXJson<BusETAItem[]>(
         env,
-        filteredUrl(`EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`),
+        filteredUrl(`EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, STOP_SUGGESTION_ETA_SELECT),
         BUS_ETA_CACHE_SECONDS,
       ),
       dependencies.fetchTDXJson<StopItem[]>(
         env,
-        filteredUrl(`Stop/City/${encodeURIComponent(city)}`),
+        filteredUrl(`Stop/City/${encodeURIComponent(city)}`, STOP_SUGGESTION_STOP_SELECT),
         STATIC_CACHE_SECONDS,
       ),
       getRouteCatalog(env, city),
       dependencies.fetchTDXJson<BusETAItem[]>(
         env,
-        filteredUrl('EstimatedTimeOfArrival/InterCity'),
+        filteredUrl('EstimatedTimeOfArrival/InterCity', STOP_SUGGESTION_ETA_SELECT),
         BUS_ETA_CACHE_SECONDS,
       ).catch(() => [] as BusETAItem[]),
       dependencies.fetchTDXJson<StopItem[]>(
         env,
-        filteredUrl('Stop/InterCity'),
+        filteredUrl('Stop/InterCity', STOP_SUGGESTION_STOP_SELECT),
         STATIC_CACHE_SECONDS,
       ).catch(() => [] as StopItem[]),
       getIntercityRouteCatalog(env).catch(() => [] as RouteCatalogItem[]),
