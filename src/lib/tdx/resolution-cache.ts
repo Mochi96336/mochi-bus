@@ -18,9 +18,10 @@ import {
   readJsonResponse,
   responseByteLimit,
 } from './bounded-response'
-import type {
-  TDXCredentialEnv,
-  TDXTokenResult,
+import {
+  tdxCredentialScope,
+  type TDXCredentialEnv,
+  type TDXTokenResult,
 } from './token-client'
 import type {
   TDXUpstreamRequest,
@@ -91,6 +92,7 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
     const now = telemetryNow(env)
     const maxResponseBytes = responseByteLimit(options.maxResponseBytes)
     const credentialScope = env.TDX_USER_ACCESS_TOKEN ? 'byok' as const : 'shared' as const
+    const credentialCacheScope = await tdxCredentialScope(env)
     const tracker = options.operation ? beginTDXResolutionTelemetry({
       tdxOperation: options.operation,
       credentialScope,
@@ -156,7 +158,14 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
       throw error
     }
 
-    const memoryKey = `tdx/${maxResponseBytes ?? 'unbounded'}/${url.toString()}`
+    // Preserve the long-lived shared cache namespace so deploying credential isolation does not
+    // throw away useful shared-quota entries. Personal tokens receive a hashed namespace of their
+    // own, which prevents a 45s shared result (or another user's BYOK result) from overriding the
+    // shorter freshness policy selected for that credential.
+    const cacheScopePrefix = credentialCacheScope === 'shared'
+      ? ''
+      : `${encodeURIComponent(credentialCacheScope)}/`
+    const memoryKey = `tdx/${cacheScopePrefix}${maxResponseBytes ?? 'unbounded'}/${url.toString()}`
     const memoized = memoryCacheGet<TDXCacheEntry<T>>(memoryKey)
     if (memoized !== undefined && validPayload(memoized.data, options.validate)) {
       return completeData(
@@ -167,7 +176,7 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
     }
 
     const edgeCache = (caches as CacheStorage & { default: Cache }).default
-    const cacheKey = new Request(`https://mochi-cache.invalid/tdx/${encodeURIComponent(url.toString())}`)
+    const cacheKey = new Request(`https://mochi-cache.invalid/tdx/${cacheScopePrefix}${encodeURIComponent(url.toString())}`)
     const cached = await cacheMatchFailOpen(edgeCache, cacheKey, 'tdx')
     if (cached) {
       try {

@@ -20,6 +20,10 @@ function environment(events: TelemetryEnvelope[] = []): TDXEnv {
   } as unknown as TDXEnv
 }
 
+function personalEnvironment(accessToken: string, events: TelemetryEnvelope[] = []): TDXEnv {
+  return { ...environment(events), TDX_USER_ACCESS_TOKEN: accessToken }
+}
+
 function success(data: unknown = [{ id: 'fresh' }], leader = true): TDXUpstreamResult {
   return {
     outcome: { ok: true, data, status: 200, receivedBytes: 16, declaredBytes: 16, retryCount: 0 },
@@ -85,6 +89,31 @@ describe('TDX resolution cache boundary', () => {
     expect(state.recordCircuitSuccess).toHaveBeenCalledWith('data/fixture')
     expect(cache.put).toHaveBeenCalledOnce()
     expect(events.map((event) => event.resolution)).toEqual(['upstream', 'memory'])
+  })
+
+  it('isolates shared and personal cache entries by credential identity', async () => {
+    const cache = stubCache()
+    let requestNumber = 0
+    const fetchUpstream = vi.fn(async () => success([{ id: `fresh-${++requestNumber}` }]))
+    const state = setup({ fetchUpstream })
+
+    await expect(state.resolver.fetchTDXJson(environment(), url, 30, { validate }))
+      .resolves.toEqual([{ id: 'fresh-1' }])
+    await expect(state.resolver.fetchTDXJson(personalEnvironment('token-a'), url, 30, { validate }))
+      .resolves.toEqual([{ id: 'fresh-2' }])
+    await expect(state.resolver.resolveTDXJson(personalEnvironment('token-a'), url, 30, { validate }))
+      .resolves.toMatchObject({ resolution: 'memory', data: [{ id: 'fresh-2' }] })
+    await expect(state.resolver.fetchTDXJson(personalEnvironment('token-b'), url, 30, { validate }))
+      .resolves.toEqual([{ id: 'fresh-3' }])
+
+    expect(fetchUpstream).toHaveBeenCalledTimes(3)
+    expect(state.getTDXToken).toHaveBeenCalledTimes(3)
+    expect(cache.match).toHaveBeenCalledTimes(3)
+    const cacheUrls = vi.mocked(cache.match).mock.calls.map(([request]) => request.url)
+    expect(new Set(cacheUrls).size).toBe(3)
+    expect(cacheUrls[0]).toBe(`https://mochi-cache.invalid/tdx/${encodeURIComponent(url.toString())}`)
+    expect(cacheUrls.join('\n')).not.toContain('token-a')
+    expect(cacheUrls.join('\n')).not.toContain('token-b')
   })
 
   it('serves edge, reports age, and warms memory before token acquisition', async () => {
