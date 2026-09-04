@@ -176,14 +176,23 @@ export async function exportPlaceRouting({
   const r2 = new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto' })
   const baseUrl = `https://${accountId}.r2.cloudflarestorage.com/${bucket}`
   const query = (sql, params) => queryD1({ accountId, apiToken, databaseId, fetchImpl, sql, params })
-  const getR2Json = async (key) => {
+  const readR2Json = async (key) => {
     const response = await r2.fetch(objectUrl(baseUrl, key))
-    if (!response.ok) {
-      await response.arrayBuffer()
-      throw new Error(`R2 GET ${key} failed (${response.status})`)
+    const body = await response.text()
+    if (!response.ok) throw new Error(`R2 GET ${key} failed (${response.status})`)
+    let value
+    try {
+      value = JSON.parse(body)
+    } catch {
+      throw new Error(`R2 GET ${key} returned invalid JSON`)
     }
-    return response.json()
+    return Object.freeze({
+      value,
+      bytes: new TextEncoder().encode(body).byteLength,
+      sha256: createHash('sha256').update(body).digest('hex'),
+    })
   }
+  const getR2Json = async (key) => (await readR2Json(key)).value
   const putR2Json = async (key, value) => {
     const body = JSON.stringify(value)
     const response = await r2.fetch(objectUrl(baseUrl, key), {
@@ -231,10 +240,14 @@ export async function exportPlaceRouting({
   const resolvedPatterns = await mapParallel(upstreamEntries, readConcurrency, async (entry) => {
     const metadata = metadataByPattern.get(entry.patternId)
     if (!metadata) throw new Error(`Pattern export ${entry.patternId} has no D1 metadata`)
-    const [artifact, shape] = await Promise.all([
-      getR2Json(entry.key),
+    const [artifactRead, shape] = await Promise.all([
+      readR2Json(entry.key),
       getR2Json(metadata.shape_key),
     ])
+    if (artifactRead.bytes !== entry.bytes || artifactRead.sha256 !== entry.sha256) {
+      throw new Error(`Pattern ${entry.patternId} artifact fingerprint mismatch`)
+    }
+    const artifact = artifactRead.value
     const stops = parsePatternStops(artifact, city, version, entry.patternId)
     if (stops.length !== entry.stops) {
       throw new Error(`Pattern ${entry.patternId} stop count mismatch: ${stops.length} != ${entry.stops}`)
@@ -316,7 +329,11 @@ function parsePatternExportManifest(value, city, version) {
   let entryStops = 0
   const entries = value.artifacts.map((entry, index) => {
     const stops = Number(entry?.stops)
-    if (!entry?.patternId || !entry?.key || !Number.isSafeInteger(stops) || stops < 2) {
+    const bytes = Number(entry?.bytes)
+    const sha256 = entry?.sha256
+    if (!entry?.patternId || !entry?.key || !Number.isSafeInteger(stops) || stops < 2
+      || !Number.isSafeInteger(bytes) || bytes <= 0
+      || typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) {
       throw new Error(`Invalid pattern stop export manifest entry ${index}`)
     }
     if (seen.has(entry.patternId)) throw new Error(`Duplicate pattern stop export ${entry.patternId}`)
@@ -326,7 +343,7 @@ function parsePatternExportManifest(value, city, version) {
       throw new Error(`Pattern stop export key mismatch for ${entry.patternId}`)
     }
     entryStops += stops
-    return Object.freeze({ patternId: entry.patternId, key: entry.key, stops })
+    return Object.freeze({ patternId: entry.patternId, key: entry.key, stops, bytes, sha256 })
   })
   if (entryStops !== Number(value.patternStops)) {
     throw new Error(`Pattern stop export occurrence parity failed: ${entryStops} != ${value.patternStops}`)
