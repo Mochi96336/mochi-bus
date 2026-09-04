@@ -9,8 +9,10 @@ import type { TelemetryEnvelope } from '../observability/telemetry'
 import type { MapEnv } from './map-http-context'
 import { journeyEtaBodyLimit, readJourneyEta } from './map-journey-eta'
 
-const repository = vi.hoisted(() => ({
+const patternStops = vi.hoisted(() => ({
   getJourneyLegStopRefs: vi.fn(),
+}))
+const repository = vi.hoisted(() => ({
   getSnapshotSchedule: vi.fn(),
 }))
 const tdx = vi.hoisted(() => ({
@@ -18,9 +20,9 @@ const tdx = vi.hoisted(() => ({
   getBusSchedule: vi.fn(),
 }))
 
+vi.mock('../infrastructure/transit/snapshot-pattern-stop-repository', () => patternStops)
 vi.mock('../infrastructure/transit/snapshot-repository', async (importOriginal) => ({
   ...await importOriginal<typeof import('../infrastructure/transit/snapshot-repository')>(),
-  getJourneyLegStopRefs: repository.getJourneyLegStopRefs,
   getSnapshotSchedule: repository.getSnapshotSchedule,
 }))
 
@@ -97,11 +99,11 @@ describe('Map journey ETA handler', () => {
   let errorLog: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
-    repository.getJourneyLegStopRefs.mockReset()
+    patternStops.getJourneyLegStopRefs.mockReset()
     repository.getSnapshotSchedule.mockReset()
     tdx.fetchTDXJson.mockReset()
     tdx.getBusSchedule.mockReset()
-    repository.getJourneyLegStopRefs.mockResolvedValue([ref])
+    patternStops.getJourneyLegStopRefs.mockResolvedValue([ref])
     repository.getSnapshotSchedule.mockResolvedValue(null)
     tdx.getBusSchedule.mockResolvedValue([])
     vi.spyOn(Math, 'random').mockReturnValue(0)
@@ -114,7 +116,7 @@ describe('Map journey ETA handler', () => {
   })
 
   it('resolves each route once and preserves the realtime response contract', async () => {
-    repository.getJourneyLegStopRefs.mockResolvedValue([
+    patternStops.getJourneyLegStopRefs.mockResolvedValue([
       ref,
       { ...ref, key: 'leg-2', patternId: 'pattern-2' },
     ])
@@ -206,7 +208,7 @@ describe('Map journey ETA handler', () => {
   })
 
   it('keeps unresolved route lookup results as all-unknown without upstream access', async () => {
-    repository.getJourneyLegStopRefs.mockResolvedValue([])
+    patternStops.getJourneyLegStopRefs.mockResolvedValue([])
 
     const response = await request({ city: 'Taipei', legs: [leg] })
     const body = await response.json<{ estimates: unknown[] }>()
@@ -288,7 +290,7 @@ describe('Map journey ETA handler', () => {
       error: 'ETA 查詢項目必須介於 1 到 12 筆',
       code: 'INVALID_REQUEST',
     })
-    expect(repository.getJourneyLegStopRefs).not.toHaveBeenCalled()
+    expect(patternStops.getJourneyLegStopRefs).not.toHaveBeenCalled()
     expect(capturedEvent(log)).toMatchObject({
       result: 'error',
       failureClass: 'input_validation',
@@ -308,6 +310,6 @@ describe('Map journey ETA handler', () => {
       error: '請求內容過大',
       code: 'PAYLOAD_TOO_LARGE',
     })
-    expect(repository.getJourneyLegStopRefs).not.toHaveBeenCalled()
+    expect(patternStops.getJourneyLegStopRefs).not.toHaveBeenCalled()
   })
 })
