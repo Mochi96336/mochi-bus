@@ -3,10 +3,12 @@ import { supportedCityCodes } from '../config'
 import { QueryValidationError } from '../domain/bus-query'
 import { getStopPlaceRoutes } from '../infrastructure/transit/snapshot-place-routing-repository'
 import {
-  findNearbyStopPlaces,
-  getStopPlace,
   getStopPlaceByStopUid,
   searchStopPlaces,
+} from '../infrastructure/transit/snapshot-stop-lookup-repository'
+import {
+  findNearbyStopPlaces,
+  getStopPlace,
 } from '../infrastructure/transit/snapshot-repository'
 import {
   parseCoordinate,

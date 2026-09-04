@@ -9,15 +9,21 @@ import {
   searchPlaces,
 } from './map-place-lookups'
 
-const repository = vi.hoisted(() => ({
-  searchStopPlaces: vi.fn(),
+const legacyRepository = vi.hoisted(() => ({
   findNearbyStopPlaces: vi.fn(),
-  getStopPlaceRoutes: vi.fn(),
   getStopPlace: vi.fn(),
+}))
+const placeRoutingRepository = vi.hoisted(() => ({
+  getStopPlaceRoutes: vi.fn(),
+}))
+const stopLookupRepository = vi.hoisted(() => ({
+  searchStopPlaces: vi.fn(),
   getStopPlaceByStopUid: vi.fn(),
 }))
 
-vi.mock('../infrastructure/transit/snapshot-repository', () => repository)
+vi.mock('../infrastructure/transit/snapshot-repository', () => legacyRepository)
+vi.mock('../infrastructure/transit/snapshot-place-routing-repository', () => placeRoutingRepository)
+vi.mock('../infrastructure/transit/snapshot-stop-lookup-repository', () => stopLookupRepository)
 
 const bindings = {
   TDX_CLIENT_ID: 'shared-id',
@@ -47,12 +53,14 @@ const place = {
 }
 
 beforeEach(() => {
-  Object.values(repository).forEach((mock) => mock.mockReset())
+  Object.values(legacyRepository).forEach((mock) => mock.mockReset())
+  Object.values(placeRoutingRepository).forEach((mock) => mock.mockReset())
+  Object.values(stopLookupRepository).forEach((mock) => mock.mockReset())
 })
 
 describe('Map Place lookup handlers', () => {
-  it('preserves search response and cache contract', async () => {
-    repository.searchStopPlaces.mockResolvedValue([place])
+  it('preserves search response and cache contract through the stop-lookup boundary', async () => {
+    stopLookupRepository.searchStopPlaces.mockResolvedValue([place])
 
     const response = await request('/api/v1/map/search?city=Taipei&q=%E6%B8%AC%E8%A9%A6')
 
@@ -64,7 +72,7 @@ describe('Map Place lookup handlers', () => {
       query: '測試',
       places: [place],
     })
-    expect(repository.searchStopPlaces).toHaveBeenCalledWith(bindings, 'Taipei', '測試')
+    expect(stopLookupRepository.searchStopPlaces).toHaveBeenCalledWith(bindings, 'Taipei', '測試')
   })
 
   it('rejects invalid search input before repository access', async () => {
@@ -73,11 +81,11 @@ describe('Map Place lookup handlers', () => {
     expect(response.status).toBe(400)
     expect(response.headers.get('Cache-Control')).toBe('no-store')
     await expect(response.json()).resolves.toEqual({ error: '請選擇縣市' })
-    expect(repository.searchStopPlaces).not.toHaveBeenCalled()
+    expect(stopLookupRepository.searchStopPlaces).not.toHaveBeenCalled()
   })
 
-  it('preserves nearby parsing, response, and cache contract', async () => {
-    repository.findNearbyStopPlaces.mockResolvedValue([place])
+  it('preserves nearby parsing, response, and cache contract on the legacy low-cardinality boundary', async () => {
+    legacyRepository.findNearbyStopPlaces.mockResolvedValue([place])
 
     const response = await request('/api/v1/map/nearby?city=Taipei&lat=25.0478&lon=121.517&radius=500')
 
@@ -89,23 +97,23 @@ describe('Map Place lookup handlers', () => {
       radius: 500,
       places: [place],
     })
-    expect(repository.findNearbyStopPlaces).toHaveBeenCalledWith(bindings, 'Taipei', 25.0478, 121.517, 500)
+    expect(legacyRepository.findNearbyStopPlaces).toHaveBeenCalledWith(bindings, 'Taipei', 25.0478, 121.517, 500)
   })
 
   it('preserves Place routes schema and long-lived cache contract', async () => {
     const routes = [{ routeUid: 'TPE1', routeName: '307', stopUid: 'STOP1', direction: 0 }]
-    repository.getStopPlaceRoutes.mockResolvedValue(routes)
+    placeRoutingRepository.getStopPlaceRoutes.mockResolvedValue(routes)
 
     const response = await request('/api/v1/map/place/PLACE1/routes?city=Taipei')
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=86400')
     await expect(response.json()).resolves.toEqual({ schemaVersion: 3, city: 'Taipei', routes })
-    expect(repository.getStopPlaceRoutes).toHaveBeenCalledWith(bindings, 'Taipei', 'PLACE1')
+    expect(placeRoutingRepository.getStopPlaceRoutes).toHaveBeenCalledWith(bindings, 'Taipei', 'PLACE1')
   })
 
-  it('preserves Place detail success and not-found responses', async () => {
-    repository.getStopPlace.mockResolvedValueOnce(place).mockResolvedValueOnce(undefined)
+  it('preserves Place detail success and not-found responses on low-cardinality D1', async () => {
+    legacyRepository.getStopPlace.mockResolvedValueOnce(place).mockResolvedValueOnce(undefined)
 
     const found = await request('/api/v1/map/place/PLACE1?city=Taipei')
     expect(found.status).toBe(200)
@@ -117,8 +125,8 @@ describe('Map Place lookup handlers', () => {
     await expect(missing.json()).resolves.toEqual({ error: '找不到這個站牌' })
   })
 
-  it('preserves StopUID lookup response and cache contract', async () => {
-    repository.getStopPlaceByStopUid.mockResolvedValue(place)
+  it('preserves StopUID lookup response and cache contract through the stop-lookup boundary', async () => {
+    stopLookupRepository.getStopPlaceByStopUid.mockResolvedValue(place)
 
     const response = await request('/api/v1/map/stop-place?city=Taipei&stopUid=STOP1')
 
@@ -130,6 +138,6 @@ describe('Map Place lookup handlers', () => {
       stopUid: 'STOP1',
       place,
     })
-    expect(repository.getStopPlaceByStopUid).toHaveBeenCalledWith(bindings, 'Taipei', 'STOP1')
+    expect(stopLookupRepository.getStopPlaceByStopUid).toHaveBeenCalledWith(bindings, 'Taipei', 'STOP1')
   })
 })
