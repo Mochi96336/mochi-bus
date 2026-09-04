@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildPlaceRoutingArtifacts,
@@ -51,8 +52,18 @@ const upstreamManifest = {
   patterns: 2,
   patternStops: 6,
   artifacts: [
-    { patternId: 'P1', key: patternStopArtifactKey(version, city, 'P1'), stops: 4 },
-    { patternId: 'P2', key: patternStopArtifactKey(version, city, 'P2'), stops: 2 },
+    {
+      patternId: 'P1',
+      key: patternStopArtifactKey(version, city, 'P1'),
+      stops: 4,
+      ...fingerprint(p1),
+    },
+    {
+      patternId: 'P2',
+      key: patternStopArtifactKey(version, city, 'P2'),
+      stops: 2,
+      ...fingerprint(p2),
+    },
   ],
 }
 
@@ -186,6 +197,17 @@ describe('exportPlaceRouting', () => {
     expect(r2.writes).toEqual([])
   })
 
+  it('does zero PUTs when a version-addressed pattern artifact no longer matches its manifest fingerprint', async () => {
+    const overwritten = structuredClone(p1)
+    overwritten.stops[0].name = 'Alpha overwritten'
+    const d1 = fakeD1()
+    const r2 = installR2({ p1Artifact: overwritten })
+
+    await expect(exportPlaceRouting({ city, target: 'active', env, fetchImpl: d1.fetch }))
+      .rejects.toThrow('Pattern P1 artifact fingerprint mismatch')
+    expect(r2.writes).toEqual([])
+  })
+
   it('does zero PUTs when a route shape is invalid', async () => {
     const d1 = fakeD1()
     const r2 = installR2({ p2Shape: { type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] } } })
@@ -228,7 +250,13 @@ function fakeD1() {
   }
 }
 
-function installR2({ manifest = upstreamManifest, p2Shape = openShape, delayMs = 0 } = {}) {
+function installR2({
+  manifest = upstreamManifest,
+  p1Artifact = p1,
+  p2Artifact = p2,
+  p2Shape = openShape,
+  delayMs = 0,
+} = {}) {
   const writes = []
   let activeWrites = 0
   let maxActiveWrites = 0
@@ -241,8 +269,8 @@ function installR2({ manifest = upstreamManifest, p2Shape = openShape, delayMs =
 
     if (method === 'GET') {
       const value = key === patternStopExportManifestKey(version, city) ? manifest
-        : key === patternStopArtifactKey(version, city, 'P1') ? p1
-          : key === patternStopArtifactKey(version, city, 'P2') ? p2
+        : key === patternStopArtifactKey(version, city, 'P1') ? p1Artifact
+          : key === patternStopArtifactKey(version, city, 'P2') ? p2Artifact
             : key === 'shape/P1.json' ? loopShape
               : key === 'shape/P2.json' ? p2Shape
                 : null
@@ -299,6 +327,14 @@ function stop(stopUid, placeId, stopSequence, name) {
 
 function shape(coordinates) {
   return { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } }
+}
+
+function fingerprint(value) {
+  const body = JSON.stringify(value)
+  return {
+    bytes: new TextEncoder().encode(body).byteLength,
+    sha256: createHash('sha256').update(body).digest('hex'),
+  }
 }
 
 function jsonResponse(value) {
