@@ -8,12 +8,12 @@ import {
 } from './public-probe-contract.mjs'
 
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
-const CORE_COUNT_FIELDS = ['routes', 'patterns', 'stops', 'places', 'patternStops']
+const LOW_CARD_COUNT_FIELDS = ['routes', 'patterns', 'places']
 
 // Public-network evidence chain: GitHub runner → DNS/TLS → Worker release →
-// public API → active snapshot → route/place/journey contract. The D1 rows in
-// `reference` are read-only context for what the public surface should show;
-// every hard verdict below comes from the public API itself.
+// public API → active snapshot → route/StopUID/place/journey contract. D1 is
+// deliberately limited to low-cardinality catalogue reference data; the public
+// surface itself must prove that high-cardinality routing/lookup artifacts work.
 export async function probePublicSurface({
   city,
   probeDate,
@@ -35,7 +35,7 @@ export async function probePublicSurface({
     hardChecksPassed += 1
 
     const counts = reference.counts ?? {}
-    if (!CORE_COUNT_FIELDS.every((field) => Number.isInteger(counts[field]) && counts[field] > 0)) {
+    if (!LOW_CARD_COUNT_FIELDS.every((field) => Number.isInteger(counts[field]) && counts[field] > 0)) {
       throw hardFailure('active_rows_empty')
     }
     hardChecksPassed += 1
@@ -58,16 +58,33 @@ export async function probePublicSurface({
 
     const sample = reference.sample
     if (!validSample(sample)) throw hardFailure('route_sample_failed')
-    const route = await publicJson(publicApi, `/api/v1/map/route?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}`, 'route_sample_failed')
+    const route = await publicJson(publicApi,
+      `/api/v1/map/route?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}&routeUid=${encodeURIComponent(sample.routeUid)}&patternId=${encodeURIComponent(sample.patternId)}`,
+      'route_sample_failed')
     const variant = Array.isArray(route?.variants)
       ? route.variants.find((candidate) => candidate?.variantKey === sample.patternId)
       : undefined
     if (route?.schemaVersion !== 1 || route?.source !== 'snapshot' || !variant || variant.stops?.features?.length < 2) {
       throw hardFailure('route_sample_failed')
     }
+    const firstStop = variant.stops.features.find((feature) => validStopFeature(feature))
+    if (!firstStop) throw hardFailure('route_sample_failed')
+    const stopUid = firstStop.properties.stopUid
+    const stopSequence = Number(firstStop.properties.sequence)
+    const stopPlace = await publicJson(publicApi,
+      `/api/v1/map/stop-place?city=${encodeURIComponent(city)}&stopUid=${encodeURIComponent(stopUid)}`,
+      'route_sample_failed')
+    const placeId = stopPlace?.place?.placeId
+    if (stopPlace?.schemaVersion !== 1
+      || stopPlace?.city !== city
+      || stopPlace?.stopUid !== stopUid
+      || typeof placeId !== 'string' || !placeId) {
+      throw hardFailure('route_sample_failed')
+    }
+    const resolvedSample = Object.freeze({ ...sample, placeId, stopSequence })
     hardChecksPassed += 1
 
-    const arrivals = await publicJson(publicApi, `/api/v1/map/place/${encodeURIComponent(sample.placeId)}/arrivals?city=${encodeURIComponent(city)}`, 'place_bundle_sample_failed')
+    const arrivals = await publicJson(publicApi, `/api/v1/map/place/${encodeURIComponent(placeId)}/arrivals?city=${encodeURIComponent(city)}`, 'place_bundle_sample_failed')
     if (arrivals?.schemaVersion !== 1
       || arrivals?.scheduleSource !== 'place-bundle'
       || arrivals?.snapshotVersion !== activeVersion
@@ -88,7 +105,7 @@ export async function probePublicSurface({
     if (!networkPrefixMatches(networkPrefix, city, activeVersion)) throw hardFailure('network_version_mismatch')
     hardChecksPassed += 1
 
-    const warnings = await realtimeDiagnostics({ city, sample, arrivals, publicApi, sampleCaseId })
+    const warnings = await realtimeDiagnostics({ city, sample: resolvedSample, arrivals, publicApi, sampleCaseId })
     return validatePublicProbeResult({
       city,
       probeDate,
@@ -196,9 +213,16 @@ class PublicProbeFailure extends Error {
 
 function validSample(value) {
   return Boolean(value)
-    && ['patternId', 'routeName', 'placeId'].every((field) => typeof value[field] === 'string' && value[field].length > 0)
-    && Number.isInteger(value.stopSequence)
-    && value.stopSequence >= 0
+    && ['patternId', 'routeUid', 'routeName']
+      .every((field) => typeof value[field] === 'string' && value[field].length > 0)
+}
+
+function validStopFeature(value) {
+  return Boolean(value?.properties)
+    && typeof value.properties.stopUid === 'string'
+    && value.properties.stopUid.length > 0
+    && Number.isInteger(Number(value.properties.sequence))
+    && Number(value.properties.sequence) >= 0
 }
 
 function nullableVersion(value) {
