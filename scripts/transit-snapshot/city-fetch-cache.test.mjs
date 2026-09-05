@@ -31,11 +31,14 @@ describe('City fetch cache', () => {
         body: Buffer.from('[{"RouteUID":"TPE1"}]'),
         sourceVersion: 'v1',
       })),
-      store: vi.fn(),
+      stage: vi.fn(),
+      promote: vi.fn(),
     }
+    const registerCandidate = vi.fn()
     const cachedFetch = createCityFetchCache({
       fetchImpl: upstream,
       persistentForCity: (city) => city === 'Taipei' ? persistent : null,
+      registerCandidate,
       logger: { log: vi.fn(), warn: vi.fn() },
     })
 
@@ -43,27 +46,39 @@ describe('City fetch cache', () => {
     await expect(response.json()).resolves.toEqual([{ RouteUID: 'TPE1' }])
     expect(upstream).not.toHaveBeenCalled()
     expect(persistent.resolve).toHaveBeenCalledTimes(1)
-    expect(persistent.store).not.toHaveBeenCalled()
+    expect(persistent.stage).not.toHaveBeenCalled()
+    expect(registerCandidate).not.toHaveBeenCalled()
   })
 
-  it('downloads and stores the full payload after a persistent miss', async () => {
+  it('stages and registers a full payload after a persistent miss without promoting it', async () => {
     const upstream = vi.fn(async () => new Response('[{"RouteUID":"TPE2"}]', { status: 200 }))
+    const candidate = { resource: 'Route', sourceVersion: 'v2', payloadKey: 'candidate' }
     const persistent = {
       resolve: vi.fn(async () => ({ body: null, sourceVersion: 'v2' })),
-      store: vi.fn(async () => true),
+      stage: vi.fn(async () => candidate),
+      promote: vi.fn(),
     }
+    const registerCandidate = vi.fn()
     const cachedFetch = createCityFetchCache({
       fetchImpl: upstream,
       persistentForCity: () => persistent,
+      registerCandidate,
       logger: { log: vi.fn(), warn: vi.fn() },
     })
 
     await expect((await cachedFetch(routeUrl)).json()).resolves.toEqual([{ RouteUID: 'TPE2' }])
     expect(upstream).toHaveBeenCalledTimes(1)
-    expect(persistent.store).toHaveBeenCalledWith(expect.objectContaining({
+    expect(persistent.stage).toHaveBeenCalledWith(expect.objectContaining({
       resource: 'Route',
       sourceVersion: 'v2',
     }))
+    expect(registerCandidate).toHaveBeenCalledWith({
+      cache: persistent,
+      candidate,
+      city: 'Taipei',
+      resource: 'Route',
+    })
+    expect(persistent.promote).not.toHaveBeenCalled()
   })
 
   it('leaves filtered and dynamic requests untouched', async () => {

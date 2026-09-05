@@ -42,6 +42,7 @@ export function createIntercityFetchCache({
   root = join('.transit-snapshot', 'tdx-intercity-cache'),
   scope = intercityCacheScope(),
   persistent = null,
+  registerCandidate = () => undefined,
   logger = console,
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function')
@@ -65,6 +66,8 @@ export function createIntercityFetchCache({
         const resolved = await persistent.resolve({ resource, input, init })
         sourceVersion = resolved?.sourceVersion ?? null
         if (resolved?.body) {
+          // Only promoted persistent bytes are allowed into the cross-process run cache.
+          // A fresh upstream candidate stays process-local until snapshot validation succeeds.
           await writeCacheFailOpen(cachePath, resolved.body, resource, logger)
           logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'persistent-hit' }))
           return jsonResponse(resolved.body)
@@ -78,13 +81,16 @@ export function createIntercityFetchCache({
     if (!response.ok) return response
 
     const body = Buffer.from(await response.arrayBuffer())
-    await writeCacheFailOpen(cachePath, body, resource, logger)
-    if (persistent?.store) {
+    if (persistent?.stage) {
       try {
-        await persistent.store({ resource, body, sourceVersion })
+        const candidate = await persistent.stage({ resource, body, sourceVersion })
+        if (candidate) registerCandidate({ cache: persistent, candidate, resource })
       } catch (error) {
-        logger?.warn?.(`TDX InterCity persistent cache store failed for ${resource}: ${errorMessage(error)}`)
+        logger?.warn?.(`TDX InterCity persistent cache stage failed for ${resource}: ${errorMessage(error)}`)
       }
+    } else {
+      // Without durable R2 storage, keep the old workflow-attempt cache behavior.
+      await writeCacheFailOpen(cachePath, body, resource, logger)
     }
     logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'miss' }))
     return jsonResponse(body, response.status)

@@ -3,6 +3,7 @@ import { createCitySourceCache } from './city-source-cache.mjs'
 import { createIntercityFetchCache, intercityCacheScope } from './intercity-fetch-cache.mjs'
 import { createIntercitySourceCache } from './intercity-source-cache.mjs'
 import { createR2StaticSourceStorage } from './tdx-static-source-cache.mjs'
+import { registerTdxStaticSourceCandidate } from './tdx-static-source-promotion.mjs'
 
 const INSTALL_MARKER = Symbol.for('mochi-bus.tdx-static-cache-installed')
 const scope = intercityCacheScope()
@@ -13,12 +14,13 @@ if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
   let fetchImpl = upstreamFetch
 
   // City snapshots are already sharded one city per scheduled slot, so they do
-  // not need another on-disk run cache. Persist the exact static payload in R2
-  // and use a tiny UpdateTime probe to decide whether it can be reused.
+  // not need another on-disk run cache. Persist fresh bytes as candidates in R2;
+  // state.json is promoted only after the publisher validates the complete model.
   if (storage) {
     const cityCaches = new Map()
     fetchImpl = createCityFetchCache({
       fetchImpl,
+      registerCandidate: registerTdxStaticSourceCandidate,
       persistentForCity: (city) => {
         let cache = cityCaches.get(city)
         if (!cache) {
@@ -30,13 +32,19 @@ if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
     })
   }
 
-  // InterCity still keeps its workflow-attempt disk layer because multiple city
-  // publishers in the same job consume the same national source payload.
+  // InterCity keeps the workflow-attempt disk layer only for already-promoted
+  // persistent hits (or when R2 is unavailable). Fresh candidates never cross a
+  // process boundary before validation.
   if (scope) {
     const persistent = storage
       ? createIntercitySourceCache({ fetchImpl: upstreamFetch, storage })
       : null
-    fetchImpl = createIntercityFetchCache({ fetchImpl, scope, persistent })
+    fetchImpl = createIntercityFetchCache({
+      fetchImpl,
+      scope,
+      persistent,
+      registerCandidate: registerTdxStaticSourceCandidate,
+    })
   }
 
   globalThis.fetch = fetchImpl

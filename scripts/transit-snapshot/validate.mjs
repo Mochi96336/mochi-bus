@@ -1,3 +1,5 @@
+import { promotePendingTdxStaticSources } from './tdx-static-source-promotion.mjs'
+
 export class SnapshotValidationError extends Error {
   constructor(issues) {
     super(`Snapshot validation failed:\n- ${issues.join('\n- ')}`)
@@ -104,6 +106,10 @@ export function validateSnapshot(snapshot, previousState = null) {
 
   validateNetwork(snapshot, patternIds, issues)
   if (issues.length) throw new SnapshotValidationError(issues)
+  // Fresh static payloads were only staged in R2 while this model was being built.
+  // Crossing the complete local validation boundary makes them safe cache authority.
+  // Promotion is an optimization and stays fail-open for publication correctness.
+  void promotePendingTdxStaticSources()
   return { valid: true, counts, quality }
 }
 
