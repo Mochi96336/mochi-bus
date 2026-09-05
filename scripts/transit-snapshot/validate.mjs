@@ -1,3 +1,4 @@
+import { assertPublisherManifestBudget } from './publisher-manifest-budget.mjs'
 import { promotePendingTdxStaticSources } from './tdx-static-source-promotion.mjs'
 
 export class SnapshotValidationError extends Error {
@@ -110,6 +111,18 @@ export function validateSnapshot(snapshot, previousState = null) {
   // Crossing the complete local validation boundary makes them safe cache authority.
   // Promotion is an optimization and stays fail-open for publication correctness.
   void promotePendingTdxStaticSources()
+  // #280 made routing artifacts part of the main manifest. Bound its worst-case serialized
+  // size now, while the process is still entirely local, instead of discovering the 16 MiB
+  // validator ceiling after R2 objects and D1 rows have already been staged.
+  assertPublisherManifestBudget({
+    city: snapshot.city,
+    version: snapshot.version,
+    routes: snapshot.routes,
+    patterns: snapshot.patterns,
+    places: snapshot.places,
+    counts,
+    quality,
+  })
   return { valid: true, counts, quality }
 }
 
