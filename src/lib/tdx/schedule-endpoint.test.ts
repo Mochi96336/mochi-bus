@@ -9,6 +9,7 @@ import {
 import type { TDXEnv, TDXResolutionOptions } from './resolution-cache'
 
 const env = {} as unknown as TDXEnv
+const SCHEDULE_SELECT = 'SubRouteUID,Direction,Timetables,Frequencys'
 
 type FetchCall = {
   url: URL
@@ -39,13 +40,14 @@ function harness(result: ScheduleItem[] = []) {
 }
 
 describe('TDX schedule endpoint boundary', () => {
-  it('builds the encoded City schedule URL and preserves the six-hour policy', async () => {
+  it('builds the encoded City schedule URL, projects consumed fields and preserves the six-hour policy', async () => {
     const { calls, endpoint } = harness()
 
     await endpoint.getBusSchedule(env, 'NewTaipei', '藍 15')
 
     expect(calls).toHaveLength(1)
     expect(calls[0].url.pathname).toBe('/api/basic/v2/Bus/Schedule/City/NewTaipei/%E8%97%8D%2015')
+    expect(calls[0].url.searchParams.get('$select')).toBe(SCHEDULE_SELECT)
     expect(calls[0].url.searchParams.get('$format')).toBe('JSON')
     expect(calls[0].ttlSeconds).toBe(6 * 60 * 60)
     expect(calls[0].options).toMatchObject({
@@ -54,12 +56,14 @@ describe('TDX schedule endpoint boundary', () => {
     })
   })
 
-  it('uses InterCity for THB route identities without leaking the city into the path', async () => {
+  it('uses InterCity for THB route identities with the same projection and without leaking the city into the path', async () => {
     const { calls, endpoint } = harness()
 
     await endpoint.getBusSchedule(env, 'Taipei', '9001', 'THB9001')
 
     expect(calls[0].url.pathname).toBe('/api/basic/v2/Bus/Schedule/InterCity/9001')
+    expect(calls[0].url.searchParams.get('$select')).toBe(SCHEDULE_SELECT)
+    expect(calls[0].url.searchParams.get('$format')).toBe('JSON')
     expect(calls[0].options?.city).toBe('Taipei')
   })
 

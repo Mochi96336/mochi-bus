@@ -8,6 +8,7 @@ import type {
 } from './resolution-cache'
 
 const SCHEDULE_CACHE_SECONDS = 6 * 60 * 60
+const SCHEDULE_SELECT = 'SubRouteUID,Direction,Timetables,Frequencys'
 
 export type TDXScheduleEndpointDependencies = {
   fetchTDXJson: <T>(
@@ -31,6 +32,9 @@ export function createTDXScheduleEndpoint(dependencies: TDXScheduleEndpointDepen
     const url = new URL(
       `https://tdx.transportdata.tw/api/basic/v2/Bus/Schedule/${tdxRouteScope(city, routeUid)}/${encodeURIComponent(routeName)}`,
     )
+    // Snapshot schedules are preferred by presentation paths. The direct TDX fallback only
+    // consumes route-pattern identity, direction and the timetable/headway collections.
+    url.searchParams.set('$select', SCHEDULE_SELECT)
     url.searchParams.set('$format', 'JSON')
     return dependencies.fetchTDXJson<ScheduleItem[]>(env, url, SCHEDULE_CACHE_SECONDS, {
       operation: 'tdx_schedule',
