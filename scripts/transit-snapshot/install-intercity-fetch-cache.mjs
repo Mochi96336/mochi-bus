@@ -2,6 +2,7 @@ import { createCityFetchCache } from './city-fetch-cache.mjs'
 import { createCitySourceCache } from './city-source-cache.mjs'
 import { createIntercityFetchCache, intercityCacheScope } from './intercity-fetch-cache.mjs'
 import { createIntercitySourceCache } from './intercity-source-cache.mjs'
+import { createR2TimeoutFetch } from './r2-timeout-fetch.mjs'
 import { createR2StaticSourceStorage } from './tdx-static-source-cache.mjs'
 import { registerTdxStaticSourceCandidate } from './tdx-static-source-promotion.mjs'
 
@@ -47,6 +48,11 @@ if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
     })
   }
 
+  // The same preload also surrounds every S3-compatible R2 request made later by
+  // aws4fetch in sync-transit-snapshot.mjs. Static-source storage already has a
+  // tighter 10s signal; AbortSignal.any preserves that while putting a 20s ceiling
+  // on publisher staging, validation, state writes, HEAD/range reads, and cleanup.
+  fetchImpl = createR2TimeoutFetch({ fetchImpl })
   globalThis.fetch = fetchImpl
   globalThis[INSTALL_MARKER] = true
 }
