@@ -8,12 +8,12 @@ function reference(overrides = {}) {
   return {
     activeVersion: 'v1',
     counts: {
-      routes: 3, patterns: 4, stops: 20, places: 12, patternStops: 40,
+      routes: 3, patterns: 4, places: 12,
       routeWithoutPattern: 0, sampleCount: 4,
       ...overrides.counts,
     },
     sample: {
-      patternId: 'TPE307:0', routeUid: 'TPE307', routeName: '307', placeId: 'place-1', stopSequence: 1,
+      patternId: 'TPE307:0', routeUid: 'TPE307', routeName: '307',
       ...overrides.sample,
     },
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== 'counts' && key !== 'sample')),
@@ -29,8 +29,19 @@ function responses(overrides = {}) {
     },
     route: {
       schemaVersion: 1, city: 'Taipei', routeName: '307', source: 'snapshot',
-      variants: [{ variantKey: 'TPE307:0', stops: { features: [{}, {}, {}] } }],
+      variants: [{
+        variantKey: 'TPE307:0', routeUid: 'TPE307',
+        stops: { features: [
+          { properties: { stopUid: 'TPE1001', stopName: '第一站', sequence: 1 } },
+          { properties: { stopUid: 'TPE1002', stopName: '第二站', sequence: 2 } },
+        ] },
+      }],
       ...overrides.route,
+    },
+    stopPlace: {
+      schemaVersion: 1, city: 'Taipei', stopUid: 'TPE1001',
+      place: { placeId: 'place-1', name: '第一站', latitude: 25.0, longitude: 121.5 },
+      ...overrides.stopPlace,
     },
     arrivals: {
       schemaVersion: 1, city: 'Taipei', scheduleSource: 'place-bundle', snapshotVersion: 'v1',
@@ -54,6 +65,7 @@ function fakeApi(data, overrides = {}) {
     getJson: vi.fn(async (path) => {
       if (path.startsWith('/api/v1/map/routes')) return data.routes
       if (path.startsWith('/api/v1/map/route?')) return data.route
+      if (path.startsWith('/api/v1/map/stop-place?')) return data.stopPlace
       if (path.includes('/arrivals')) return data.arrivals
       if (path.startsWith('/api/v1/map/vehicles')) return data.vehicles
       throw new Error(`unexpected path ${path}`)
@@ -86,7 +98,7 @@ describe('public surface probe', () => {
     })
   })
 
-  it('uses ordinary public GET URLs and keeps case identity out of band', async () => {
+  it('resolves place identity from the sampled public route instead of D1 high-card rows', async () => {
     const api = fakeApi(responses())
     await probePublicSurface({
       city: 'Taipei', probeDate, reference: reference(), publicApi: api,
@@ -96,7 +108,8 @@ describe('public surface probe', () => {
     const paths = api.getJson.mock.calls.map(([path]) => path)
     expect(paths).toEqual([
       '/api/v1/map/routes?city=Taipei',
-      '/api/v1/map/route?city=Taipei&route=307',
+      '/api/v1/map/route?city=Taipei&route=307&routeUid=TPE307&patternId=TPE307%3A0',
+      '/api/v1/map/stop-place?city=Taipei&stopUid=TPE1001',
       '/api/v1/map/place/place-1/arrivals?city=Taipei',
       '/api/v1/map/vehicles?city=Taipei&route=307',
     ])
@@ -185,21 +198,25 @@ describe('public surface probe', () => {
 
   it('classifies its own rate limiter as incomplete evidence, not a red city', async () => {
     const rateLimited = Object.assign(new Error('429'), { status: 429 })
+    const data = responses()
     const result = await probe({
       apiOverrides: {
         getJson: vi.fn(async (path) => {
           if (path.includes('/arrivals')) throw rateLimited
-          if (path.startsWith('/api/v1/map/routes')) return responses().routes
-          if (path.startsWith('/api/v1/map/route?')) return responses().route
-          return responses().vehicles
+          if (path.startsWith('/api/v1/map/routes')) return data.routes
+          if (path.startsWith('/api/v1/map/route?')) return data.route
+          if (path.startsWith('/api/v1/map/stop-place?')) return data.stopPlace
+          return data.vehicles
         }),
       },
     })
     expect(result).toMatchObject({ status: 'unknown', failureClass: 'probe_rate_limited' })
   })
 
-  it('fails hard when the deterministic route or place sample is unavailable', async () => {
+  it('fails hard when the deterministic route, StopUID lookup or place sample is unavailable', async () => {
     await expect(probe({ responseOverrides: { route: { variants: [] } } }))
+      .resolves.toMatchObject({ status: 'hard_failed', failureClass: 'route_sample_failed' })
+    await expect(probe({ responseOverrides: { stopPlace: { place: null } } }))
       .resolves.toMatchObject({ status: 'hard_failed', failureClass: 'route_sample_failed' })
     await expect(probe({ responseOverrides: { arrivals: { scheduleSource: 'route-objects', snapshotVersion: null } } }))
       .resolves.toMatchObject({ status: 'hard_failed', failureClass: 'place_bundle_sample_failed' })
@@ -210,5 +227,10 @@ describe('public surface probe', () => {
       .resolves.toMatchObject({ status: 'hard_failed', failureClass: 'route_without_pattern' })
     await expect(probe({ referenceOverrides: { activeVersion: null } }))
       .resolves.toMatchObject({ status: 'hard_failed', failureClass: 'active_pointer_missing' })
+  })
+
+  it('does not require high-cardinality counts in the D1 reference', async () => {
+    await expect(probe({ referenceOverrides: { counts: { stops: undefined, patternStops: undefined } } }))
+      .resolves.toMatchObject({ status: 'healthy', failureClass: 'none' })
   })
 })

@@ -4,7 +4,8 @@ import { validatePublicProbeResult } from './public-probe-contract.mjs'
 
 // Read-only reference queries. The public probe never writes to
 // dataset_versions, snapshot tables, or R2 — it only records its own
-// public_probe_* rows.
+// public_probe_* rows. Keep snapshot reference reads low-cardinality: the
+// public surface itself is responsible for exercising R2 stop/routing data.
 const ACTIVE_SQL = `
 SELECT active_version
 FROM dataset_versions
@@ -16,11 +17,7 @@ const COUNTS_SQL = `
 SELECT
   (SELECT COUNT(*) FROM routes WHERE version = ? AND city_code = ?) AS routes,
   (SELECT COUNT(*) FROM patterns WHERE version = ? AND city_code = ?) AS patterns,
-  (SELECT COUNT(*) FROM stops WHERE version = ? AND city_code = ?) AS stops,
   (SELECT COUNT(*) FROM stop_places WHERE version = ? AND city_code = ?) AS places,
-  (SELECT COUNT(*) FROM pattern_stops ps
-    JOIN patterns p ON p.version = ps.version AND p.pattern_id = ps.pattern_id
-    WHERE ps.version = ? AND p.city_code = ?) AS pattern_stops,
   (SELECT COUNT(*) FROM routes r
     WHERE r.version = ? AND r.city_code = ?
       AND NOT EXISTS (
@@ -28,28 +25,15 @@ SELECT
         WHERE p.version = r.version AND p.city_code = r.city_code AND p.route_uid = r.route_uid
       )) AS route_without_pattern,
   (SELECT COUNT(*) FROM patterns p
-    WHERE p.version = ? AND p.city_code = ?
-      AND EXISTS (
-        SELECT 1 FROM pattern_stops ps
-        WHERE ps.version = p.version AND ps.pattern_id = p.pattern_id
-      )) AS sample_count
+    JOIN routes r ON r.version = p.version AND r.city_code = p.city_code AND r.route_uid = p.route_uid
+    WHERE p.version = ? AND p.city_code = ?) AS sample_count
 `
 
 const SAMPLE_SQL = `
-SELECT p.pattern_id, p.route_uid, r.route_name,
-  (SELECT ps.place_id FROM pattern_stops ps
-    WHERE ps.version = p.version AND ps.pattern_id = p.pattern_id
-    ORDER BY ps.stop_sequence, ps.place_id LIMIT 1) AS place_id,
-  (SELECT ps.stop_sequence FROM pattern_stops ps
-    WHERE ps.version = p.version AND ps.pattern_id = p.pattern_id
-    ORDER BY ps.stop_sequence, ps.place_id LIMIT 1) AS stop_sequence
+SELECT p.pattern_id, p.route_uid, r.route_name
 FROM patterns p
 JOIN routes r ON r.version = p.version AND r.city_code = p.city_code AND r.route_uid = p.route_uid
 WHERE p.version = ? AND p.city_code = ?
-  AND EXISTS (
-    SELECT 1 FROM pattern_stops ps
-    WHERE ps.version = p.version AND ps.pattern_id = p.pattern_id
-  )
 ORDER BY p.pattern_id, p.route_uid
 LIMIT 1 OFFSET ?
 `
@@ -138,8 +122,8 @@ export function createD1PublicProbeStore({
         : String(activeRows[0].active_version)
       if (activeVersion === null) return Object.freeze({ activeVersion: null, counts: null })
       const countRows = await query(COUNTS_SQL, [
-        activeVersion, city, activeVersion, city, activeVersion, city, activeVersion, city,
         activeVersion, city, activeVersion, city, activeVersion, city,
+        activeVersion, city, activeVersion, city,
       ])
       const row = countRows[0] ?? {}
       return Object.freeze({
@@ -147,9 +131,7 @@ export function createD1PublicProbeStore({
         counts: Object.freeze({
           routes: Number(row.routes ?? 0),
           patterns: Number(row.patterns ?? 0),
-          stops: Number(row.stops ?? 0),
           places: Number(row.places ?? 0),
-          patternStops: Number(row.pattern_stops ?? 0),
           routeWithoutPattern: Number(row.route_without_pattern ?? 0),
           sampleCount: Number(row.sample_count ?? 0),
         }),
@@ -164,8 +146,6 @@ export function createD1PublicProbeStore({
         patternId: String(row.pattern_id),
         routeUid: String(row.route_uid),
         routeName: String(row.route_name),
-        placeId: String(row.place_id),
-        stopSequence: Number(row.stop_sequence),
       })
     },
 

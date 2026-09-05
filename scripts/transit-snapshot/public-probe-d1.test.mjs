@@ -9,13 +9,13 @@ import {
 
 const migration = readFileSync(new URL('../../migrations/0006_public_probe.sql', import.meta.url), 'utf8')
 
+// Intentionally omit stops / pattern_stops. If the public reference store ever
+// regresses to either high-cardinality table, these tests fail at SQL prepare.
 const REFERENCE_TABLES = `
 CREATE TABLE dataset_versions (city_code TEXT PRIMARY KEY, active_version TEXT);
 CREATE TABLE routes (version TEXT, city_code TEXT, route_uid TEXT, route_name TEXT);
 CREATE TABLE patterns (version TEXT, city_code TEXT, pattern_id TEXT, route_uid TEXT);
-CREATE TABLE stops (version TEXT, city_code TEXT, stop_uid TEXT);
 CREATE TABLE stop_places (version TEXT, city_code TEXT, place_id TEXT);
-CREATE TABLE pattern_stops (version TEXT, pattern_id TEXT, stop_sequence INTEGER, place_id TEXT);
 `
 
 function cityResult(overrides = {}) {
@@ -70,21 +70,33 @@ describe('public probe D1 store', () => {
 
   afterEach(() => db.close())
 
-  it('reads the reference pointer, counts and a deterministic sample read-only', async () => {
+  it('reads the active pointer, low-card counts and deterministic pattern sample read-only', async () => {
     db.prepare("INSERT INTO dataset_versions VALUES ('Taipei', 'v1')").run()
     db.prepare("INSERT INTO routes VALUES ('v1', 'Taipei', 'TPE307', '307')").run()
     db.prepare("INSERT INTO patterns VALUES ('v1', 'Taipei', 'TPE307:0', 'TPE307')").run()
-    db.prepare("INSERT INTO stops VALUES ('v1', 'Taipei', 'stop-1')").run()
     db.prepare("INSERT INTO stop_places VALUES ('v1', 'Taipei', 'place-1')").run()
-    db.prepare("INSERT INTO pattern_stops VALUES ('v1', 'TPE307:0', 2, 'place-2')").run()
-    db.prepare("INSERT INTO pattern_stops VALUES ('v1', 'TPE307:0', 1, 'place-1')").run()
 
     await expect(store.readReference('Taipei')).resolves.toMatchObject({
       activeVersion: 'v1',
-      counts: { routes: 1, patterns: 1, stops: 1, places: 1, patternStops: 2, routeWithoutPattern: 0, sampleCount: 1 },
+      counts: { routes: 1, patterns: 1, places: 1, routeWithoutPattern: 0, sampleCount: 1 },
     })
     await expect(store.readSample('Taipei', 'v1', 0)).resolves.toEqual({
-      patternId: 'TPE307:0', routeUid: 'TPE307', routeName: '307', placeId: 'place-1', stopSequence: 1,
+      patternId: 'TPE307:0', routeUid: 'TPE307', routeName: '307',
+    })
+  })
+
+  it('counts only patterns that can resolve a low-card route sample', async () => {
+    db.prepare("INSERT INTO dataset_versions VALUES ('Taipei', 'v1')").run()
+    db.prepare("INSERT INTO routes VALUES ('v1', 'Taipei', 'TPE307', '307')").run()
+    db.prepare("INSERT INTO patterns VALUES ('v1', 'Taipei', 'TPE307:0', 'TPE307')").run()
+    db.prepare("INSERT INTO patterns VALUES ('v1', 'Taipei', 'orphan:0', 'missing-route')").run()
+    db.prepare("INSERT INTO stop_places VALUES ('v1', 'Taipei', 'place-1')").run()
+
+    await expect(store.readReference('Taipei')).resolves.toMatchObject({
+      counts: { routes: 1, patterns: 2, places: 1, routeWithoutPattern: 0, sampleCount: 1 },
+    })
+    await expect(store.readSample('Taipei', 'v1', 0)).resolves.toEqual({
+      patternId: 'TPE307:0', routeUid: 'TPE307', routeName: '307',
     })
   })
 
