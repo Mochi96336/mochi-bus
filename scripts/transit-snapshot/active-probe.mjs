@@ -1,4 +1,14 @@
 import { createHash } from 'node:crypto'
+import {
+  MAX_PATTERN_STOP_ARTIFACT_BYTES,
+  MAX_ROUTING_MANIFEST_BYTES,
+  parseJsonArtifactBytes,
+  parsePatternStopArtifact,
+  parseRoutingAuthorityManifests,
+  routingCompletionManifestKeys,
+  routingManifestObservations,
+  routingManifestRootBinding,
+} from './routing-authority-contract.mjs'
 
 export const SNAPSHOT_PROBE_SCHEMA_VERSION = 1
 export const SNAPSHOT_PROBE_CASE_VERSION = 1
@@ -9,6 +19,9 @@ export const SNAPSHOT_PROBE_FAILURE_CLASSES = Object.freeze([
   'active_pointer_invalid',
   'active_rows_empty',
   'route_without_pattern',
+  'routing_authority_read_failed',
+  'routing_authority_incomplete',
+  'routing_authority_invalid',
   'manifest_missing',
   'manifest_read_failed',
   'manifest_version_mismatch',
@@ -91,6 +104,19 @@ SELECT
       )) AS sample_count
 `
 
+const LOW_CARD_COUNTS_SQL = `
+SELECT
+  (SELECT COUNT(*) FROM routes WHERE version = ? AND city_code = ?) AS routes,
+  (SELECT COUNT(*) FROM patterns WHERE version = ? AND city_code = ?) AS patterns,
+  (SELECT COUNT(*) FROM stop_places WHERE version = ? AND city_code = ?) AS places,
+  (SELECT COUNT(*) FROM routes r
+    WHERE r.version = ? AND r.city_code = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM patterns p
+        WHERE p.version = r.version AND p.city_code = r.city_code AND p.route_uid = r.route_uid
+      )) AS route_without_pattern
+`
+
 const SAMPLE_SQL = `
 SELECT p.pattern_id, p.route_uid, r.route_name, p.shape_key,
   (SELECT ps.place_id FROM pattern_stops ps
@@ -105,6 +131,14 @@ WHERE p.version = ? AND p.city_code = ?
   )
 ORDER BY p.pattern_id, p.route_uid
 LIMIT 1 OFFSET ?
+`
+
+const R2_SAMPLE_SQL = `
+SELECT p.pattern_id, p.route_uid, r.route_name, p.shape_key
+FROM patterns p
+JOIN routes r ON r.version = p.version AND r.city_code = p.city_code AND r.route_uid = p.route_uid
+WHERE p.version = ? AND p.city_code = ? AND p.pattern_id = ?
+LIMIT 1
 `
 
 export async function probeActiveSnapshot({
@@ -136,7 +170,8 @@ export async function probeActiveSnapshot({
     if (!SAFE_VERSION.test(activeVersion)) throw probeFailure('active_pointer_invalid')
     hardChecksPassed += 1
 
-    const counts = await readCounts(query, city, activeVersion)
+    const authority = await readRoutingAuthority({ query, r2, city, version: activeVersion })
+    const counts = authority.counts
     if (!CORE_COUNT_FIELDS.every((field) => Number.isInteger(counts[field]) && counts[field] > 0)) {
       throw probeFailure('active_rows_empty')
     }
@@ -160,6 +195,13 @@ export async function probeActiveSnapshot({
       || Number(manifest.counts?.placeBundles) < 1
       || !manifestHasCoreArtifactClasses(manifest.artifacts, prefix)) {
       throw probeFailure('manifest_count_mismatch')
+    }
+    if (authority.mode === 'r2') {
+      try {
+        routingManifestRootBinding(manifest.artifacts, authority.manifestObservations)
+      } catch {
+        throw probeFailure('routing_authority_invalid')
+      }
     }
     hardChecksPassed += 1
 
@@ -205,11 +247,15 @@ export async function probeActiveSnapshot({
     const sampleIndex = deterministicSampleIndex(city, windowId, probeCaseVersion, counts.sampleCount)
     let sampleRows
     try {
-      sampleRows = await query(SAMPLE_SQL, [activeVersion, city, sampleIndex])
+      sampleRows = authority.mode === 'r2'
+        ? await query(R2_SAMPLE_SQL, [activeVersion, city, authority.patternEntries[sampleIndex].patternId])
+        : await query(SAMPLE_SQL, [activeVersion, city, sampleIndex])
     } catch {
       throw probeFailure('route_sample_failed')
     }
-    const sample = sampleRows[0]
+    const sample = authority.mode === 'r2'
+      ? await attachR2SamplePlace(sampleRows[0], authority.patternEntries[sampleIndex], r2, city, activeVersion)
+      : sampleRows[0]
     if (!validSample(sample)) throw probeFailure('route_sample_failed')
 
     const emitSampleFailure = (
@@ -406,6 +452,10 @@ export async function readBoundedResponseJson(response, maximumBytes) {
 }
 
 export async function readBoundedResponseText(response, maximumBytes) {
+  return new TextDecoder().decode(await readBoundedResponseBytes(response, maximumBytes))
+}
+
+export async function readBoundedResponseBytes(response, maximumBytes) {
   if (!response.body) throw new ProbeResponseReadError('stream_failure')
   const declaredLength = Number(response.headers.get('Content-Length'))
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
@@ -438,7 +488,7 @@ export async function readBoundedResponseText(response, maximumBytes) {
     merged.set(chunk, offset)
     offset += chunk.byteLength
   }
-  return new TextDecoder().decode(merged)
+  return merged
 }
 
 export function validateProbeResult(value) {
@@ -500,6 +550,74 @@ async function readCounts(query, city, version) {
   }
 }
 
+async function readRoutingAuthority({ query, r2, city, version }) {
+  const keys = routingCompletionManifestKeys(version, city)
+  let heads
+  try {
+    heads = await Promise.all(keys.map((key) => r2.head(key)))
+  } catch {
+    throw probeFailure('routing_authority_read_failed')
+  }
+  const present = heads.filter(Boolean).length
+  if (present === 0) return { mode: 'd1', counts: await readCounts(query, city, version) }
+  if (present !== keys.length) throw probeFailure('routing_authority_incomplete')
+
+  let bodies
+  try {
+    bodies = await Promise.all(keys.map((key) => r2.getBytes(key, MAX_ROUTING_MANIFEST_BYTES)))
+    if (bodies.some((body) => !body)) throw new Error('Routing manifest disappeared during read')
+    if (bodies.some((body) => Buffer.from(body).byteLength > MAX_ROUTING_MANIFEST_BYTES)) {
+      throw new Error('Routing manifest exceeds read limit')
+    }
+    if (heads.some((head, index) => head.size !== null && head.size !== undefined
+      && Number(head.size) !== Buffer.from(bodies[index]).byteLength)) {
+      throw new Error('Routing manifest changed during read')
+    }
+  } catch {
+    throw probeFailure('routing_authority_read_failed')
+  }
+  let authority
+  try {
+    const parsed = bodies.map((body) => JSON.parse(Buffer.from(body).toString('utf8')))
+    authority = parseRoutingAuthorityManifests(parsed, city, version)
+  } catch {
+    throw probeFailure('routing_authority_invalid')
+  }
+
+  let rows
+  try {
+    rows = await query(LOW_CARD_COUNTS_SQL, [version, city, version, city, version, city, version, city])
+  } catch {
+    throw probeFailure('unknown')
+  }
+  const row = rows[0]
+  const counts = {
+    routes: Number(row?.routes), patterns: Number(row?.patterns), places: Number(row?.places),
+    stops: authority.counts.stops, patternStops: authority.counts.patternStops,
+    routeWithoutPattern: Number(row?.route_without_pattern), sampleCount: authority.counts.patterns,
+  }
+  if (counts.patterns !== authority.counts.patterns || counts.places !== authority.counts.places) {
+    throw probeFailure('routing_authority_invalid')
+  }
+  return {
+    mode: 'r2', counts, patternEntries: authority.patternEntries,
+    manifestObservations: routingManifestObservations(keys, bodies),
+  }
+}
+
+async function attachR2SamplePlace(sample, entry, r2, city, version) {
+  if (entry.bytes > MAX_PATTERN_STOP_ARTIFACT_BYTES) throw probeFailure('route_sample_failed')
+  let stops
+  try {
+    const body = await r2.getBytes(entry.key, entry.bytes)
+    if (!body) throw new Error('Pattern artifact missing')
+    stops = parsePatternStopArtifact(parseJsonArtifactBytes(body, entry), city, version, entry)
+  } catch {
+    throw probeFailure('route_sample_failed')
+  }
+  return sample ? { ...sample, place_id: stops[0].placeId } : sample
+}
+
 async function probeDiagnostics({ city, activeVersion, state, sample, query, r2 }) {
   const warnings = []
   if (state?.version !== activeVersion) warnings.push('state_pointer_mismatch')
@@ -509,7 +627,7 @@ async function probeDiagnostics({ city, activeVersion, state, sample, query, r2 
   let rollbackAvailable = state?.version === activeVersion && previousVersion !== null && previousVersion !== activeVersion
   if (rollbackAvailable) {
     try {
-      const counts = await readCounts(query, city, previousVersion)
+      const { counts } = await readRoutingAuthority({ query, r2, city, version: previousVersion })
       const prefix = snapshotPrefix(previousVersion, city)
       const manifest = await r2.getManifest(`${prefix}manifest.json`)
       const networkKey = `${prefix}network.json`

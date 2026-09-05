@@ -3,8 +3,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPublisherRoutingArtifacts,
   routingArtifactCleanupKeys,
-  routingCompletionManifestKeys,
 } from './publisher-routing-artifacts.mjs'
+import {
+  parseJsonArtifactBytes,
+  parsePatternStopArtifact,
+  parseRoutingAuthorityManifests,
+  routingCompletionManifestKeys,
+} from './routing-authority-contract.mjs'
 
 const city = 'Taichung'
 const version = 'v-next'
@@ -85,6 +90,11 @@ describe('publisher routing artifacts', () => {
     const placeManifest = parseTask(result, placeManifestKey)
     const transferManifest = parseTask(result, transferManifestKey)
     const stopManifest = parseTask(result, stopManifestKey)
+    const authority = parseRoutingAuthorityManifests(
+      [patternManifest, placeManifest, transferManifest, stopManifest],
+      city,
+      version,
+    )
 
     expect(patternManifest).toMatchObject({
       schemaVersion: 1, kind: 'pattern-stop-export', city, version, generatedAt,
@@ -102,6 +112,16 @@ describe('publisher routing artifacts', () => {
       schemaVersion: 1, kind: 'stop-lookup-export', city, version, generatedAt,
       upstreamPlaceRoutingManifest: placeManifestKey, shardCount: 16, places: 3, stops: 3, occurrences: 4,
     })
+    expect(authority.counts).toEqual({ patterns: 2, patternStops: 4, places: 3, stops: 3 })
+
+    const patternEntry = authority.patternEntries[0]
+    const patternTask = result.tasks.find((item) => item.key === patternEntry.key)
+    expect(parsePatternStopArtifact(
+      parseJsonArtifactBytes(Buffer.from(patternTask.body), patternEntry),
+      city,
+      version,
+      patternEntry,
+    )).toHaveLength(patternEntry.stops)
 
     for (const entry of [
       ...patternManifest.artifacts,

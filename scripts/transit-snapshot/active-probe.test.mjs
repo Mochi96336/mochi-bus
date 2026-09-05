@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   artifactHeadMatches,
@@ -7,6 +8,7 @@ import {
   deterministicSampleIndex,
   networkPrefixMatches,
   probeActiveSnapshot,
+  readBoundedResponseBytes,
   readBoundedResponseJson,
   readBoundedResponseText,
 } from './active-probe.mjs'
@@ -52,8 +54,9 @@ function fixture(overrides = {}) {
     ],
   }
   const r2 = {
-    getManifest: vi.fn(async (key) => key.includes(previousVersion)
-      ? {
+    getManifest: vi.fn(async (key) => {
+      if (key.endsWith('-export.json') || key.includes('/patterns/')) return null
+      return key.includes(previousVersion) ? {
           ...manifest,
           version: previousVersion,
           artifacts: manifest.artifacts.map((artifact) => ({
@@ -61,8 +64,12 @@ function fixture(overrides = {}) {
             key: artifact.key.replace(activeVersion, previousVersion),
           })),
         }
-      : manifest),
-    head: vi.fn(async (key) => ({ size: key.endsWith('network.json') ? 8_000_000 : 512 })),
+        : manifest
+    }),
+    getBytes: vi.fn(async () => null),
+    head: vi.fn(async (key) => key.endsWith('-export.json')
+      ? null
+      : { size: key.endsWith('network.json') ? 8_000_000 : 512 }),
     readPrefix: vi.fn(async (key) => {
       const version = key.includes(previousVersion) ? previousVersion : activeVersion
       return `{"schemaVersion":1,"city":"${city}","version":"${version}","routes":[`
@@ -104,6 +111,144 @@ function fixture(overrides = {}) {
 }
 
 describe('active snapshot probe', () => {
+  function enableR2Authority(options, {
+    missing = [],
+    mutate,
+    rootBinding = 'valid',
+    readError = null,
+    authorityVersion = activeVersion,
+  } = {}) {
+    const prefix = `snapshots/${authorityVersion}/cities/${city}/`
+    const jsonBody = (value) => Buffer.from(JSON.stringify(value))
+    const descriptor = (key, value, fields = {}) => {
+      const body = jsonBody(value)
+      return {
+        ...fields,
+        key,
+        bytes: body.byteLength,
+        sha256: createHash('sha256').update(body).digest('hex'),
+      }
+    }
+    const patternBodies = {
+      [`${prefix}patterns/${options.sample.pattern_id}/stops.json`]: {
+        schemaVersion: 1, city, version: authorityVersion, patternId: options.sample.pattern_id,
+        stops: [
+          {
+            stopUid: 'STOP_1', placeId: options.sample.place_id, stopSequence: 1,
+            name: 'Stop 1', latitude: 25.01, longitude: 121.51,
+          },
+          {
+            stopUid: 'STOP_2', placeId: 'PLACE_2', stopSequence: 2,
+            name: 'Stop 2', latitude: 25.02, longitude: 121.52,
+          },
+        ],
+      },
+      [`${prefix}patterns/PATTERN_SECOND/stops.json`]: {
+        schemaVersion: 1, city, version: authorityVersion, patternId: 'PATTERN_SECOND',
+        stops: [
+          {
+            stopUid: 'STOP_3', placeId: options.sample.place_id, stopSequence: 1,
+            name: 'Stop 3', latitude: 25.03, longitude: 121.53,
+          },
+          {
+            stopUid: 'STOP_4', placeId: 'PLACE_2', stopSequence: 2,
+            name: 'Stop 4', latitude: 25.04, longitude: 121.54,
+          },
+        ],
+      },
+    }
+    const patternEntries = Object.entries(patternBodies).map(([key, body]) => descriptor(key, body, {
+      patternId: body.patternId,
+      stops: body.stops.length,
+    }))
+    const placeArtifacts = [
+      descriptor(`${prefix}routing/places/${options.sample.place_id}.json`, { place: 1 }, {
+        placeId: options.sample.place_id, patterns: 2, occurrences: 2,
+      }),
+      descriptor(`${prefix}routing/places/PLACE_2.json`, { place: 2 }, {
+        placeId: 'PLACE_2', patterns: 2, occurrences: 2,
+      }),
+    ]
+    const transferShard = descriptor(`${prefix}routing/transfers/shards/00.json`, { shard: 0 }, {
+      shard: 0, patterns: 2, occurrences: 4,
+    })
+    const stopShard = descriptor(`${prefix}routing/stops/shards/00.json`, { shard: 0 }, {
+      shard: 0, stops: 4,
+    })
+    const manifests = {
+      [`${prefix}pattern-stops-export.json`]: {
+        schemaVersion: 1, kind: 'pattern-stop-export', city, version: authorityVersion,
+        patterns: 2, patternStops: 4, artifacts: patternEntries,
+      },
+      [`${prefix}place-routing-export.json`]: {
+        schemaVersion: 1, kind: 'place-routing-export', city, version: authorityVersion,
+        upstreamPatternStopManifest: `${prefix}pattern-stops-export.json`, places: 2, patterns: 2, occurrences: 4,
+        artifacts: placeArtifacts,
+      },
+      [`${prefix}transfer-routing-export.json`]: {
+        schemaVersion: 1, kind: 'transfer-routing-export', city, version: authorityVersion,
+        upstreamPlaceRoutingManifest: `${prefix}place-routing-export.json`, shardCount: 1,
+        places: 2, patterns: 2, occurrences: 4,
+        patternShards: [
+          { patternId: options.sample.pattern_id, shard: 0 },
+          { patternId: 'PATTERN_SECOND', shard: 0 },
+        ],
+        shards: [transferShard],
+      },
+      [`${prefix}stop-lookup-export.json`]: {
+        schemaVersion: 1, kind: 'stop-lookup-export', city, version: authorityVersion,
+        upstreamPlaceRoutingManifest: `${prefix}place-routing-export.json`, shardCount: 1,
+        places: 2, stops: 4, occurrences: 4, shards: [stopShard],
+      },
+    }
+    mutate?.(manifests)
+    const bodies = new Map([
+      ...Object.entries(manifests).map(([key, value]) => [key, jsonBody(value)]),
+      ...Object.entries(patternBodies).map(([key, value]) => [key, jsonBody(value)]),
+    ])
+    const manifestDescriptors = Object.keys(manifests).map((key) => descriptor(key, manifests[key]))
+    const originalManifest = options.r2.getManifest
+    options.r2.getManifest = vi.fn(async (key) => {
+      const value = await originalManifest(key)
+      return key === `${prefix}manifest.json`
+        ? {
+            ...value,
+            artifacts: [
+              ...value.artifacts,
+              ...(rootBinding === 'legacy'
+                ? []
+                : (rootBinding === 'partial' ? manifestDescriptors.slice(0, 1) : manifestDescriptors)
+                  .map((entry, index) => rootBinding === 'mismatch' && index === 0
+                    ? { ...entry, sha256: '0'.repeat(64) }
+                    : entry)),
+            ],
+          }
+        : value
+    })
+    const originalHead = options.r2.head
+    options.r2.head = vi.fn(async (key) => {
+      if (missing.includes(key)) return null
+      const body = bodies.get(key)
+      return body ? { size: body.byteLength } : originalHead(key)
+    })
+    const originalBytes = options.r2.getBytes
+    options.r2.getBytes = vi.fn(async (key, maximumBytes) => {
+      if (key === readError) throw new Error('private R2 read failure')
+      if (missing.includes(key)) return null
+      return bodies.get(key) ?? originalBytes(key, maximumBytes)
+    })
+    const originalQuery = options.query
+    options.query = vi.fn(async (sql, params) => {
+      if (sql.includes('FROM dataset_versions')) return originalQuery(sql, params)
+      if (sql.includes('AS route_without_pattern') && !sql.includes('FROM stops')) {
+        return [{ routes: 2, patterns: 2, places: 2, route_without_pattern: 0 }]
+      }
+      if (sql.includes('AND p.pattern_id = ?')) return [options.sample]
+      return originalQuery(sql, params)
+    })
+    return { prefix, manifests, bodies, patternBodies }
+  }
+
   it('requires all hard checks and pins every public read to the active version', async () => {
     const options = fixture()
     const result = await probeActiveSnapshot(options)
@@ -127,6 +272,122 @@ describe('active snapshot probe', () => {
     expect(routePath).toContain(`routeUid=${encodeURIComponent(options.sample.route_uid)}`)
     expect(routePath).toContain(`patternId=${encodeURIComponent(options.sample.pattern_id)}`)
     expect(options.diagnosticSink).not.toHaveBeenCalled()
+  })
+
+  it('uses complete routing manifests without reading high-cardinality D1 tables', async () => {
+    const options = fixture()
+    enableR2Authority(options)
+
+    const result = await probeActiveSnapshot(options)
+
+    expect(result).toMatchObject({ activeProbeResult: 'success', hardChecksPassed: 11 })
+    expect(options.query.mock.calls.filter(([, params]) => params?.includes(activeVersion)).map(([sql]) => sql).join('\n'))
+      .not.toMatch(/\bFROM\s+stops\b|\bpattern_stops\b/i)
+  })
+
+  it('accepts complete legacy backfills that predate root-manifest binding', async () => {
+    const options = fixture()
+    enableR2Authority(options, { rootBinding: 'legacy' })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'success', probeFailureClass: 'none', hardChecksPassed: 11,
+    })
+  })
+
+  it('validates both active and previous R2 authorities without high-cardinality D1 reads', async () => {
+    const options = fixture()
+    enableR2Authority(options)
+    enableR2Authority(options, { authorityVersion: previousVersion })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'success', rollbackAvailable: true, hardChecksPassed: 11,
+    })
+    expect(options.query.mock.calls.map(([sql]) => sql).join('\n'))
+      .not.toMatch(/\bFROM\s+stops\b|\bpattern_stops\b/i)
+  })
+
+  it.each([
+    'pattern-stops-export.json',
+    'place-routing-export.json',
+    'transfer-routing-export.json',
+    'stop-lookup-export.json',
+  ])('fails closed when %s is the missing member of a partial authority', async (missingName) => {
+    const options = fixture()
+    const missingKey = `snapshots/${activeVersion}/cities/${city}/${missingName}`
+    enableR2Authority(options, { missing: [missingKey] })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'error', probeFailureClass: 'routing_authority_incomplete', hardChecksPassed: 1,
+    })
+    expect(options.query.mock.calls.map(([sql]) => sql).join('\n'))
+      .not.toMatch(/\bFROM\s+stops\b|\bpattern_stops\b/i)
+  })
+
+  it('distinguishes routing authority read failures from invalid content', async () => {
+    const options = fixture()
+    const readError = `snapshots/${activeVersion}/cities/${city}/transfer-routing-export.json`
+    enableR2Authority(options, { readError })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'error', probeFailureClass: 'routing_authority_read_failed', hardChecksPassed: 1,
+    })
+  })
+
+  it.each([
+    ['cross-manifest counts', (manifests, prefix) => {
+      manifests[`${prefix}stop-lookup-export.json`].occurrences = 99
+    }],
+    ['missing descriptor arrays', (manifests, prefix) => {
+      delete manifests[`${prefix}place-routing-export.json`].artifacts
+    }],
+    ['duplicate pattern shard identities', (manifests, prefix) => {
+      manifests[`${prefix}transfer-routing-export.json`].patternShards[1].patternId = 'PATTERN_PRIVATE'
+    }],
+    ['non-canonical shard keys', (manifests, prefix) => {
+      manifests[`${prefix}stop-lookup-export.json`].shards[0].key = `${prefix}routing/stops/shards/99.json`
+    }],
+    ['invalid artifact fingerprints', (manifests, prefix) => {
+      manifests[`${prefix}pattern-stops-export.json`].artifacts[0].bytes = 0
+    }],
+  ])('fails closed for malformed routing authority: %s', async (_case, mutate) => {
+    const options = fixture()
+    const prefix = `snapshots/${activeVersion}/cities/${city}/`
+    enableR2Authority(options, { mutate: (manifests) => mutate(manifests, prefix) })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'error', probeFailureClass: 'routing_authority_invalid', hardChecksPassed: 1,
+    })
+  })
+
+  it('classifies malformed routing manifest JSON as invalid authority', async () => {
+    const options = fixture()
+    const { prefix, bodies } = enableR2Authority(options)
+    bodies.set(`${prefix}place-routing-export.json`, Buffer.from('{invalid'))
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'error', probeFailureClass: 'routing_authority_invalid', hardChecksPassed: 1,
+    })
+  })
+
+  it.each(['partial', 'mismatch'])('rejects a %s root-manifest routing binding', async (rootBinding) => {
+    const options = fixture()
+    enableR2Authority(options, { rootBinding })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'error', probeFailureClass: 'routing_authority_invalid', hardChecksPassed: 4,
+    })
+  })
+
+  it('checks the sampled pattern artifact against its manifest fingerprint', async () => {
+    const options = fixture()
+    enableR2Authority(options, { mutate: (manifests) => {
+      manifests[`snapshots/${activeVersion}/cities/${city}/pattern-stops-export.json`]
+        .artifacts[0].sha256 = '0'.repeat(64)
+    } })
+
+    await expect(probeActiveSnapshot(options)).resolves.toMatchObject({
+      activeProbeResult: 'error', probeFailureClass: 'route_sample_failed', hardChecksPassed: 9,
+    })
   })
 
   it('accepts missing optional Content-Length but rejects a real mismatch', async () => {
@@ -198,11 +459,22 @@ describe('active snapshot probe', () => {
         ? [{ routes: 2, patterns: 2, stops: 4, places: 2, pattern_stops: 4, route_without_pattern: 1, sample_count: 2 }]
         : original(sql, params))
     }],
-    ['manifest_missing', (options) => { options.r2.getManifest = vi.fn(async () => null) }],
-    ['manifest_read_failed', (options) => { options.r2.getManifest = vi.fn(async () => { throw new Error('oversized manifest') }) }],
+    ['manifest_missing', (options) => {
+      const original = options.r2.getManifest
+      options.r2.getManifest = vi.fn(async (key) => key.endsWith('/manifest.json') ? null : original(key))
+    }],
+    ['manifest_read_failed', (options) => {
+      const original = options.r2.getManifest
+      options.r2.getManifest = vi.fn(async (key) => {
+        if (key.endsWith('/manifest.json')) throw new Error('oversized manifest')
+        return original(key)
+      })
+    }],
     ['manifest_count_mismatch', (options) => {
       const original = options.r2.getManifest
-      options.r2.getManifest = vi.fn(async (key) => ({ ...(await original(key)), counts: { ...counts, routes: 99 } }))
+      options.r2.getManifest = vi.fn(async (key) => key.endsWith('/manifest.json')
+        ? { ...(await original(key)), counts: { ...counts, routes: 99 } }
+        : original(key))
     }],
     ['network_missing', (options) => {
       const original = options.r2.head
@@ -321,6 +593,14 @@ describe('active snapshot probe', () => {
     })
     const streamFailure = await readBoundedResponseJson(new Response(stream), 64).catch((error) => error)
     expect(classifyProbeRequestFailure(streamFailure)).toBe('stream_failure')
+  })
+
+  it('returns exact bounded response bytes for fingerprint verification', async () => {
+    const body = Uint8Array.from([0, 1, 2, 127, 128, 255])
+
+    const observed = await readBoundedResponseBytes(new Response(body), body.byteLength)
+
+    expect([...observed]).toEqual([...body])
   })
 
   it('emits an allowlisted bounded diagnostic without raw sample identity or errors', () => {

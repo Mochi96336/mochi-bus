@@ -19,17 +19,9 @@ import {
   DEFAULT_STOP_LOOKUP_SHARD_COUNT,
   stopLookupExportManifestKey,
 } from './export-stop-lookup.mjs'
+import { routingCompletionManifestKeys } from './routing-authority-contract.mjs'
 
 const JSON_CONTENT_TYPE = 'application/json'
-
-export function routingCompletionManifestKeys(version, city) {
-  return Object.freeze([
-    patternStopExportManifestKey(version, city),
-    placeRoutingExportManifestKey(version, city),
-    transferRoutingExportManifestKey(version, city),
-    stopLookupExportManifestKey(version, city),
-  ])
-}
 
 export function buildPublisherRoutingArtifacts({
   city,
