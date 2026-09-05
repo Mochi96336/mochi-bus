@@ -15,6 +15,7 @@ import { assertArtifactIntegrity, criticalArtifacts, sameArtifactManifest, sameM
 import { snapshotProbeMarker, snapshotProgressMarker, snapshotTerminalMarker } from './transit-snapshot/window-contract.mjs'
 import {
   probeActiveSnapshot,
+  readBoundedResponseBytes,
   readBoundedResponseJson,
   readBoundedResponseText,
 } from './transit-snapshot/active-probe.mjs'
@@ -185,6 +186,7 @@ if (previousState && process.env.SNAPSHOT_FORCE !== '1') {
       r2: {
         getManifest: s3GetManifest,
         getJson: s3GetJson,
+        getBytes: s3GetBytes,
         head: s3HeadObject,
         readPrefix: s3ReadPrefix,
       },
@@ -580,6 +582,7 @@ try {
         r2: {
           getManifest: s3GetManifest,
           getJson: s3GetJson,
+          getBytes: s3GetBytes,
           head: s3HeadObject,
           readPrefix: s3ReadPrefix,
         },
@@ -945,6 +948,18 @@ async function s3GetJson(key, maximumBytes = 1024 * 1024) {
     throw new Error(`R2 GET ${key} failed (${response.status})`)
   }
   return await readBoundedResponseJson(response, maximumBytes)
+}
+async function s3GetBytes(key, maximumBytes) {
+  const response = await r2.client.fetch(objectUrl(key))
+  if (response.status === 404) {
+    await response.body?.cancel().catch(() => undefined)
+    return null
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined)
+    throw new Error(`R2 GET ${key} failed (${response.status})`)
+  }
+  return readBoundedResponseBytes(response, maximumBytes)
 }
 async function s3HeadObject(key) {
   const response = await r2.client.fetch(objectUrl(key), { method: 'HEAD' })

@@ -233,6 +233,16 @@ describe('telemetry contract', () => {
     expect(parseTelemetryEvent({ ...validEvent(), sampleCaseId: 'case_0123456789ab' })).toBeUndefined()
   })
 
+  it.each([
+    'routing_authority_read_failed',
+    'routing_authority_incomplete',
+    'routing_authority_invalid',
+  ] as const)('retains the bounded %s active-probe failure class', (failureClass) => {
+    expect(parseTelemetryEvent(validProbeEvent({
+      result: 'error', failureClass, rollbackAvailable: false, hardChecksPassed: 1,
+    }))).toBeDefined()
+  })
+
   it('separates public probe hard health from realtime degradation', () => {
     expect(parseTelemetryEvent(validPublicProbeEvent())).toEqual(validPublicProbeEvent())
     expect(parseTelemetryEvent(validPublicProbeEvent({
