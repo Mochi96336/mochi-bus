@@ -1,5 +1,6 @@
 import type { RouteMapVariant } from '../../domain/map/map-model'
 import { classifyRouteName } from '../../domain/route-category'
+import { readPinnedPatternStops } from './snapshot-probe-pattern-stops'
 import type { StopPlaceBundleRoute, TransitBindings } from './snapshot-repository'
 
 type ActiveVersion = { active_version: string }
@@ -14,13 +15,6 @@ type PatternRow = {
   destination_name: string
   shape_key: string
   updated_at: string | null
-}
-type StopRow = {
-  stop_uid: string
-  stop_name: string
-  stop_sequence: number
-  latitude: number
-  longitude: number
 }
 type ShapeFeature = RouteMapVariant['shape']
 
@@ -81,7 +75,8 @@ export async function getPinnedSnapshotRouteVariants(
   `).bind(version, city, routeName).all<PatternRow>()
   if (!patterns.results.length) return []
 
-  const variants = await Promise.all(patterns.results.map((pattern) => readPinnedPatternVariant(env, version, pattern)))
+  const variants = await Promise.all(patterns.results.map((pattern) =>
+    readPinnedPatternVariant(env, city, version, pattern)))
   return variants.filter((variant): variant is RouteMapVariant => variant !== null)
 }
 
@@ -101,25 +96,20 @@ export async function getPinnedSnapshotRouteVariant(
     LIMIT 1
   `).bind(version, city, routeUid, patternId).first<PatternRow>()
   if (!pattern) return null
-  return readPinnedPatternVariant(env, version, pattern)
+  return readPinnedPatternVariant(env, city, version, pattern)
 }
 
 async function readPinnedPatternVariant(
   env: TransitBindings,
+  city: string,
   version: string,
   pattern: PatternRow,
 ): Promise<RouteMapVariant | null> {
   const [stops, shapeObject] = await Promise.all([
-    env.TRANSIT_DB.prepare(`
-      SELECT s.stop_uid, s.stop_name, ps.stop_sequence, s.latitude, s.longitude
-      FROM pattern_stops ps
-      JOIN stops s ON s.version = ps.version AND s.stop_uid = ps.stop_uid
-      WHERE ps.version = ? AND ps.pattern_id = ?
-      ORDER BY ps.stop_sequence
-    `).bind(version, pattern.pattern_id).all<StopRow>(),
+    readPinnedPatternStops(env, city, version, pattern.pattern_id),
     env.TRANSIT_SHAPES.get(pattern.shape_key),
   ])
-  if (!shapeObject) return null
+  if (!stops || !shapeObject) return null
   const shape = await shapeObject.json<ShapeFeature>()
   return {
     variantKey: pattern.pattern_id,
@@ -132,12 +122,12 @@ async function readPinnedPatternVariant(
     shape,
     stops: {
       type: 'FeatureCollection' as const,
-      features: stops.results.map((stop) => ({
+      features: stops.map((stop) => ({
         type: 'Feature' as const,
         properties: {
-          stopUid: stop.stop_uid,
-          stopName: stop.stop_name,
-          sequence: stop.stop_sequence,
+          stopUid: stop.stopUid,
+          stopName: stop.name,
+          sequence: stop.stopSequence,
         },
         geometry: {
           type: 'Point' as const,
