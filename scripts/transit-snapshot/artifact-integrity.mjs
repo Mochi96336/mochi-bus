@@ -23,6 +23,10 @@ export function criticalArtifacts(artifacts, prefix) {
     artifacts.find((item) => item?.key?.startsWith(`${prefix}shapes/`)),
     artifacts.find((item) => item?.key?.startsWith(`${prefix}schedules/`)),
     artifacts.find((item) => item?.key?.startsWith(`${prefix}places/`)),
+    artifacts.find((item) => item?.key === `${prefix}pattern-stops-export.json`),
+    artifacts.find((item) => item?.key === `${prefix}place-routing-export.json`),
+    artifacts.find((item) => item?.key === `${prefix}transfer-routing-export.json`),
+    artifacts.find((item) => item?.key === `${prefix}stop-lookup-export.json`),
   ]
   if (required.some((artifact) => !artifact)) {
     throw new Error('Remote R2 manifest is missing a critical artifact class')

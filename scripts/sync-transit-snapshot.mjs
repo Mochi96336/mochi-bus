@@ -20,6 +20,10 @@ import {
 } from './transit-snapshot/active-probe.mjs'
 import { reserveScheduledD1Budget } from './transit-snapshot/d1-write-budget.mjs'
 import { queryD1 as queryD1Rest } from './transit-snapshot/window-d1.mjs'
+import {
+  buildPublisherRoutingArtifacts,
+  routingArtifactCleanupKeys,
+} from './transit-snapshot/publisher-routing-artifacts.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
 const operationalResources = loadOperationalResources()
@@ -438,6 +442,30 @@ const validation = validateSnapshot({
 }, previousState)
 console.log(JSON.stringify({ city: CITY, version, phase: 'local-validation', ...validation }))
 
+// Build the high-cardinality routing/search artifacts from the exact in-memory
+// source model before any remote write. Existing backfill exporters remain useful
+// for old versions, but a newly published version no longer needs a D1 round-trip
+// to become R2-readable. Keep SNAPSHOT_FORMAT unchanged: this capability alone
+// must not force every unchanged city through another D1-heavy publication.
+const routingPublication = buildPublisherRoutingArtifacts({
+  city: CITY,
+  version,
+  routes: routeByUid,
+  patterns,
+  stops,
+  places,
+  patternStops,
+  generatedAt: new Date().toISOString(),
+})
+const routingTasks = []
+for (const task of routingPublication.tasks) {
+  const file = join(outputRoot, task.localPath)
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, task.body)
+  routingTasks.push({ key: task.key, file, contentType: task.contentType })
+}
+console.log(JSON.stringify({ city: CITY, version, phase: 'routing-artifacts', ...routingPublication.counts }))
+
 const artifactTasks = [
   ...patterns.map((pattern) => ({
     key: pattern.shapeKey,
@@ -454,6 +482,7 @@ const artifactTasks = [
     file: join(placeDir, `${encodeURIComponent(bundle.placeId)}.json`),
     contentType: 'application/json',
   })),
+  ...routingTasks,
   { key: networkKey, file: networkFile, contentType: 'application/json' },
 ]
 const manifestKey = `snapshots/${version}/cities/${CITY}/manifest.json`
@@ -513,6 +542,12 @@ const obsoleteObjectKeys = [...new Set([
     .map((item) => `snapshots/${item.version}/cities/${CITY}/schedules/${item.route_uid}.json`),
   ...existingRows.places.filter((item) => versionsToDelete.has(item.version))
     .map((item) => `snapshots/${item.version}/cities/${CITY}/places/${item.place_id}.json`),
+  ...routingArtifactCleanupKeys({
+    city: CITY,
+    versions: versionsToDelete,
+    patterns: existingRows.patterns,
+    places: existingRows.places,
+  }),
   ...[...versionsToDelete].map((oldVersion) => `snapshots/${oldVersion}/cities/${CITY}/network.json`),
   ...[...versionsToDelete].map((oldVersion) => `snapshots/${oldVersion}/cities/${CITY}/manifest.json`),
 ])]
