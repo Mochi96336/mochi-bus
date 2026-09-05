@@ -23,15 +23,20 @@ describe('snapshot artifact integrity', () => {
     expect(sameArtifactManifest([expected[0], expected[0]], expected)).toBe(false)
   })
 
-  it('requires network, shape, schedule, and place artifact classes', () => {
+  it('requires legacy artifact classes plus every routing completion manifest', () => {
     const complete = [
       artifact(`${prefix}network.json`),
       artifact(`${prefix}shapes/P1.json`),
       artifact(`${prefix}schedules/R1.json`),
       artifact(`${prefix}places/L1.json`),
+      artifact(`${prefix}pattern-stops-export.json`),
+      artifact(`${prefix}place-routing-export.json`),
+      artifact(`${prefix}transfer-routing-export.json`),
+      artifact(`${prefix}stop-lookup-export.json`),
     ]
-    expect(criticalArtifacts(complete, prefix)).toHaveLength(4)
-    expect(() => criticalArtifacts(complete.slice(0, 3), prefix)).toThrow(/critical artifact class/)
+    expect(criticalArtifacts(complete, prefix)).toHaveLength(8)
+    expect(() => criticalArtifacts(complete.filter((item) => item.key !== `${prefix}stop-lookup-export.json`), prefix))
+      .toThrow(/critical artifact class/)
   })
 
   it('checks both byte length and SHA-256 after reading an object back', () => {
