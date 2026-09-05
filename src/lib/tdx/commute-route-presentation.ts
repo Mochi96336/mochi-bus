@@ -48,6 +48,14 @@ const SINGLE_STOP_ETA_SELECT = [
   'SrcTransTime',
   'UpdateTime',
 ].join(',')
+const ROUTE_TIMELINE_ETA_SELECT = [
+  'RouteUID',
+  'SubRouteUID',
+  'StopUID',
+  'Direction',
+  'EstimateTime',
+  'StopStatus',
+].join(',')
 
 // 「estimated 淡墨」保留給未來的時刻表 fallback；Route timeline目前只呈現即時ETA。
 // 空白不可解讀為已過站，因為也可能是缺漏、支線對應或尚未發車。
@@ -110,8 +118,8 @@ export function createTDXCommuteRoutePresentation(
 ) {
   const now = dependencies.now ?? (() => new Date())
 
-  const getRouteETA = async (env: TDXEnv, query: BusQuery): Promise<BusETAItem[]> => (
-    dependencies.fetchTDXJson<BusETAItem[]>(env, routeEtaUrl(query), BUS_ETA_CACHE_SECONDS)
+  const getRouteETA = async (env: TDXEnv, query: ResolvedBusQuery): Promise<BusETAItem[]> => (
+    dependencies.fetchTDXJson<BusETAItem[]>(env, routeTimelineEtaUrl(query), BUS_ETA_CACHE_SECONDS)
   )
 
   const getStopETA = async (env: TDXEnv, query: ResolvedBusQuery): Promise<BusETAItem[]> => (
@@ -272,6 +280,15 @@ function routeEtaUrl(query: BusQuery): URL {
     `${ETA_API_BASE}/${tdxRouteScope(query.city, query.routeUid)}/${encodeURIComponent(query.routeName)}`,
   )
   url.searchParams.set('$format', 'JSON')
+  return url
+}
+
+function routeTimelineEtaUrl(query: ResolvedBusQuery): URL {
+  const url = routeEtaUrl(query)
+  url.searchParams.set('$select', ROUTE_TIMELINE_ETA_SELECT)
+  // The timeline only renders one direction. Pushing this invariant upstream drops the
+  // opposite-direction rows while local StopUID/RouteUID/SubRouteUID matching stays defensive.
+  url.searchParams.set('$filter', `Direction eq ${query.direction}`)
   return url
 }
 
