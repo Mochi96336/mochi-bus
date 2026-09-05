@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TransitBindings } from './snapshot-repository'
 import { getPinnedSnapshotRouteVariant } from './snapshot-probe-repository'
+import { pinnedPatternStopArtifactKey } from './snapshot-probe-pattern-stops'
 
 const version = '20260722T111540779Z'
 const city = 'Hsinchu'
@@ -16,6 +17,7 @@ const exactPattern = {
   shape_key: `snapshots/${version}/cities/${city}/shapes/HSZ001234:0:0.json`,
   updated_at: null,
 }
+const stopKey = pinnedPatternStopArtifactKey(version, city, exactPattern.pattern_id)
 
 function bindings({
   pattern = exactPattern,
@@ -25,47 +27,79 @@ function bindings({
     geometry: { type: 'LineString', coordinates: [[120.9, 24.8], [120.91, 24.81]] },
   },
   stops = [
-    { stop_uid: 'S1', stop_name: '甲站', stop_sequence: 1, latitude: 24.8, longitude: 120.9 },
-    { stop_uid: 'S2', stop_name: '乙站', stop_sequence: 2, latitude: 24.81, longitude: 120.91 },
+    {
+      stopUid: 'S1', placeId: 'P1', stopSequence: 1,
+      name: '甲站', latitude: 24.8, longitude: 120.9,
+    },
+    {
+      stopUid: 'S2', placeId: 'P2', stopSequence: 2,
+      name: '乙站', latitude: 24.81, longitude: 120.91,
+    },
   ],
   shapeError,
+  stopArtifactMissing = false,
 }: {
   pattern?: typeof exactPattern | null
   shape?: object | null
-  stops?: Array<Record<string, string | number>>
+  stops?: Array<{
+    stopUid: string
+    placeId: string
+    stopSequence: number
+    name: string
+    latitude: number
+    longitude: number
+  }>
   shapeError?: Error
+  stopArtifactMissing?: boolean
 } = {}) {
   const bindingsSeen: unknown[][] = []
-  const shapeReads: string[] = []
+  const r2Reads: string[] = []
   const database = {
     prepare(query: string) {
+      if (/\bpattern_stops\b|\bFROM\s+stops\b/i.test(query)) {
+        throw new Error(`high-cardinality probe SQL is forbidden: ${query}`)
+      }
       const statement = {
         bind: (...values: unknown[]) => {
           bindingsSeen.push(values)
           return statement
         },
         first: async <T>() => pattern as T,
-        all: async <T>() => ({ success: true, results: (query.includes('FROM pattern_stops ps') ? stops : []) as T[] }),
       } as D1PreparedStatement
       return statement
     },
   } as unknown as D1Database
   const bucket = {
     async get(key: string) {
-      shapeReads.push(key)
-      if (shape === null) return null
-      return {
-        json: async <T>() => {
-          if (shapeError) throw shapeError
-          return shape as T
-        },
-      } as R2ObjectBody
+      r2Reads.push(key)
+      if (key === stopKey) {
+        if (stopArtifactMissing) return null
+        return {
+          json: async <T>() => ({
+            schemaVersion: 1,
+            city,
+            version,
+            patternId: exactPattern.pattern_id,
+            stops,
+          }) as T,
+        } as R2ObjectBody
+      }
+      if (key === exactPattern.shape_key) {
+        if (shape === null) return null
+        return {
+          json: async <T>() => {
+            if (shapeError) throw shapeError
+            return shape as T
+          },
+        } as R2ObjectBody
+      }
+      return null
     },
   } as unknown as R2Bucket
   return {
     env: { TRANSIT_DB: database, TRANSIT_SHAPES: bucket } as TransitBindings,
     bindingsSeen,
-    shapeReads,
+    r2Reads,
   }
 }
 
@@ -93,8 +127,8 @@ describe('exact pinned snapshot route repository', () => {
       exactPattern.route_uid,
       exactPattern.pattern_id,
     ])
-    expect(fixture.shapeReads).toEqual([exactPattern.shape_key])
-    expect(fixture.shapeReads).not.toContain(
+    expect(fixture.r2Reads).toEqual(expect.arrayContaining([stopKey, exactPattern.shape_key]))
+    expect(fixture.r2Reads).not.toContain(
       `snapshots/${version}/cities/${city}/shapes/OTHER_ROUTE_SAME_NAME:0:0.json`,
     )
   })
@@ -109,7 +143,7 @@ describe('exact pinned snapshot route repository', () => {
       exactPattern.pattern_id,
       version,
     )).resolves.toBeNull()
-    expect(fixture.shapeReads).toEqual([])
+    expect(fixture.r2Reads).toEqual([])
   })
 
   it('fails closed when the exact sample shape is missing', async () => {
@@ -122,6 +156,7 @@ describe('exact pinned snapshot route repository', () => {
       exactPattern.pattern_id,
       version,
     )).resolves.toBeNull()
+    expect(fixture.r2Reads).toEqual(expect.arrayContaining([stopKey, exactPattern.shape_key]))
   })
 
   it('fails closed when the exact sample shape JSON is invalid', async () => {
@@ -136,22 +171,24 @@ describe('exact pinned snapshot route repository', () => {
     )).rejects.toThrow(SyntaxError)
   })
 
-  it('returns the exact short stop list so the active probe can reject it', async () => {
+  it('rejects a short R2 stop artifact before the active probe can accept the route', async () => {
     const fixture = bindings({
-      stops: [{ stop_uid: 'S1', stop_name: '甲站', stop_sequence: 1, latitude: 24.8, longitude: 120.9 }],
+      stops: [{
+        stopUid: 'S1', placeId: 'P1', stopSequence: 1,
+        name: '甲站', latitude: 24.8, longitude: 120.9,
+      }],
     })
 
-    const variant = await getPinnedSnapshotRouteVariant(
+    await expect(getPinnedSnapshotRouteVariant(
       fixture.env,
       city,
       exactPattern.route_uid,
       exactPattern.pattern_id,
       version,
-    )
-    expect(variant?.stops.features).toHaveLength(1)
+    )).resolves.toBeNull()
   })
 
-  it('does not read an unrelated same-name shape when that artifact is invalid', async () => {
+  it('does not read an unrelated same-name shape when the exact R2 artifacts are valid', async () => {
     const fixture = bindings()
     const get = vi.spyOn(fixture.env.TRANSIT_SHAPES, 'get')
 
@@ -162,7 +199,11 @@ describe('exact pinned snapshot route repository', () => {
       exactPattern.pattern_id,
       version,
     )).resolves.toMatchObject({ variantKey: exactPattern.pattern_id })
-    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(get).toHaveBeenCalledWith(stopKey)
     expect(get).toHaveBeenCalledWith(exactPattern.shape_key)
+    expect(get).not.toHaveBeenCalledWith(
+      `snapshots/${version}/cities/${city}/shapes/OTHER_ROUTE_SAME_NAME:0:0.json`,
+    )
   })
 })
