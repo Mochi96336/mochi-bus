@@ -279,8 +279,11 @@ describe('TDX commute and route presentation boundary', () => {
 
     const routeUrl = vi.mocked(fetchTDXJson).mock.calls[0]![1]
     expect(routeUrl.pathname).toBe('/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei/307')
-    expect(routeUrl.searchParams.has('$filter')).toBe(false)
-    expect(routeUrl.searchParams.has('$select')).toBe(false)
+    expect(routeUrl.searchParams.get('$filter')).toBe('Direction eq 0')
+    expect(routeUrl.searchParams.get('$select')).toBe(
+      'RouteUID,SubRouteUID,StopUID,Direction,EstimateTime,StopStatus',
+    )
+    expect(routeUrl.searchParams.get('$format')).toBe('JSON')
   })
 
   it('throws the exact route-direction resolution error when no stop group matches', async () => {
