@@ -14,11 +14,11 @@ function reference(city) {
   return {
     activeVersion: 'v1',
     counts: {
-      routes: 1, patterns: 1, stops: 1, places: 1, patternStops: 2,
+      routes: 1, patterns: 1, places: 1,
       routeWithoutPattern: 0, sampleCount: 1,
     },
     sample: {
-      patternId: `${city}:0`, routeUid: `${city}307`, routeName: '307', placeId: 'place-1', stopSequence: 1,
+      patternId: `${city}:0`, routeUid: `${city}307`, routeName: '307',
     },
   }
 }
@@ -33,7 +33,22 @@ function healthyApi() {
         const cityMatch = /city=([A-Za-z]+)/.exec(path)
         return {
           schemaVersion: 1, source: 'snapshot',
-          variants: [{ variantKey: `${cityMatch[1]}:0`, stops: { features: [{}, {}] } }],
+          variants: [{
+            variantKey: `${cityMatch[1]}:0`, routeUid: `${cityMatch[1]}307`,
+            stops: { features: [
+              { properties: { stopUid: `${cityMatch[1]}-stop-1`, sequence: 1 } },
+              { properties: { stopUid: `${cityMatch[1]}-stop-2`, sequence: 2 } },
+            ] },
+          }],
+        }
+      }
+      if (path.startsWith('/api/v1/map/stop-place?')) {
+        const url = new URL(path, 'https://bus.example')
+        const city = url.searchParams.get('city')
+        const stopUid = url.searchParams.get('stopUid')
+        return {
+          schemaVersion: 1, city, stopUid,
+          place: { placeId: `${city}-place-1`, name: '第一站', latitude: 25, longitude: 121.5 },
         }
       }
       if (path.includes('/arrivals')) {
