@@ -72,7 +72,9 @@ function shape() {
   }
 }
 
-function probeEnvironment({ patternArtifact = patternStopArtifact() } = {}) {
+function probeEnvironment(
+  { patternArtifact = patternStopArtifact() }: { patternArtifact?: unknown } = {},
+) {
   const bindings: unknown[][] = []
   const queries: string[] = []
   const database = {
