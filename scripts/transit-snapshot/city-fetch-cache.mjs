@@ -24,6 +24,7 @@ export function cityCacheIdentity(input) {
 export function createCityFetchCache({
   fetchImpl = globalThis.fetch,
   persistentForCity,
+  registerCandidate = () => undefined,
   logger = console,
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function')
@@ -64,9 +65,10 @@ export function createCityFetchCache({
 
     const body = Buffer.from(await response.arrayBuffer())
     try {
-      await persistent.store({ resource, body, sourceVersion })
+      const candidate = await persistent.stage?.({ resource, body, sourceVersion })
+      if (candidate) registerCandidate({ cache: persistent, candidate, city, resource })
     } catch (error) {
-      logger?.warn?.(`TDX City persistent cache store failed for ${city}/${resource}: ${errorMessage(error)}`)
+      logger?.warn?.(`TDX City persistent cache stage failed for ${city}/${resource}: ${errorMessage(error)}`)
     }
     logger?.log?.(JSON.stringify({ event: 'tdx_city_cache', city, resource, resolution: 'miss' }))
     return jsonResponse(body, response.status)

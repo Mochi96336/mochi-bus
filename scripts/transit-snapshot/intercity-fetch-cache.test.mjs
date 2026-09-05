@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -33,7 +33,7 @@ describe('intercity fetch cache', () => {
     expect(isCacheableIntercityRequest(shape, { method: 'POST' })).toBe(false)
   })
 
-  it('uses one upstream download per resource within a workflow attempt', async () => {
+  it('uses one upstream download per resource within a workflow attempt when persistent R2 is unavailable', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mochi-intercity-cache-'))
     roots.push(root)
     const upstream = vi.fn(async () => new Response(JSON.stringify([{ RouteUID: 'THB1' }]), {
@@ -56,7 +56,7 @@ describe('intercity fetch cache', () => {
     expect(upstream).toHaveBeenCalledTimes(1)
   })
 
-  it('hydrates the run cache from persistent storage before downloading the full endpoint', async () => {
+  it('hydrates the run cache from promoted persistent storage before downloading the full endpoint', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mochi-intercity-cache-'))
     roots.push(root)
     const upstream = vi.fn()
@@ -65,7 +65,8 @@ describe('intercity fetch cache', () => {
         body: Buffer.from('[{"RouteUID":"THB1"}]'),
         sourceVersion: '2026-09-05T00:00:00+08:00',
       })),
-      store: vi.fn(),
+      stage: vi.fn(),
+      promote: vi.fn(),
     }
     const fetchCached = createIntercityFetchCache({
       fetchImpl: upstream,
@@ -80,8 +81,35 @@ describe('intercity fetch cache', () => {
     await expect((await fetchCached(url)).json()).resolves.toEqual([{ RouteUID: 'THB1' }])
 
     expect(persistent.resolve).toHaveBeenCalledTimes(1)
-    expect(persistent.store).not.toHaveBeenCalled()
+    expect(persistent.stage).not.toHaveBeenCalled()
     expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('does not put an unvalidated upstream candidate into the cross-process run cache', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mochi-intercity-cache-'))
+    roots.push(root)
+    const upstream = vi.fn(async () => new Response('[{"RouteUID":"THB2"}]', { status: 200 }))
+    const candidate = { resource: 'Shape', sourceVersion: 'v2', payloadKey: 'candidate' }
+    const persistent = {
+      resolve: vi.fn(async () => ({ body: null, sourceVersion: 'v2' })),
+      stage: vi.fn(async () => candidate),
+      promote: vi.fn(),
+    }
+    const registerCandidate = vi.fn()
+    const fetchCached = createIntercityFetchCache({
+      fetchImpl: upstream,
+      root,
+      scope: 'run-candidate',
+      persistent,
+      registerCandidate,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    })
+    const url = 'https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/InterCity?$format=JSON'
+
+    await expect((await fetchCached(url)).json()).resolves.toEqual([{ RouteUID: 'THB2' }])
+    expect(registerCandidate).toHaveBeenCalledWith({ cache: persistent, candidate, resource: 'Shape' })
+    await expect(readFile(join(root, 'run-candidate', 'Shape.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(persistent.promote).not.toHaveBeenCalled()
   })
 
   it('keeps cache scope inside one GitHub workflow attempt', () => {
