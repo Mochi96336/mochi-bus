@@ -14,6 +14,7 @@ type ShapeItem = {
 }
 
 const SHAPE_CACHE_SECONDS = 6 * 60 * 60
+const SHAPE_SELECT = 'RouteUID,Direction,EncodedPolyline,UpdateTime'
 
 export async function getRouteMapVariants(
   env: TDXEnv,
@@ -24,6 +25,9 @@ export async function getRouteMapVariants(
     const url = new URL(
       `https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/${scope}/${encodeURIComponent(routeName)}`,
     )
+    // Snapshot reads are preferred by the route API; this direct TDX path is a fallback.
+    // Even there, only request fields consumed by variant matching and presentation.
+    url.searchParams.set('$select', SHAPE_SELECT)
     url.searchParams.set('$format', 'JSON')
     return url
   }
