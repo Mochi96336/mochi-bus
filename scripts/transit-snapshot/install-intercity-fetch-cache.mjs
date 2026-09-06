@@ -4,6 +4,7 @@ import { createIntercityFetchCache, intercityCacheScope } from './intercity-fetc
 import { createIntercitySourceCache } from './intercity-source-cache.mjs'
 import { createR2TimeoutFetch } from './r2-timeout-fetch.mjs'
 import { createR2StaticSourceStorage } from './tdx-static-source-cache.mjs'
+import { createTdxStaticSourceProjectionFetch } from './tdx-static-source-projection.mjs'
 import { registerTdxStaticSourceCandidate } from './tdx-static-source-promotion.mjs'
 
 const INSTALL_MARKER = Symbol.for('mochi-bus.tdx-static-cache-installed')
@@ -11,8 +12,14 @@ const scope = intercityCacheScope()
 
 if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
   const upstreamFetch = globalThis.fetch
+  // The publisher only consumes a small audited subset of the top-level static
+  // TDX fields. Keep the cache-facing request identity unchanged, but make actual
+  // cache misses fetch that projection so refresh days transfer fewer billable bytes.
+  // Existing promoted full-payload cache hits remain readable and do not trigger a
+  // one-time republish merely because this optimization was deployed.
+  const sourceFetch = createTdxStaticSourceProjectionFetch({ fetchImpl: upstreamFetch })
   const storage = createR2StaticSourceStorage()
-  let fetchImpl = upstreamFetch
+  let fetchImpl = sourceFetch
 
   // City snapshots are already sharded one city per scheduled slot, so they do
   // not need another on-disk run cache. Persist fresh bytes as candidates in R2;
@@ -25,7 +32,7 @@ if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
       persistentForCity: (city) => {
         let cache = cityCaches.get(city)
         if (!cache) {
-          cache = createCitySourceCache({ city, fetchImpl: upstreamFetch, storage })
+          cache = createCitySourceCache({ city, fetchImpl: sourceFetch, storage })
           cityCaches.set(city, cache)
         }
         return cache
@@ -38,7 +45,7 @@ if (!globalThis[INSTALL_MARKER] && typeof globalThis.fetch === 'function') {
   // process boundary before validation.
   if (scope) {
     const persistent = storage
-      ? createIntercitySourceCache({ fetchImpl: upstreamFetch, storage })
+      ? createIntercitySourceCache({ fetchImpl: sourceFetch, storage })
       : null
     fetchImpl = createIntercityFetchCache({
       fetchImpl,
