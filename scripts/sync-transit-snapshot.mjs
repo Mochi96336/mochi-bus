@@ -25,6 +25,11 @@ import {
   buildPublisherRoutingArtifacts,
   routingArtifactCleanupKeys,
 } from './transit-snapshot/publisher-routing-artifacts.mjs'
+import {
+  MAX_ROUTING_MANIFEST_BYTES,
+  routingCompletionManifestKeys,
+} from './transit-snapshot/routing-authority-contract.mjs'
+import { validatePublisherRemoteRoutingAuthority } from './transit-snapshot/publisher-remote-authority.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
 const operationalResources = loadOperationalResources()
@@ -781,6 +786,71 @@ async function createArtifactManifest(tasks, counts, quality) {
   }
 }
 async function validateRemoteSnapshot(targetVersion, expectedCounts, expectedQuality, manifestKey, expectedManifest) {
+  const actual = r2
+    ? await validateRemoteR2Snapshot(targetVersion, expectedCounts, expectedQuality, manifestKey, expectedManifest)
+    : validateRemoteLegacyD1(targetVersion, expectedCounts)
+  console.log(JSON.stringify({ city: CITY, version: targetVersion, phase: 'remote-validation', counts: actual, quality: expectedQuality }))
+}
+
+async function validateRemoteR2Snapshot(targetVersion, expectedCounts, expectedQuality, manifestKey, expectedManifest) {
+  const result = queryRemoteD1([
+    `SELECT COUNT(*) AS count FROM routes WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
+    `SELECT COUNT(*) AS count FROM patterns WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
+    `SELECT COUNT(*) AS count FROM stop_places WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
+    `SELECT COUNT(*) AS count FROM patterns p
+      LEFT JOIN routes r ON r.version=p.version AND r.city_code=p.city_code AND r.route_uid=p.route_uid
+      WHERE p.version=${sqlValue(targetVersion)} AND p.city_code=${sqlValue(CITY)} AND r.route_uid IS NULL`,
+    `SELECT COUNT(*) AS count FROM routes r
+      WHERE r.version=${sqlValue(targetVersion)} AND r.city_code=${sqlValue(CITY)}
+      AND NOT EXISTS (
+        SELECT 1 FROM patterns p
+        WHERE p.version=r.version AND p.city_code=r.city_code AND p.route_uid=r.route_uid
+      )`,
+  ].join(';'))
+  const lowCard = {
+    routes: Number(result[0]?.results?.[0]?.count),
+    patterns: Number(result[1]?.results?.[0]?.count),
+    places: Number(result[2]?.results?.[0]?.count),
+  }
+  for (const name of ['routes', 'patterns', 'places']) {
+    if (lowCard[name] !== expectedCounts[name]) {
+      throw new Error(`Remote D1 ${name} count mismatch: ${lowCard[name]} != ${expectedCounts[name]}`)
+    }
+  }
+  const dangling = Number(result[3]?.results?.[0]?.count)
+  if (dangling !== 0) throw new Error(`Remote D1 contains ${dangling} dangling pattern route references`)
+  const orphanRoutes = Number(result[4]?.results?.[0]?.count)
+  if (orphanRoutes !== 0) throw new Error(`Remote D1 contains ${orphanRoutes} routes without patterns`)
+
+  const remoteManifest = await s3GetJson(manifestKey, manifestReadLimit(expectedManifest))
+  if (remoteManifest?.schemaVersion !== 2
+    || remoteManifest?.version !== targetVersion
+    || remoteManifest?.contentHash !== contentHash
+    || !sameMetrics(remoteManifest.counts, expectedCounts)
+    || !sameMetrics(remoteManifest.quality, expectedQuality)
+    || !sameArtifactManifest(remoteManifest.artifacts, expectedManifest.artifacts)) {
+    throw new Error('Remote R2 manifest does not match the staged snapshot')
+  }
+  const manifestBodies = await readPublisherRoutingManifestBodies(remoteManifest.artifacts, targetVersion)
+  const authority = validatePublisherRemoteRoutingAuthority({
+    city: CITY,
+    version: targetVersion,
+    expectedCounts,
+    rootArtifacts: remoteManifest.artifacts,
+    manifestBodies,
+  })
+  const actual = {
+    ...lowCard,
+    stops: authority.counts.stops,
+    patternStops: authority.counts.patternStops,
+  }
+  await verifyCriticalR2Artifacts(remoteManifest.artifacts, targetVersion)
+  const sampleRootArtifact = remoteManifest.artifacts.find((artifact) => artifact?.key === authority.sampleArtifact.key)
+  await verifyR2Artifact(sampleRootArtifact)
+  return actual
+}
+
+function validateRemoteLegacyD1(targetVersion, expectedCounts) {
   const result = queryRemoteD1([
     `SELECT COUNT(*) AS count FROM routes WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
     `SELECT COUNT(*) AS count FROM patterns WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
@@ -827,20 +897,23 @@ async function validateRemoteSnapshot(targetVersion, expectedCounts, expectedQua
   if (placeMismatches !== 0) {
     throw new Error(`Remote D1 contains ${placeMismatches} pattern stop place mismatches`)
   }
-  if (r2) {
-    const remoteManifest = await s3GetJson(manifestKey, manifestReadLimit(expectedManifest))
-    if (remoteManifest?.schemaVersion !== 2
-      || remoteManifest?.version !== targetVersion
-      || remoteManifest?.contentHash !== contentHash
-      || !sameMetrics(remoteManifest.counts, expectedCounts)
-      || !sameMetrics(remoteManifest.quality, expectedQuality)
-      || !sameArtifactManifest(remoteManifest.artifacts, expectedManifest.artifacts)) {
-      throw new Error('Remote R2 manifest does not match the staged snapshot')
-    }
-    await verifyCriticalR2Artifacts(remoteManifest.artifacts, targetVersion)
-  }
-  console.log(JSON.stringify({ city: CITY, version: targetVersion, phase: 'remote-validation', counts: actual, quality: expectedQuality }))
+  return actual
 }
+
+async function readPublisherRoutingManifestBodies(artifacts, targetVersion) {
+  const byKey = new Map(Array.isArray(artifacts) ? artifacts.map((artifact) => [artifact?.key, artifact]) : [])
+  return Promise.all(routingCompletionManifestKeys(targetVersion, CITY).map(async (key) => {
+    const descriptor = byKey.get(key)
+    if (!descriptor || !Number.isSafeInteger(descriptor.bytes) || descriptor.bytes < 1
+      || descriptor.bytes > MAX_ROUTING_MANIFEST_BYTES) {
+      throw new Error('Remote R2 routing manifest descriptor is invalid')
+    }
+    const body = await s3GetBytes(key, MAX_ROUTING_MANIFEST_BYTES)
+    if (!body) throw new Error('Remote R2 routing manifest is unavailable')
+    return body
+  }))
+}
+
 async function smokePublishedSnapshot(targetVersion, target) {
   const cacheBust = `snapshot=${encodeURIComponent(targetVersion)}`
   let lastError
