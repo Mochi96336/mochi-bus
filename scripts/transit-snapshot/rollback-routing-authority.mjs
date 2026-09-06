@@ -28,6 +28,8 @@ export async function readRollbackRoutingAuthority({ city, version, r2 }) {
 
   const values = bodies.map((body) => JSON.parse(Buffer.from(body).toString('utf8')))
   const authority = parseRoutingAuthorityManifests(values, city, version)
+  // Do not make rollback sampling depend on manifest array order: the same
+  // city/version must choose the same exact pattern after exporter refactors.
   const sampleEntry = [...authority.patternEntries]
     .sort((left, right) => left.patternId.localeCompare(right.patternId))[0]
   if (!sampleEntry || sampleEntry.bytes > MAX_PATTERN_STOP_ARTIFACT_BYTES) {
