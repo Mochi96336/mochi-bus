@@ -6,6 +6,17 @@ on:
     # no daylight-saving time.
     - cron: '20 0 * * *'
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      # Probe logic changes should prove themselves against the deployed public
+      # surface instead of waiting for the next daily schedule.
+      - '.github/workflows/public-probe.yml'
+      - 'scripts/transit-snapshot/public-probe.mjs'
+      - 'scripts/transit-snapshot/public-probe-contract.mjs'
+      - 'scripts/transit-snapshot/public-probe-d1.mjs'
+      - 'scripts/transit-snapshot/run-public-probe.mjs'
 
 concurrency:
   group: public-network-probe
