@@ -58,11 +58,16 @@ export async function probePublicSurface({
 
     const sample = reference.sample
     if (!validSample(sample)) throw hardFailure('route_sample_failed')
+    // routeUid/patternId are reserved for the authenticated-by-contract pinned
+    // snapshot probe (`snapshot` + `probe`). This scheduled public probe must stay
+    // on the same ordinary public read contract as real clients, then select the
+    // deterministic low-card pattern from the returned route-name group.
     const route = await publicJson(publicApi,
-      `/api/v1/map/route?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}&routeUid=${encodeURIComponent(sample.routeUid)}&patternId=${encodeURIComponent(sample.patternId)}`,
+      `/api/v1/map/route?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}`,
       'route_sample_failed')
     const variant = Array.isArray(route?.variants)
-      ? route.variants.find((candidate) => candidate?.variantKey === sample.patternId)
+      ? route.variants.find((candidate) =>
+        candidate?.variantKey === sample.patternId && candidate?.routeUid === sample.routeUid)
       : undefined
     if (route?.schemaVersion !== 1 || route?.source !== 'snapshot' || !variant || variant.stops?.features?.length < 2) {
       throw hardFailure('route_sample_failed')
