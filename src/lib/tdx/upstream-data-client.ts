@@ -257,6 +257,7 @@ function usesCredentialCooldown(
     || operation === 'vehicle_positions'
     || operation === 'journey_eta'
     || resource === 'EstimatedTimeOfArrival'
+    || resource === 'RealTimeByFrequency'
     || resource === 'Vehicle'
 }
 
@@ -266,6 +267,7 @@ function tdxResponseResource(url: URL): string {
   const resource = busIndex >= 0 ? segments[busIndex + 1] : undefined
   return resource && [
     'EstimatedTimeOfArrival',
+    'RealTimeByFrequency',
     'Route',
     'Schedule',
     'Shape',
