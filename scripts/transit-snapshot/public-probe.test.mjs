@@ -108,7 +108,7 @@ describe('public surface probe', () => {
     const paths = api.getJson.mock.calls.map(([path]) => path)
     expect(paths).toEqual([
       '/api/v1/map/routes?city=Taipei',
-      '/api/v1/map/route?city=Taipei&route=307&routeUid=TPE307&patternId=TPE307%3A0',
+      '/api/v1/map/route?city=Taipei&route=307',
       '/api/v1/map/stop-place?city=Taipei&stopUid=TPE1001',
       '/api/v1/map/place/place-1/arrivals?city=Taipei',
       '/api/v1/map/vehicles?city=Taipei&route=307',
@@ -118,6 +118,8 @@ describe('public surface probe', () => {
       expect(url.searchParams.has('probe')).toBe(false)
       expect(url.searchParams.has('snapshot')).toBe(false)
       expect(url.searchParams.has('publicProbe')).toBe(false)
+      expect(url.searchParams.has('routeUid')).toBe(false)
+      expect(url.searchParams.has('patternId')).toBe(false)
     }
     expect(api.postJson).toHaveBeenCalledWith('/api/v1/map/journey-eta', {
       city: 'Taipei',
@@ -127,6 +129,22 @@ describe('public surface probe', () => {
         sequence: 1,
       }],
     })
+  })
+
+  it('requires the ordinary grouped route response to contain the exact low-card route identity', async () => {
+    await expect(probe({
+      responseOverrides: {
+        route: {
+          variants: [{
+            variantKey: 'TPE307:0', routeUid: 'different-route',
+            stops: { features: [
+              { properties: { stopUid: 'TPE1001', stopName: '第一站', sequence: 1 } },
+              { properties: { stopUid: 'TPE1002', stopName: '第二站', sequence: 2 } },
+            ] },
+          }],
+        },
+      },
+    })).resolves.toMatchObject({ status: 'hard_failed', failureClass: 'route_sample_failed' })
   })
 
   it('turns a version mismatch red and records what the public surface actually served', async () => {
