@@ -4,6 +4,10 @@ import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { assertArtifactIntegrity } from './artifact-integrity.mjs'
 import { readManifestJson } from './manifest-read-limit.mjs'
 import { executeReconcile, executeRollback, safeOperationDiagnostic } from './rollback-operations.mjs'
+import {
+  bindRollbackRoutingAuthority,
+  readRollbackRoutingAuthority,
+} from './rollback-routing-authority.mjs'
 import { networkPrefixMatches, readBoundedResponseJson, readBoundedResponseText } from './active-probe.mjs'
 import { parseContentLength } from './r2-metadata.mjs'
 
@@ -161,6 +165,40 @@ RETURNING active_version`)
 }
 
 async function validateVersion({ city, version, r2 }) {
+  const authority = await readRollbackRoutingAuthority({ city, version, r2 })
+  const validation = authority.mode === 'r2'
+    ? validateR2AuthorityD1({ city, version, authority })
+    : validateLegacyD1({ city, version })
+  const { counts, integrity, sample } = validation
+  const prefix = `snapshots/${version}/cities/${city}/`
+  const manifest = await r2.getManifest(`${prefix}manifest.json`)
+  if (!manifest) throw new Error('Snapshot manifest unavailable')
+  bindRollbackRoutingAuthority(manifest.artifacts, authority)
+  const byKey = new Map(Array.isArray(manifest.artifacts)
+    ? manifest.artifacts.map((artifact) => [artifact?.key, artifact]) : [])
+  const networkVerified = await verifyNetwork({
+    city, version, r2, artifact: byKey.get(`${prefix}network.json`), key: `${prefix}network.json`,
+  })
+  const exactArtifacts = [
+    [sample.shape_key, byKey.get(sample.shape_key)],
+    [`${prefix}schedules/${sample.route_uid}.json`, byKey.get(`${prefix}schedules/${sample.route_uid}.json`)],
+    [`${prefix}places/${sample.place_id}.json`, byKey.get(`${prefix}places/${sample.place_id}.json`)],
+  ]
+  for (const [key, artifact] of exactArtifacts) await verifyExactArtifact(r2, key, artifact)
+  return {
+    city, version, counts, integrity, manifest,
+    networkVerified,
+    sampleArtifactsVerified: true,
+    sample: Object.freeze({
+      patternId: sample.pattern_id,
+      routeUid: sample.route_uid,
+      routeName: sample.route_name,
+      placeId: sample.place_id,
+    }),
+  }
+}
+
+function validateLegacyD1({ city, version }) {
   const result = queryD1([
     `SELECT
       (SELECT COUNT(*) FROM routes WHERE version=${sql(version)} AND city_code=${sql(city)}) AS routes,
@@ -207,47 +245,76 @@ async function validateVersion({ city, version, r2 }) {
   ].join(';'))
   const countRow = result[0]?.results?.[0]
   const sample = result[5]?.results?.[0]
+  assertValidationRows(countRow, sample)
+  return {
+    counts: {
+      routes: Number(countRow.routes),
+      patterns: Number(countRow.patterns),
+      stops: Number(countRow.stops),
+      places: Number(countRow.places),
+      patternStops: Number(countRow.pattern_stops),
+    },
+    integrity: {
+      dangling: Number(result[1]?.results?.[0]?.count),
+      shortPatterns: Number(result[2]?.results?.[0]?.count),
+      orphanRoutes: Number(result[3]?.results?.[0]?.count),
+      placeMismatches: Number(result[4]?.results?.[0]?.count),
+    },
+    sample,
+  }
+}
+
+function validateR2AuthorityD1({ city, version, authority }) {
+  const result = queryD1([
+    `SELECT
+      (SELECT COUNT(*) FROM routes WHERE version=${sql(version)} AND city_code=${sql(city)}) AS routes,
+      (SELECT COUNT(*) FROM patterns WHERE version=${sql(version)} AND city_code=${sql(city)}) AS patterns,
+      (SELECT COUNT(*) FROM stop_places WHERE version=${sql(version)} AND city_code=${sql(city)}) AS places`,
+    `SELECT COUNT(*) AS count FROM patterns p
+      LEFT JOIN routes r ON r.version=p.version AND r.city_code=p.city_code AND r.route_uid=p.route_uid
+      WHERE p.version=${sql(version)} AND p.city_code=${sql(city)} AND r.route_uid IS NULL`,
+    `SELECT COUNT(*) AS count FROM routes r
+      WHERE r.version=${sql(version)} AND r.city_code=${sql(city)}
+      AND NOT EXISTS (SELECT 1 FROM patterns p
+        WHERE p.version=r.version AND p.city_code=r.city_code AND p.route_uid=r.route_uid)`,
+    `SELECT p.pattern_id, p.route_uid, r.route_name, p.shape_key
+      FROM patterns p
+      JOIN routes r ON r.version=p.version AND r.city_code=p.city_code AND r.route_uid=p.route_uid
+      WHERE p.version=${sql(version)} AND p.city_code=${sql(city)}
+        AND p.pattern_id=${sql(authority.sample.patternId)}
+      LIMIT 1`,
+  ].join(';'))
+  const countRow = result[0]?.results?.[0]
+  const routeSample = result[3]?.results?.[0]
+  const sample = routeSample ? { ...routeSample, place_id: authority.sample.placeId } : null
+  assertValidationRows(countRow, sample)
+  const patterns = Number(countRow.patterns)
+  const places = Number(countRow.places)
+  if (patterns !== authority.counts.patterns || places !== authority.counts.places) {
+    throw new Error('Snapshot routing authority count mismatch')
+  }
+  return {
+    counts: {
+      routes: Number(countRow.routes),
+      patterns,
+      stops: authority.counts.stops,
+      places,
+      patternStops: authority.counts.patternStops,
+    },
+    integrity: {
+      dangling: Number(result[1]?.results?.[0]?.count),
+      shortPatterns: 0,
+      orphanRoutes: Number(result[2]?.results?.[0]?.count),
+      placeMismatches: 0,
+    },
+    sample,
+  }
+}
+
+function assertValidationRows(countRow, sample) {
   if (!countRow || !sample || !['pattern_id', 'route_uid', 'route_name', 'shape_key', 'place_id']
     .every((field) => typeof sample[field] === 'string' && sample[field].length > 0)) {
     throw new Error('Snapshot validation evidence unavailable')
-  }
-  const counts = {
-    routes: Number(countRow.routes),
-    patterns: Number(countRow.patterns),
-    stops: Number(countRow.stops),
-    places: Number(countRow.places),
-    patternStops: Number(countRow.pattern_stops),
-  }
-  const integrity = {
-    dangling: Number(result[1]?.results?.[0]?.count),
-    shortPatterns: Number(result[2]?.results?.[0]?.count),
-    orphanRoutes: Number(result[3]?.results?.[0]?.count),
-    placeMismatches: Number(result[4]?.results?.[0]?.count),
-  }
-  const prefix = `snapshots/${version}/cities/${city}/`
-  const manifest = await r2.getManifest(`${prefix}manifest.json`)
-  if (!manifest) throw new Error('Snapshot manifest unavailable')
-  const byKey = new Map(Array.isArray(manifest.artifacts)
-    ? manifest.artifacts.map((artifact) => [artifact?.key, artifact]) : [])
-  const networkVerified = await verifyNetwork({
-    city, version, r2, artifact: byKey.get(`${prefix}network.json`), key: `${prefix}network.json`,
-  })
-  const exactArtifacts = [
-    [sample.shape_key, byKey.get(sample.shape_key)],
-    [`${prefix}schedules/${sample.route_uid}.json`, byKey.get(`${prefix}schedules/${sample.route_uid}.json`)],
-    [`${prefix}places/${sample.place_id}.json`, byKey.get(`${prefix}places/${sample.place_id}.json`)],
-  ]
-  for (const [key, artifact] of exactArtifacts) await verifyExactArtifact(r2, key, artifact)
-  return {
-    city, version, counts, integrity, manifest,
-    networkVerified,
-    sampleArtifactsVerified: true,
-    sample: Object.freeze({
-      patternId: sample.pattern_id,
-      routeUid: sample.route_uid,
-      routeName: sample.route_name,
-      placeId: sample.place_id,
-    }),
   }
 }
 
