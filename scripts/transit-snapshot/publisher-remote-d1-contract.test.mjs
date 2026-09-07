@@ -16,17 +16,15 @@ function functionBlock(name, nextName) {
 }
 
 describe('publisher remote D1 contract', () => {
-  it('keeps high-cardinality D1 validation out of the R2 publisher path', () => {
-    const r2 = functionBlock('validateRemoteR2Snapshot', 'validateRemoteLegacyD1')
-    const legacy = functionBlock('validateRemoteLegacyD1', 'readPublisherRoutingManifestBodies')
+  it('keeps high-cardinality authority in root-bound R2 rather than D1 validation', () => {
+    const publish = functionBlock('validateRemoteSnapshot', 'smokePublishedSnapshot')
 
-    expect(r2).toContain('FROM routes')
-    expect(r2).toContain('FROM patterns')
-    expect(r2).toContain('FROM stop_places')
-    expect(r2).not.toContain('FROM stops')
-    expect(r2).not.toContain('pattern_stops')
-
-    expect(legacy).toContain('FROM stops')
-    expect(legacy).toContain('pattern_stops')
+    expect(publish).toContain('publisherD1ValidationSql')
+    expect(publish).toContain('readRollbackRoutingAuthority')
+    expect(publish).toContain('assertPublisherRoutingAuthorityCounts')
+    expect(publish).toContain('bindRollbackRoutingAuthority')
+    expect(publish).toContain("binding !== 'root-bound'")
+    expect(publish).not.toMatch(/\bFROM\s+stops\b/i)
+    expect(publish).not.toContain('pattern_stops')
   })
 })

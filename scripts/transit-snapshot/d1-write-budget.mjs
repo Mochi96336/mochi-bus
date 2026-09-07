@@ -7,20 +7,19 @@ const DEFAULT_LEDGER = join('.transit-snapshot', 'd1-write-budget.json')
 const DEFAULT_GROWTH_FACTOR = 1.10
 const FIXED_RESERVE_ROWS = 64
 
-// D1 rows_written counts table rows plus index rows. These weights mirror
-// migrations/0001_transit_snapshot.sql: each row has the table write, the
-// PRIMARY KEY autoindex write, and the listed secondary indexes.
+// New snapshots keep only low-cardinality catalogue/geo metadata in D1. Full
+// stop occurrences live in version-addressed R2 routing artifacts. The weights
+// mirror migrations/0001_transit_snapshot.sql: table write + PK autoindex +
+// secondary indexes for routes, patterns, and stop_places.
 const STAGE_WRITE_WEIGHTS = Object.freeze({
   routes: 3,
   patterns: 3,
-  stops: 4,
   places: 3,
-  patternStops: 3,
 })
 
 export function logicalSnapshotRows(counts) {
   const normalized = normalizeCounts(counts)
-  return Object.values(normalized).reduce((sum, value) => sum + value, 0)
+  return Object.keys(STAGE_WRITE_WEIGHTS).reduce((sum, name) => sum + normalized[name], 0)
 }
 
 export function estimateStageRowsWritten(counts) {
@@ -40,9 +39,9 @@ export function estimateScheduledPublishRowsWritten(counts, options = {}) {
     cleanupRows,
     growthFactor,
     // The next source snapshot may be larger than the currently published one.
-    // Cleanup is counted from D1 for every stale non-active version so failed
-    // staging leftovers are included. Keep a small fixed reserve for pointer /
-    // window-record writes around the publication.
+    // Cleanup counts only low-cardinality stale rows. Legacy stops/pattern_stops
+    // are deliberately retained outside the normal publication path so rollback
+    // remains possible without recreating the pre-cutover rows_written spike.
     estimatedRows: Math.ceil(stageRows * growthFactor) + cleanupRows + FIXED_RESERVE_ROWS,
     fixedReserveRows: FIXED_RESERVE_ROWS,
   })
@@ -176,21 +175,12 @@ async function readScheduledCleanupRows(city, env) {
         + (SELECT COUNT(*) FROM patterns
           WHERE city_code = ? AND version <> COALESCE(
             (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
-        + (SELECT COUNT(*) FROM stops
-          WHERE city_code = ? AND version <> COALESCE(
-            (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
         + (SELECT COUNT(*) FROM stop_places
           WHERE city_code = ? AND version <> COALESCE(
             (SELECT active_version FROM dataset_versions WHERE city_code = ?), ''))
-        + (SELECT COUNT(*) FROM pattern_stops
-          WHERE version IN (
-            SELECT DISTINCT version FROM patterns
-            WHERE city_code = ? AND version <> COALESCE(
-              (SELECT active_version FROM dataset_versions WHERE city_code = ?), '')
-          ))
         AS cleanup_rows
     `,
-    params: [city, city, city, city, city, city, city, city, city, city],
+    params: [city, city, city, city, city, city],
   })
   const cleanupRows = Number(rows[0]?.cleanup_rows)
   if (!Number.isSafeInteger(cleanupRows) || cleanupRows < 0) {
