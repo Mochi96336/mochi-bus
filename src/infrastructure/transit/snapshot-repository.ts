@@ -11,6 +11,14 @@ import { memoryCacheGet, memoryCacheSet } from '../../lib/memory-cache'
 // 路徑的全路網 geometry 有一致的視覺精度。
 // 這裡是小城市(<=40 patterns,沒有預生成 network.json)即時組裝的 fallback 路徑。
 const NETWORK_LOD_TOLERANCE_METERS = 8
+const ROUTING_AUTHORITY_TTL_SECONDS = 60
+const ROUTING_MANIFEST_SHA256 = /^[a-f0-9]{64}$/
+const ROUTING_COMPLETION_MANIFEST_NAMES = [
+  'pattern-stops-export.json',
+  'place-routing-export.json',
+  'transfer-routing-export.json',
+  'stop-lookup-export.json',
+] as const
 
 type ActiveVersion = { active_version: string }
 type PatternRow = {
@@ -33,6 +41,8 @@ type StopRow = {
   longitude: number
 }
 type ShapeFeature = RouteMapVariant['shape']
+
+type HighCardD1Authority = 'legacy' | 'root-bound'
 
 export type TransitBindings = {
   TRANSIT_DB: D1Database
@@ -103,6 +113,98 @@ async function getActiveVersion(env: TransitBindings, city: string): Promise<str
   return row.active_version
 }
 
+function routingCompletionManifestKeys(version: string, city: string): string[] {
+  const prefix = `snapshots/${version}/cities/${city}/`
+  return ROUTING_COMPLETION_MANIFEST_NAMES.map((name) => `${prefix}${name}`)
+}
+
+async function highCardD1Authority(
+  env: TransitBindings,
+  city: string,
+  version: string,
+): Promise<HighCardD1Authority> {
+  const memoryKey = `transit/high-card-d1-authority/${city}/${version}`
+  const cached = memoryCacheGet<HighCardD1Authority>(memoryKey)
+  if (cached) return cached
+
+  const rootKey = `snapshots/${version}/cities/${city}/manifest.json`
+  let object: R2ObjectBody | null
+  try {
+    object = await env.TRANSIT_SHAPES.get(rootKey)
+  } catch {
+    // An R2 outage must never be interpreted as permission to read legacy rows:
+    // a root-bound snapshot intentionally has no stops/pattern_stops D1 copy.
+    throw new Error('Unable to resolve snapshot routing authority')
+  }
+
+  // Old tests, pre-manifest snapshots and explicit legacy-backfill versions keep
+  // the existing D1 fallback behavior. Active snapshot probes separately require
+  // a valid root manifest, so a production active version cannot silently rely
+  // on this branch if its root object disappeared.
+  if (!object) {
+    memoryCacheSet(memoryKey, 'legacy', ROUTING_AUTHORITY_TTL_SECONDS)
+    return 'legacy'
+  }
+
+  let value: unknown
+  try {
+    value = await object.json<unknown>()
+  } catch {
+    throw new Error('Snapshot routing authority root manifest is unreadable')
+  }
+  if (!value || typeof value !== 'object') {
+    throw new Error('Snapshot routing authority root manifest is invalid')
+  }
+  const manifest = value as Record<string, unknown>
+  if (manifest.schemaVersion !== 2 || manifest.city !== city || manifest.version !== version
+    || !Array.isArray(manifest.artifacts)) {
+    throw new Error('Snapshot routing authority root manifest is invalid')
+  }
+
+  const expectedKeys = routingCompletionManifestKeys(version, city)
+  const expected = new Set(expectedKeys)
+  const byKey = new Map<string, Record<string, unknown>>()
+  for (const raw of manifest.artifacts) {
+    if (!raw || typeof raw !== 'object') continue
+    const artifact = raw as Record<string, unknown>
+    if (typeof artifact.key !== 'string' || !expected.has(artifact.key)) continue
+    if (byKey.has(artifact.key)) {
+      throw new Error('Snapshot routing authority root binding is duplicated')
+    }
+    byKey.set(artifact.key, artifact)
+  }
+
+  if (byKey.size === 0) {
+    memoryCacheSet(memoryKey, 'legacy', ROUTING_AUTHORITY_TTL_SECONDS)
+    return 'legacy'
+  }
+  if (byKey.size !== expectedKeys.length) {
+    throw new Error('Snapshot routing authority root binding is partial')
+  }
+  for (const key of expectedKeys) {
+    const artifact = byKey.get(key)
+    const bytes = Number(artifact?.bytes)
+    if (!Number.isSafeInteger(bytes) || bytes <= 0
+      || typeof artifact?.sha256 !== 'string'
+      || !ROUTING_MANIFEST_SHA256.test(artifact.sha256)) {
+      throw new Error('Snapshot routing authority root binding is invalid')
+    }
+  }
+
+  memoryCacheSet(memoryKey, 'root-bound', ROUTING_AUTHORITY_TTL_SECONDS)
+  return 'root-bound'
+}
+
+async function assertLegacyHighCardD1Allowed(
+  env: TransitBindings,
+  city: string,
+  version: string,
+): Promise<void> {
+  if (await highCardD1Authority(env, city, version) === 'root-bound') {
+    throw new Error('Root-bound routing authority forbids legacy high-cardinality D1 fallback')
+  }
+}
+
 export function getActiveSnapshotVersion(env: TransitBindings, city: string): Promise<string | null> {
   return getActiveVersion(env, city)
 }
@@ -169,6 +271,7 @@ export async function getSnapshotRouteVariants(
 ): Promise<RouteMapVariant[]> {
   const version = await getActiveVersion(env, city)
   if (!version) return []
+  await assertLegacyHighCardD1Allowed(env, city, version)
 
   const patterns = await env.TRANSIT_DB.prepare(`
     SELECT p.pattern_id, p.route_uid, p.subroute_uid, r.route_name, p.subroute_name, p.direction,
@@ -402,6 +505,7 @@ export async function searchStopPlaces(
   if (!version) return []
   const normalized = normalizeStopName(query)
   if (!normalized) return []
+  await assertLegacyHighCardD1Allowed(env, city, version)
 
   // 先做前綴比對:範圍條件走 stops_name_idx(version, city_code, normalized_name),
   // 不用 LIKE 是因為 ESCAPE 子句會關掉 SQLite 的 LIKE 索引最佳化。
@@ -468,6 +572,7 @@ export async function getStopPlace(env: TransitBindings, city: string, placeId: 
 export async function getStopPlaceByStopUid(env: TransitBindings, city: string, stopUid: string) {
   const version = await getActiveVersion(env, city)
   if (!version) return null
+  await assertLegacyHighCardD1Allowed(env, city, version)
   const place = await env.TRANSIT_DB.prepare(`
     SELECT p.place_id, p.place_name, p.latitude, p.longitude
     FROM stops s
@@ -492,6 +597,7 @@ export async function getStopPlaceByStopUid(env: TransitBindings, city: string, 
 export async function getStopPlaceRoutes(env: TransitBindings, city: string, placeId: string) {
   const version = await getActiveVersion(env, city)
   if (!version) return []
+  await assertLegacyHighCardD1Allowed(env, city, version)
   const result = await env.TRANSIT_DB.prepare(`
     SELECT DISTINCT r.route_uid, r.route_name, p.pattern_id, p.direction,
       p.departure_name, p.destination_name, p.subroute_uid, p.subroute_name,
@@ -539,6 +645,7 @@ export async function getDirectRoutes(
 ) {
   const version = await getActiveVersion(env, city)
   if (!version || fromPlaceId === toPlaceId) return []
+  await assertLegacyHighCardD1Allowed(env, city, version)
 
   const result = await env.TRANSIT_DB.prepare(`
     SELECT DISTINCT r.route_name, p.pattern_id, p.direction, p.subroute_name,
@@ -614,6 +721,7 @@ export async function getOneTransferRoutes(
 ) {
   const version = await getActiveVersion(env, city)
   if (!version || fromPlaceId === toPlaceId) return []
+  await assertLegacyHighCardD1Allowed(env, city, version)
 
   // SQL 只做便宜的兩端展開(各數百列、走索引),步行距離的空間接合交給
   // pairTransferLegs 在記憶體用網格做。環狀 pattern 可能需要跨過站序首尾，
@@ -714,6 +822,7 @@ export async function getJourneyLegStopRefs(
 ) {
   const version = await getActiveVersion(env, city)
   if (!version || !legs.length) return []
+  await assertLegacyHighCardD1Allowed(env, city, version)
 
   const results = await env.TRANSIT_DB.batch(legs.map((leg) => env.TRANSIT_DB.prepare(`
     SELECT p.route_uid, p.subroute_uid, p.direction, r.route_name, ps.stop_uid
