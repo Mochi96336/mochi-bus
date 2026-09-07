@@ -60,13 +60,14 @@ function database({ allowHighCard = false } = {}) {
   return { db, queries }
 }
 
-function bucket(mode: 'root-bound' | 'legacy' | 'partial' | 'error') {
+function bucket(mode: 'root-bound' | 'legacy' | 'partial' | 'missing' | 'error') {
   const reads: string[] = []
   const bucket = {
     async get(key: string) {
       reads.push(key)
       if (key !== rootKey) throw new Error(`unexpected R2 read: ${key}`)
       if (mode === 'error') throw new Error('temporary R2 outage')
+      if (mode === 'missing') return null
       const bound = mode === 'root-bound'
         ? routingKeys
         : mode === 'partial'
@@ -84,6 +85,9 @@ function bucket(mode: 'root-bound' | 'legacy' | 'partial' | 'error') {
           })),
         }) as T,
       } as unknown as R2ObjectBody
+    },
+    async head() {
+      return null
     },
   } as unknown as R2Bucket
   return { bucket, reads }
@@ -136,6 +140,17 @@ describe('legacy high-cardinality D1 authority guard', () => {
 
     await expect(searchStopPlaces(env, city, 'Alpha')).rejects.toThrow(
       'Snapshot routing authority root binding is partial',
+    )
+    expect(d1.queries).toEqual(['SELECT active_version FROM dataset_versions WHERE city_code = ?'])
+  })
+
+  it('rejects a missing root manifest instead of falling back to D1', async () => {
+    const d1 = database()
+    const r2 = bucket('missing')
+    const env: TransitBindings = { TRANSIT_DB: d1.db, TRANSIT_SHAPES: r2.bucket }
+
+    await expect(searchStopPlaces(env, city, 'Alpha')).rejects.toThrow(
+      'Snapshot routing authority root manifest is missing',
     )
     expect(d1.queries).toEqual(['SELECT active_version FROM dataset_versions WHERE city_code = ?'])
   })

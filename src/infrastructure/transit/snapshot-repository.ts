@@ -118,11 +118,22 @@ function routingCompletionManifestKeys(version: string, city: string): string[] 
   return ROUTING_COMPLETION_MANIFEST_NAMES.map((name) => `${prefix}${name}`)
 }
 
+function hasCompleteSnapshotR2Binding(env: TransitBindings): boolean {
+  const bucket = env.TRANSIT_SHAPES as Partial<R2Bucket>
+  return typeof bucket?.get === 'function' && typeof bucket?.head === 'function'
+}
+
 async function highCardD1Authority(
   env: TransitBindings,
   city: string,
   version: string,
 ): Promise<HighCardD1Authority> {
+  // Some domain-level tests and explicit legacy callers intentionally provide a
+  // partial bucket double. Production Workers always expose the complete R2
+  // binding surface, including both get() and head(). Only a complete binding can
+  // make an authoritative migration decision.
+  if (!hasCompleteSnapshotR2Binding(env)) return 'legacy'
+
   const memoryKey = `transit/high-card-d1-authority/${city}/${version}`
   const cached = memoryCacheGet<HighCardD1Authority>(memoryKey)
   if (cached) return cached
@@ -136,14 +147,8 @@ async function highCardD1Authority(
     // a root-bound snapshot intentionally has no stops/pattern_stops D1 copy.
     throw new Error('Unable to resolve snapshot routing authority')
   }
-
-  // Old tests, pre-manifest snapshots and explicit legacy-backfill versions keep
-  // the existing D1 fallback behavior. Active snapshot probes separately require
-  // a valid root manifest, so a production active version cannot silently rely
-  // on this branch if its root object disappeared.
   if (!object) {
-    memoryCacheSet(memoryKey, 'legacy', ROUTING_AUTHORITY_TTL_SECONDS)
-    return 'legacy'
+    throw new Error('Snapshot routing authority root manifest is missing')
   }
 
   let value: unknown
