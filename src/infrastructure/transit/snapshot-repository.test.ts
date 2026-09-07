@@ -42,10 +42,16 @@ describe('getStopPlaceByStopUid', () => {
         return statement
       },
     } as D1Database
+    const bucket = {
+      async get() {
+        // This fixture exercises the pre-cutover legacy D1 path, so it has no root manifest.
+        return null
+      },
+    } as unknown as R2Bucket
 
     const place = await getStopPlaceByStopUid({
       TRANSIT_DB: database,
-      TRANSIT_SHAPES: {} as R2Bucket,
+      TRANSIT_SHAPES: bucket,
     }, 'NewTaipei', 'NWT1')
 
     expect(place).toEqual({
@@ -241,6 +247,7 @@ describe('circular route queries', () => {
     const reads: string[] = []
     const bucket = {
       async get(key: string) {
+        if (key.endsWith('/manifest.json')) return null
         reads.push(key)
         const shape = key === 'loop.json' ? circularShape : openShape
         return { json: async <T>() => shape as T } as unknown as R2ObjectBody
@@ -321,7 +328,8 @@ describe('circular route queries', () => {
       },
     } as unknown as D1Database
     const bucket = {
-      async get() {
+      async get(key: string) {
+        if (key.endsWith('/manifest.json')) return null
         return { json: async <T>() => circularShape as T } as unknown as R2ObjectBody
       },
     } as unknown as R2Bucket
