@@ -7,7 +7,7 @@ import {
 } from './d1-write-budget.mjs'
 
 describe('D1 snapshot write budget', () => {
-  it('matches the observed Taichung staging amplification', () => {
+  it('reduces the observed Taichung snapshot to the low-cardinality D1 footprint', () => {
     const counts = {
       routes: 461,
       patterns: 1179,
@@ -16,11 +16,11 @@ describe('D1 snapshot write budget', () => {
       patternStops: 47050,
     }
 
-    expect(logicalSnapshotRows(counts)).toBe(70818)
-    expect(estimateStageRowsWritten(counts)).toBe(229679)
+    expect(logicalSnapshotRows(counts)).toBe(6543)
+    expect(estimateStageRowsWritten(counts)).toBe(19629)
   })
 
-  it('matches the observed ChiayiCounty staging amplification', () => {
+  it('reduces the observed ChiayiCounty snapshot to low-cardinality D1 writes', () => {
     const counts = {
       routes: 106,
       patterns: 373,
@@ -29,11 +29,11 @@ describe('D1 snapshot write budget', () => {
       patternStops: 13884,
     }
 
-    expect(logicalSnapshotRows(counts)).toBe(19908)
-    expect(estimateStageRowsWritten(counts)).toBe(63797)
+    expect(logicalSnapshotRows(counts)).toBe(1951)
+    expect(estimateStageRowsWritten(counts)).toBe(5853)
   })
 
-  it('reserves growth, cleanup, and fixed publication overhead', () => {
+  it('reserves growth, low-cardinality cleanup, and fixed publication overhead', () => {
     const estimate = estimateScheduledPublishRowsWritten({
       routes: 461,
       patterns: 1179,
@@ -43,15 +43,15 @@ describe('D1 snapshot write budget', () => {
     }, { growthFactor: 1.10 })
 
     expect(estimate).toEqual({
-      stageRows: 229679,
-      cleanupRows: 70818,
+      stageRows: 19629,
+      cleanupRows: 6543,
       growthFactor: 1.10,
-      estimatedRows: 323529,
+      estimatedRows: 28199,
       fixedReserveRows: 64,
     })
   })
 
-  it('uses the exact previous-version cleanup count when supplied', () => {
+  it('uses the exact low-cardinality cleanup count when supplied', () => {
     const estimate = estimateScheduledPublishRowsWritten({
       routes: 106,
       patterns: 373,
@@ -61,9 +61,9 @@ describe('D1 snapshot write budget', () => {
     }, { growthFactor: 1, cleanupRows: 123 })
 
     expect(estimate).toMatchObject({
-      stageRows: 63797,
+      stageRows: 5853,
       cleanupRows: 123,
-      estimatedRows: 63984,
+      estimatedRows: 6040,
     })
   })
 

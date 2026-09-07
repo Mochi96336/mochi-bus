@@ -5,7 +5,6 @@ import { createHash } from 'node:crypto'
 import { loadOperationalResources } from './instance/operational-resources.mjs'
 import { validateSnapshot } from './transit-snapshot/validate.mjs'
 import { createStopPlaceRegistry } from './transit-snapshot/stop-place-registry.mjs'
-import { patternStopPlaceMismatchQuery } from './transit-snapshot/snapshot-invariants.mjs'
 import { manifestReadLimit, readManifestJson } from './transit-snapshot/manifest-read-limit.mjs'
 import { parseContentLength } from './transit-snapshot/r2-metadata.mjs'
 import { publishWithRollback } from './transit-snapshot/publish-gate.mjs'
@@ -26,10 +25,16 @@ import {
   routingArtifactCleanupKeys,
 } from './transit-snapshot/publisher-routing-artifacts.mjs'
 import {
-  MAX_ROUTING_MANIFEST_BYTES,
-  routingCompletionManifestKeys,
-} from './transit-snapshot/routing-authority-contract.mjs'
-import { validatePublisherRemoteRoutingAuthority } from './transit-snapshot/publisher-remote-authority.mjs'
+  assertPublisherD1Validation,
+  assertPublisherRoutingAuthorityCounts,
+  buildPublisherD1CleanupSql,
+  buildPublisherD1ImportSql,
+  publisherD1ValidationSql,
+} from './transit-snapshot/publisher-d1-cutover.mjs'
+import {
+  bindRollbackRoutingAuthority,
+  readRollbackRoutingAuthority,
+} from './transit-snapshot/rollback-routing-authority.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
 const operationalResources = loadOperationalResources()
@@ -395,16 +400,16 @@ for (const bundle of placeBundles.values()) {
   await writeFile(join(placeDir, `${encodeURIComponent(bundle.placeId)}.json`), JSON.stringify(bundle))
 }
 
-const sql = []
-sql.push('PRAGMA foreign_keys=OFF;')
-for (const route of routeByUid.values()) sql.push(`INSERT OR REPLACE INTO routes VALUES (${values(version, CITY, route.uid, route.name, route.departure, route.destination)});`)
-for (const pattern of patterns) sql.push(`INSERT OR REPLACE INTO patterns VALUES (${values(version, pattern.id, CITY, pattern.routeUid, pattern.subrouteUid, pattern.subrouteName, pattern.direction, pattern.departure, pattern.destination, pattern.shapeKey, pattern.updatedAt)});`)
-for (const place of places.values()) sql.push(`INSERT OR REPLACE INTO stop_places VALUES (${values(version, place.id, CITY, place.name, place.lat, place.lon)});`)
-for (const stop of stops.values()) sql.push(`INSERT OR REPLACE INTO stops VALUES (${values(version, stop.uid, CITY, stop.name, stop.normalized, stop.lat, stop.lon, stop.placeId)});`)
-for (const item of patternStops) sql.push(`INSERT OR REPLACE INTO pattern_stops VALUES (${values(version, item.patternId, item.stopUid, item.placeId, item.sequence)});`)
-// 大城市單檔數萬條 statement 會觸發 D1 大交易的內部錯誤(object reset),
-// 分塊依序執行。安全性:啟用新版本的 dataset_versions upsert 在最後一塊,
-// 中途失敗只會留下未啟用的孤兒列,線上仍由舊版本服務,重跑即可。
+// New snapshots keep only low-cardinality catalogue and place metadata in D1.
+// Ordered stop occurrences and StopUID lookup/search are already published as
+// same-version R2 routing artifacts and are validated before activation.
+const sql = buildPublisherD1ImportSql({
+  version,
+  city: CITY,
+  routes: routeByUid,
+  patterns,
+  places,
+})
 const SQL_CHUNK_STATEMENTS = 5000
 const sqlFiles = []
 for (let start = 0; start < sql.length; start += SQL_CHUNK_STATEMENTS) {
@@ -531,17 +536,9 @@ const allVersions = [
 ].map((row) => row.version)
 const retainedPreviousVersion = previousVersion ?? [...new Set(allVersions)].sort().at(-1)
 const versionsToDelete = new Set(allVersions.filter((item) => item !== retainedPreviousVersion))
-const cleanupFile = versionsToDelete.size ? join(outputRoot, 'cleanup.sql') : null
-if (versionsToDelete.size) {
-  const cleanupSql = [
-    `DELETE FROM pattern_stops WHERE version IN (${[...versionsToDelete].map(sqlValue).join(',')});`,
-    `DELETE FROM stops WHERE city_code=${sqlValue(CITY)} AND version IN (${[...versionsToDelete].map(sqlValue).join(',')});`,
-    `DELETE FROM stop_places WHERE city_code=${sqlValue(CITY)} AND version IN (${[...versionsToDelete].map(sqlValue).join(',')});`,
-    `DELETE FROM patterns WHERE city_code=${sqlValue(CITY)} AND version IN (${[...versionsToDelete].map(sqlValue).join(',')});`,
-    `DELETE FROM routes WHERE city_code=${sqlValue(CITY)} AND version IN (${[...versionsToDelete].map(sqlValue).join(',')});`,
-  ]
-  await writeFile(cleanupFile, cleanupSql.join('\n'))
-}
+const cleanupSql = buildPublisherD1CleanupSql({ city: CITY, versions: versionsToDelete })
+const cleanupFile = cleanupSql.length ? join(outputRoot, 'cleanup.sql') : null
+if (cleanupFile) await writeFile(cleanupFile, cleanupSql.join('\n'))
 const obsoleteObjectKeys = [...new Set([
   ...existingRows.patterns.filter((item) => versionsToDelete.has(item.version))
     .map((item) => `snapshots/${item.version}/cities/${CITY}/shapes/${item.pattern_id}.json`),
@@ -786,42 +783,11 @@ async function createArtifactManifest(tasks, counts, quality) {
   }
 }
 async function validateRemoteSnapshot(targetVersion, expectedCounts, expectedQuality, manifestKey, expectedManifest) {
-  const actual = r2
-    ? await validateRemoteR2Snapshot(targetVersion, expectedCounts, expectedQuality, manifestKey, expectedManifest)
-    : validateRemoteLegacyD1(targetVersion, expectedCounts)
-  console.log(JSON.stringify({ city: CITY, version: targetVersion, phase: 'remote-validation', counts: actual, quality: expectedQuality }))
-}
-
-async function validateRemoteR2Snapshot(targetVersion, expectedCounts, expectedQuality, manifestKey, expectedManifest) {
-  const result = queryRemoteD1([
-    `SELECT COUNT(*) AS count FROM routes WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM patterns WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM stop_places WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM patterns p
-      LEFT JOIN routes r ON r.version=p.version AND r.city_code=p.city_code AND r.route_uid=p.route_uid
-      WHERE p.version=${sqlValue(targetVersion)} AND p.city_code=${sqlValue(CITY)} AND r.route_uid IS NULL`,
-    `SELECT COUNT(*) AS count FROM routes r
-      WHERE r.version=${sqlValue(targetVersion)} AND r.city_code=${sqlValue(CITY)}
-      AND NOT EXISTS (
-        SELECT 1 FROM patterns p
-        WHERE p.version=r.version AND p.city_code=r.city_code AND p.route_uid=r.route_uid
-      )`,
-  ].join(';'))
-  const lowCard = {
-    routes: Number(result[0]?.results?.[0]?.count),
-    patterns: Number(result[1]?.results?.[0]?.count),
-    places: Number(result[2]?.results?.[0]?.count),
+  const result = queryRemoteD1(publisherD1ValidationSql({ version: targetVersion, city: CITY }))
+  const d1Counts = assertPublisherD1Validation(result, expectedCounts)
+  if (!r2) {
+    throw new Error('R2 credentials are required to validate high-cardinality snapshot authority')
   }
-  for (const name of ['routes', 'patterns', 'places']) {
-    if (lowCard[name] !== expectedCounts[name]) {
-      throw new Error(`Remote D1 ${name} count mismatch: ${lowCard[name]} != ${expectedCounts[name]}`)
-    }
-  }
-  const dangling = Number(result[3]?.results?.[0]?.count)
-  if (dangling !== 0) throw new Error(`Remote D1 contains ${dangling} dangling pattern route references`)
-  const orphanRoutes = Number(result[4]?.results?.[0]?.count)
-  if (orphanRoutes !== 0) throw new Error(`Remote D1 contains ${orphanRoutes} routes without patterns`)
-
   const remoteManifest = await s3GetJson(manifestKey, manifestReadLimit(expectedManifest))
   if (remoteManifest?.schemaVersion !== 2
     || remoteManifest?.version !== targetVersion
@@ -831,89 +797,25 @@ async function validateRemoteR2Snapshot(targetVersion, expectedCounts, expectedQ
     || !sameArtifactManifest(remoteManifest.artifacts, expectedManifest.artifacts)) {
     throw new Error('Remote R2 manifest does not match the staged snapshot')
   }
-  const manifestBodies = await readPublisherRoutingManifestBodies(remoteManifest.artifacts, targetVersion)
-  const authority = validatePublisherRemoteRoutingAuthority({
+  const authority = await readRollbackRoutingAuthority({
     city: CITY,
     version: targetVersion,
-    expectedCounts,
-    rootArtifacts: remoteManifest.artifacts,
-    manifestBodies,
+    r2: { head: s3HeadObject, getBytes: s3GetBytes },
   })
-  const actual = {
-    ...lowCard,
-    stops: authority.counts.stops,
-    patternStops: authority.counts.patternStops,
-  }
+  if (authority.mode !== 'r2') throw new Error('Remote R2 routing authority is missing')
+  assertPublisherRoutingAuthorityCounts(authority.counts, expectedCounts)
+  const binding = bindRollbackRoutingAuthority(remoteManifest.artifacts, authority)
+  if (binding !== 'root-bound') throw new Error('Remote R2 routing authority is not bound by the snapshot manifest')
   await verifyCriticalR2Artifacts(remoteManifest.artifacts, targetVersion)
-  const sampleRootArtifact = remoteManifest.artifacts.find((artifact) => artifact?.key === authority.sampleArtifact.key)
-  await verifyR2Artifact(sampleRootArtifact)
-  return actual
-}
-
-function validateRemoteLegacyD1(targetVersion, expectedCounts) {
-  const result = queryRemoteD1([
-    `SELECT COUNT(*) AS count FROM routes WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM patterns WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM stops WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM stop_places WHERE version=${sqlValue(targetVersion)} AND city_code=${sqlValue(CITY)}`,
-    `SELECT COUNT(*) AS count FROM pattern_stops WHERE version=${sqlValue(targetVersion)}`,
-    `SELECT
-      (SELECT COUNT(*) FROM patterns p LEFT JOIN routes r ON r.version=p.version AND r.route_uid=p.route_uid WHERE p.version=${sqlValue(targetVersion)} AND r.route_uid IS NULL)
-      + (SELECT COUNT(*) FROM stops s LEFT JOIN stop_places sp ON sp.version=s.version AND sp.place_id=s.place_id WHERE s.version=${sqlValue(targetVersion)} AND sp.place_id IS NULL)
-      + (SELECT COUNT(*) FROM pattern_stops ps LEFT JOIN patterns p ON p.version=ps.version AND p.pattern_id=ps.pattern_id LEFT JOIN stops s ON s.version=ps.version AND s.stop_uid=ps.stop_uid LEFT JOIN stop_places sp ON sp.version=ps.version AND sp.place_id=ps.place_id WHERE ps.version=${sqlValue(targetVersion)} AND (p.pattern_id IS NULL OR s.stop_uid IS NULL OR sp.place_id IS NULL)) AS count`,
-    `SELECT COUNT(*) AS count FROM (
-      SELECT p.pattern_id FROM patterns p
-      LEFT JOIN pattern_stops ps ON ps.version=p.version AND ps.pattern_id=p.pattern_id
-      WHERE p.version=${sqlValue(targetVersion)} AND p.city_code=${sqlValue(CITY)}
-      GROUP BY p.pattern_id HAVING COUNT(ps.stop_uid) < 2
-    )`,
-    `SELECT COUNT(*) AS count FROM routes r
-      WHERE r.version=${sqlValue(targetVersion)} AND r.city_code=${sqlValue(CITY)}
-      AND NOT EXISTS (
-        SELECT 1 FROM patterns p
-        WHERE p.version=r.version AND p.city_code=r.city_code AND p.route_uid=r.route_uid
-      )`,
-    patternStopPlaceMismatchQuery(targetVersion),
-  ].join(';'))
-  const actual = {
-    routes: Number(result[0]?.results?.[0]?.count),
-    patterns: Number(result[1]?.results?.[0]?.count),
-    stops: Number(result[2]?.results?.[0]?.count),
-    places: Number(result[3]?.results?.[0]?.count),
-    patternStops: Number(result[4]?.results?.[0]?.count),
-  }
-  for (const [name, expected] of Object.entries(expectedCounts)) {
-    if (name in actual && actual[name] !== expected) {
-      throw new Error(`Remote D1 ${name} count mismatch: ${actual[name]} != ${expected}`)
-    }
-  }
-  const dangling = Number(result[5]?.results?.[0]?.count)
-  if (dangling !== 0) throw new Error(`Remote D1 contains ${dangling} dangling snapshot references`)
-  const shortPatterns = Number(result[6]?.results?.[0]?.count)
-  if (shortPatterns !== 0) throw new Error(`Remote D1 contains ${shortPatterns} patterns with fewer than two stops`)
-  const orphanRoutes = Number(result[7]?.results?.[0]?.count)
-  if (orphanRoutes !== 0) throw new Error(`Remote D1 contains ${orphanRoutes} routes without patterns`)
-  const placeMismatches = Number(result[8]?.results?.[0]?.count)
-  if (placeMismatches !== 0) {
-    throw new Error(`Remote D1 contains ${placeMismatches} pattern stop place mismatches`)
-  }
-  return actual
-}
-
-async function readPublisherRoutingManifestBodies(artifacts, targetVersion) {
-  const byKey = new Map(Array.isArray(artifacts) ? artifacts.map((artifact) => [artifact?.key, artifact]) : [])
-  return Promise.all(routingCompletionManifestKeys(targetVersion, CITY).map(async (key) => {
-    const descriptor = byKey.get(key)
-    if (!descriptor || !Number.isSafeInteger(descriptor.bytes) || descriptor.bytes < 1
-      || descriptor.bytes > MAX_ROUTING_MANIFEST_BYTES) {
-      throw new Error('Remote R2 routing manifest descriptor is invalid')
-    }
-    const body = await s3GetBytes(key, MAX_ROUTING_MANIFEST_BYTES)
-    if (!body) throw new Error('Remote R2 routing manifest is unavailable')
-    return body
+  console.log(JSON.stringify({
+    city: CITY,
+    version: targetVersion,
+    phase: 'remote-validation',
+    d1Counts,
+    routingCounts: authority.counts,
+    quality: expectedQuality,
   }))
 }
-
 async function smokePublishedSnapshot(targetVersion, target) {
   const cacheBust = `snapshot=${encodeURIComponent(targetVersion)}`
   let lastError
