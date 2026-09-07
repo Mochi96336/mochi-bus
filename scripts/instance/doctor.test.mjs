@@ -149,7 +149,7 @@ describe('instance doctor', () => {
     expect(serialized).not.toContain('never-print-r2')
   })
 
-  it('shows disabled checks and the starter manual snapshot fallback without blocking readiness', async () => {
+  it('blocks a starter manual snapshot without direct R2 publisher credentials', async () => {
     const config = operatorConfig({
       cloudflare: {
         workerName: 'starter-bus',
@@ -172,12 +172,16 @@ describe('instance doctor', () => {
       env: readyEnvironment({ R2_ACCESS_KEY_ID: '', R2_SECRET_ACCESS_KEY: '' }),
     })
 
-    expect(report.ok).toBe(true)
+    expect(report.ok).toBe(false)
     expect(report.operations.find(({ name }) => name === 'snapshot')).toMatchObject({
       mode: 'manual',
-      status: 'ready',
-      warnings: ['R2 S3 credentials are absent; the manual starter snapshot will use the slow Wrangler fallback'],
+      status: 'blocked',
+      warnings: [],
     })
+    expect(report.operations.find(({ name }) => name === 'snapshot').blockers.join('\n'))
+      .toContain('R2_ACCESS_KEY_ID')
+    expect(report.operations.find(({ name }) => name === 'snapshot').blockers.join('\n'))
+      .toContain('R2_SECRET_ACCESS_KEY')
     expect(report.operations.find(({ name }) => name === 'publicProbe').status).toBe('disabled')
     expect(report.operations.find(({ name }) => name === 'windowWatchdog').status).toBe('disabled')
   })
