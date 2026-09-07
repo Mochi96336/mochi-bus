@@ -58,11 +58,7 @@ export function inspectOperatorPreflight({
       blockers.push('R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be configured together')
     }
     if (!hasR2AccessKey && !hasR2Secret) {
-      if (plan.profile === 'starter') {
-        warnings.push('R2 S3 credentials are absent; the manual starter snapshot will use the slow Wrangler fallback')
-      } else {
-        missing.push('R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY')
-      }
+      missing.push('R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY')
     }
   }
 

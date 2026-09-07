@@ -162,6 +162,8 @@ describe('instance operator preflight', () => {
       env: cloudflareEnv({
         TDX_CLIENT_ID: 'tdx-id',
         TDX_CLIENT_SECRET: 'tdx-secret',
+        R2_ACCESS_KEY_ID: 'r2-access',
+        R2_SECRET_ACCESS_KEY: 'r2-secret',
         SNAPSHOT_SMOKE_BASE_URL: 'http://localhost:8787/',
       }),
     }).origin).toBe('http://localhost:8787')
@@ -174,29 +176,32 @@ describe('instance operator preflight', () => {
     }).origin).toBeNull()
   })
 
-  it('requires scalable R2 credentials for managed snapshots but preserves starter fallback', () => {
+  it('requires direct R2 credentials for every snapshot profile', () => {
     const baseEnv = cloudflareEnv({
       TDX_CLIENT_ID: 'tdx-id',
       TDX_CLIENT_SECRET: 'tdx-secret',
     })
-    expect(() => resolveOperatorPreflight({
-      operation: 'snapshot',
-      plan: plan({ profile: 'managed' }),
-      resources: resources(),
-      env: baseEnv,
-    })).toThrow('R2_ACCESS_KEY_ID')
+    for (const profile of ['managed', 'starter']) {
+      expect(() => resolveOperatorPreflight({
+        operation: 'snapshot',
+        forceEnabled: profile === 'starter',
+        plan: plan({ profile, snapshotSchedule: profile === 'starter' ? 'manual' : 'taipei-weekly-sharded' }),
+        resources: resources(),
+        env: baseEnv,
+      })).toThrow('R2_ACCESS_KEY_ID')
+    }
 
-    const starter = resolveOperatorPreflight({
+    expect(resolveOperatorPreflight({
       operation: 'snapshot',
       forceEnabled: true,
       plan: plan({ profile: 'starter', snapshotSchedule: 'manual' }),
       resources: resources(),
-      env: baseEnv,
-    })
-    expect(starter.enabled).toBe(true)
-    expect(starter.warnings).toEqual([
-      'R2 S3 credentials are absent; the manual starter snapshot will use the slow Wrangler fallback',
-    ])
+      env: {
+        ...baseEnv,
+        R2_ACCESS_KEY_ID: 'r2-access',
+        R2_SECRET_ACCESS_KEY: 'r2-secret',
+      },
+    }).warnings).toEqual([])
   })
 
   it('fails closed on remote identity mismatches and unreadable resources', async () => {
