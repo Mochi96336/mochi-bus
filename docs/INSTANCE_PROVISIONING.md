@@ -36,7 +36,7 @@ Malformed non-empty resource identity is never treated as provisioned. Invalid D
 - **Action required**: a required resource, secret, variable or manifest value is absent.
 - **Blocked**: another repair must happen before this item can be verified safely.
 - **Verify**: the planner cannot prove remote state without mutating or exposing secret data.
-- **Optional**: the item is not required by the selected profile. Starter snapshots, for example, may use the slower Wrangler fallback without R2 S3 credentials.
+- **Optional**: the item is not required by the selected profile. Snapshot R2 S3 credentials are not optional: newly published routing artifacts use R2 as their high-cardinality authority in every profile.
 
 A plan may be marked ready while still containing **Verify** items. This means there are no known blocking setup actions, but Cloudflare Worker secret values or other intentionally opaque state should still be confirmed by the operator.
 
