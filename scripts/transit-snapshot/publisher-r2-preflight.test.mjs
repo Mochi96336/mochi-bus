@@ -6,6 +6,7 @@ import {
 } from './publisher-r2-preflight.mjs'
 
 const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
+const rawEntrypoint = readFileSync(new URL('../sync-transit-snapshot.mjs', import.meta.url), 'utf8')
 const preflightImport = '--import ./scripts/transit-snapshot/install-publisher-r2-preflight.mjs'
 
 describe('snapshot publisher R2 preflight', () => {
@@ -70,5 +71,14 @@ describe('snapshot publisher R2 preflight', () => {
       expect(command).toContain(preflightImport)
       expect(command.indexOf(preflightImport)).toBeLessThan(command.indexOf('scripts/'))
     }
+  })
+
+  it('guards the raw script before loading code that can acquire TDX data', () => {
+    const guard = rawEntrypoint.indexOf('await assertPublisherR2Credentials()')
+    const core = rawEntrypoint.indexOf("await import('./sync-transit-snapshot-core.mjs')")
+
+    expect(guard).toBeGreaterThanOrEqual(0)
+    expect(core).toBeGreaterThan(guard)
+    expect(rawEntrypoint).not.toContain('tdx.transportdata.tw')
   })
 })
