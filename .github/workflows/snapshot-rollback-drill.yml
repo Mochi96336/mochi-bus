@@ -54,6 +54,16 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+      - name: Capture rollback authority window
+        run: node scripts/transit-snapshot/capture-rollback-authority-evidence.mjs Taichung
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          ROLLBACK_AUTHORITY_EVIDENCE_REPORT: ${{ runner.temp }}/snapshot-rollback-drill/authority-window.json
       - name: Execute reversible Taichung rollback drill
         id: rollback_drill
         run: node scripts/transit-snapshot/run-rollback-drill.mjs Taichung
@@ -71,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: snapshot-rollback-drill-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/snapshot-rollback-drill/report.json
+          path: ${{ runner.temp }}/snapshot-rollback-drill/
           if-no-files-found: error
           retention-days: 14
           compression-level: 9
