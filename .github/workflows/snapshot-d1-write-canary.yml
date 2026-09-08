@@ -1,14 +1,12 @@
 name: Snapshot D1 write telemetry canary
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/snapshot-d1-write-canary.yml'
-      - 'scripts/transit-snapshot/d1-write-telemetry.mjs'
-      - 'scripts/transit-snapshot/install-d1-write-telemetry.mjs'
-      - 'scripts/transit-snapshot/summarize-d1-write-telemetry.mjs'
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RUN_TAICHUNG after verifying the TDX API key is current
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -33,15 +31,17 @@ jobs:
       - name: Resolve snapshot resources
         id: operation
         run: node scripts/instance/operation-scope.mjs snapshot
-      - name: Validate one-shot canary scope
+      - name: Validate manual canary scope
         shell: bash
         env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
           SNAPSHOT_ENABLED: ${{ steps.operation.outputs.enabled }}
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
         run: |
           set -euo pipefail
           test "${GITHUB_REF}" = 'refs/heads/main'
+          test "${INPUT_CONFIRMATION}" = 'RUN_TAICHUNG'
           test "${SNAPSHOT_ENABLED}" = 'true'
           test -n "${TRANSIT_DATABASE_ID}"
           test -n "${TRANSIT_R2_BUCKET_NAME}"
