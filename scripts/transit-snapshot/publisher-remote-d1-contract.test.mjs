@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const source = readFileSync(new URL('../sync-transit-snapshot.mjs', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../sync-transit-snapshot-core.mjs', import.meta.url), 'utf8')
 
 function functionBlock(name, nextName) {
   const asyncStart = source.indexOf(`async function ${name}`)
