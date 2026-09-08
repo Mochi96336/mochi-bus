@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { renderHomePage } from '../application/home-page'
 import { getRoutePageWithFallback } from '../application/route-page'
+import { getSnapshotStopRouteSuggestions } from '../application/stop-route-suggestions'
 import {
   defaultCity,
   demoBusQuery,
@@ -35,9 +36,9 @@ import { presentBusApiError } from '../presentation/api-error'
 import { presentPageError, publicErrorMessage } from '../presentation/page-error'
 import {
   getSnapshotRouteCatalog,
-  getStopPlaceByStopUid,
   type TransitBindings,
 } from '../infrastructure/transit/snapshot-repository'
+import { getStopPlaceByStopUid } from '../infrastructure/transit/snapshot-stop-lookup-repository'
 import { enabledMapCities } from '../config/map-cities'
 import { siteSearchDescription } from '../seo'
 import {
@@ -182,9 +183,27 @@ bus.get('/api/v1/stop-routes', async (c) => {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const stopName = requiredQueryString(c.req.query('stop'), '站牌名稱', 80)
     const stopUid = optionalQueryString(c.req.query('stopUid'), 'StopUID', 100)
+    const env = tdxEnv(c)
+
+    // Setup already knows the selected StopUID. Resolve its physical place and
+    // route identities from the active snapshot first; TDX then only supplies
+    // compact ETA batches instead of repeating Stop/Route discovery requests.
+    if (stopUid) {
+      const snapshot = await getSnapshotStopRouteSuggestions(env, city, stopUid)
+      if (snapshot) {
+        return c.json({
+          city,
+          stopName,
+          place: snapshot.place,
+          buses: snapshot.buses,
+        }, 200, noStoreHeaders)
+      }
+    }
+
+    // Legacy/no-snapshot fallback keeps setup usable for incomplete instances.
     const [buses, place] = await Promise.all([
-      getStopRouteSuggestions(tdxEnv(c), city, stopName, stopUid),
-      stopUid ? getStopPlaceByStopUid(c.env, city, stopUid) : Promise.resolve(null),
+      getStopRouteSuggestions(env, city, stopName, stopUid),
+      stopUid ? getStopPlaceByStopUid(c.env, city, stopUid).catch(() => null) : Promise.resolve(null),
     ])
     return c.json({ city, stopName, place, buses }, 200, noStoreHeaders)
   } catch (error) {
