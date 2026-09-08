@@ -7,20 +7,23 @@ const watchdogWorkflow = readFileSync('.github/workflows/snapshot-window-watchdo
 const publicProbeRunner = readFileSync('scripts/transit-snapshot/run-public-probe.mjs', 'utf8')
 
 describe('instance operational workflow gates', () => {
-  it('resolves and preflights snapshot scope before migrations and publication', () => {
+  it('resolves and preflights snapshot scope and TDX auth before migrations and publication', () => {
     const scope = 'node scripts/instance/operation-scope.mjs snapshot'
     const preflight = 'npm run instance:preflight -- snapshot'
+    const tokenPreflight = 'node scripts/transit-snapshot/prepare-snapshot-tdx-token.mjs'
     const migration = 'wrangler d1 migrations apply'
     const publication = 'name: Build and publish snapshot'
     const condition = "github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'"
 
     expect(syncWorkflow).toContain(scope)
     expect(syncWorkflow).toContain(preflight)
+    expect(syncWorkflow).toContain(tokenPreflight)
     expect(syncWorkflow.indexOf(scope)).toBeLessThan(syncWorkflow.indexOf(preflight))
-    expect(syncWorkflow.indexOf(preflight)).toBeLessThan(syncWorkflow.indexOf(migration))
+    expect(syncWorkflow.indexOf(preflight)).toBeLessThan(syncWorkflow.indexOf(tokenPreflight))
+    expect(syncWorkflow.indexOf(tokenPreflight)).toBeLessThan(syncWorkflow.indexOf(migration))
     expect(syncWorkflow.indexOf(migration)).toBeLessThan(syncWorkflow.indexOf(publication))
     expect(syncWorkflow.match(new RegExp(condition.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')))
-      .toHaveLength(3)
+      .toHaveLength(4)
   })
 
   it('skips disabled public probe and watchdog before preflight or D1 access', () => {
