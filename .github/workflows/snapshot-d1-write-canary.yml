@@ -74,7 +74,7 @@ jobs:
           NODE_OPTIONS: --import=./scripts/transit-snapshot/install-d1-write-telemetry.mjs
           SNAPSHOT_D1_WRITE_TELEMETRY: '1'
           SNAPSHOT_D1_WRITE_TELEMETRY_CITY: Taichung
-          SNAPSHOT_D1_WRITE_TELEMETRY_FILE: .transit-snapshot/d1-write-telemetry.jsonl
+          SNAPSHOT_D1_WRITE_TELEMETRY_FILE: snapshot-d1-write-telemetry.jsonl
           SNAPSHOT_WINDOW_TYPE: manual
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
@@ -102,7 +102,7 @@ jobs:
         run: >-
           node scripts/transit-snapshot/summarize-d1-write-telemetry.mjs
           snapshot-d1-write-canary.log
-          .transit-snapshot/d1-write-telemetry.jsonl
+          snapshot-d1-write-telemetry.jsonl
           snapshot-d1-write-evidence.json
       - name: Upload D1 write evidence
         if: always()
@@ -112,7 +112,7 @@ jobs:
           path: |
             snapshot-d1-write-canary.log
             snapshot-d1-write-evidence.json
-            .transit-snapshot/d1-write-telemetry.jsonl
+            snapshot-d1-write-telemetry.jsonl
           if-no-files-found: error
           retention-days: 14
           compression-level: 9
@@ -127,4 +127,4 @@ jobs:
           test -s snapshot-d1-write-evidence.json
       - name: Cleanup canary workspace
         if: always()
-        run: rm -rf .transit-snapshot snapshot-d1-write-canary.log snapshot-d1-write-evidence.json
+        run: rm -rf .transit-snapshot snapshot-d1-write-canary.log snapshot-d1-write-evidence.json snapshot-d1-write-telemetry.jsonl

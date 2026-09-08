@@ -8,8 +8,13 @@ import {
   segmentPublisherD1Sql,
   splitSqlStatements,
 } from './d1-write-telemetry.mjs'
-import { createSnapshotD1TelemetrySpawnSync } from './install-d1-write-telemetry.mjs'
+import {
+  createSnapshotD1TelemetrySpawnSync,
+  createTdxTokenDiagnosticFetch,
+} from './install-d1-write-telemetry.mjs'
 import { parseJsonLines, summarizeD1WriteEvidence } from './summarize-d1-write-telemetry.mjs'
+
+const TDX_TOKEN_ENDPOINT = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token'
 
 describe('snapshot D1 write telemetry', () => {
   it('splits generated SQL without breaking quoted semicolons or escaped quotes', () => {
@@ -50,6 +55,55 @@ describe('snapshot D1 write telemetry', () => {
       success: true,
       meta: { duration: 12.5, rows_read: 0, rows_written: 9 },
     }]))).toEqual({ rowsWritten: 9, rowsRead: 0, queryCount: 3, durationMs: 12.5 })
+  })
+
+  it('captures only the bounded TDX OAuth error code without consuming the response body', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'snapshot-tdx-diagnostic-test-'))
+    try {
+      const telemetryFile = join(root, 'telemetry.jsonl')
+      const originalFetch = async () => new Response(JSON.stringify({
+        error: 'invalid_client',
+        error_description: 'sensitive server description',
+        access_token: 'must-not-be-recorded',
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const diagnosticFetch = createTdxTokenDiagnosticFetch({
+        originalFetch,
+        env: {
+          SNAPSHOT_D1_WRITE_TELEMETRY_FILE: telemetryFile,
+          SNAPSHOT_D1_WRITE_TELEMETRY_CITY: 'Taichung',
+          GITHUB_RUN_ID: '123',
+        },
+        stdout: { write() {} },
+      })
+      const response = await diagnosticFetch(TDX_TOKEN_ENDPOINT, {
+        method: 'POST',
+        body: 'grant_type=client_credentials&client_secret=top-secret',
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: 'invalid_client',
+        error_description: 'sensitive server description',
+        access_token: 'must-not-be-recorded',
+      })
+      const raw = readFileSync(telemetryFile, 'utf8')
+      const [record] = parseJsonLines(raw)
+      expect(record).toMatchObject({
+        event: 'snapshot_d1_write_telemetry',
+        action: 'tdx_token_error',
+        phase: 'source_fetch',
+        city: 'Taichung',
+        httpStatus: 400,
+        oauthError: 'invalid_client',
+      })
+      expect(raw).not.toContain('sensitive server description')
+      expect(raw).not.toContain('must-not-be-recorded')
+      expect(raw).not.toContain('top-secret')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('does not rewrite a segment that already committed before a later segment retry', () => {
@@ -131,6 +185,7 @@ describe('snapshot D1 write telemetry', () => {
     expect(evidence.stage.routes.rowsWritten).toBe(6)
     expect(evidence.stageRowsWritten).toBe(21)
     expect(evidence.cleanupRowsWritten).toBe(9)
+    expect(evidence.tdxTokenFailure).toBeNull()
     expect(parseJsonLines('noise\n{"a":1}\n')).toEqual([{ a: 1 }])
     expect(() => summarizeD1WriteEvidence({
       telemetryRecords: telemetryRecords.filter((record) => record.table !== 'patterns'),
@@ -140,5 +195,33 @@ describe('snapshot D1 write telemetry', () => {
       telemetryRecords: [],
       logRecords: [{ event: 'snapshot_window_terminal', city: 'Taichung', result: 'unchanged', activeVersion: 'v1' }],
     }).acceptanceEvidence).toBe(false)
+  })
+
+  it('retains failed window identity and bounded TDX auth classification', () => {
+    const evidence = summarizeD1WriteEvidence({
+      telemetryRecords: [{
+        event: 'snapshot_d1_write_telemetry',
+        action: 'tdx_token_error',
+        phase: 'source_fetch',
+        city: null,
+        httpStatus: 400,
+        oauthError: 'invalid_client',
+      }],
+      logRecords: [{
+        event: 'snapshot_window_completed',
+        city: 'Taichung',
+        windowResult: 'failed',
+        activeVersion: 'v1',
+      }],
+    })
+    expect(evidence).toMatchObject({
+      city: 'Taichung',
+      result: 'failed',
+      activeVersion: 'v1',
+      acceptanceEvidence: false,
+      tdxTokenFailure: { httpStatus: 400, oauthError: 'invalid_client' },
+      stageRowsWritten: 0,
+      cleanupRowsWritten: 0,
+    })
   })
 })
