@@ -16,7 +16,7 @@ function variant(overrides: Partial<RouteMapVariant> = {}): RouteMapVariant {
     subRouteName: '300',
     shape: {
       type: 'Feature',
-      properties: {},
+      properties: { routeUid: 'TXG300', direction: 0 },
       geometry: {
         type: 'LineString',
         coordinates: [[120.6, 24.1], [120.7, 24.2]],
