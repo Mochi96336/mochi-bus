@@ -6,10 +6,18 @@ const STAGE_TABLES = Object.freeze(['routes', 'patterns', 'stop_places'])
 export function summarizeD1WriteEvidence({ telemetryRecords, logRecords, sourceCommit = null, workflowRunId = null }) {
   const terminal = [...logRecords].reverse().find((record) => record?.event === 'snapshot_window_terminal') ?? null
   const published = [...logRecords].reverse().find((record) => record?.phase === 'published' && record?.city) ?? null
-  const city = terminal?.city ?? published?.city ?? telemetryRecords.find((record) => record?.city)?.city ?? null
-  const result = terminal?.result ?? 'failed'
-  const activeVersion = terminal?.activeVersion ?? published?.version ?? null
-  const previousVersion = terminal?.previousVersion ?? published?.previousVersion ?? null
+  const completed = [...logRecords].reverse().find((record) => record?.event === 'snapshot_window_completed' && record?.city) ?? null
+  const tokenFailure = [...telemetryRecords].reverse().find((record) => (
+    record?.event === 'snapshot_d1_write_telemetry' && record?.action === 'tdx_token_error'
+  )) ?? null
+  const city = terminal?.city
+    ?? published?.city
+    ?? completed?.city
+    ?? telemetryRecords.find((record) => record?.city)?.city
+    ?? null
+  const result = terminal?.result ?? completed?.windowResult ?? 'failed'
+  const activeVersion = terminal?.activeVersion ?? published?.version ?? completed?.activeVersion ?? null
+  const previousVersion = terminal?.previousVersion ?? published?.previousVersion ?? completed?.previousVersion ?? null
 
   const stage = aggregateTelemetry(telemetryRecords, 'stage')
   const cleanup = aggregateTelemetry(telemetryRecords, 'cleanup')
@@ -32,6 +40,10 @@ export function summarizeD1WriteEvidence({ telemetryRecords, logRecords, sourceC
     activeVersion,
     previousVersion,
     acceptanceEvidence: result === 'published',
+    tdxTokenFailure: tokenFailure ? Object.freeze({
+      httpStatus: boundedHttpStatus(tokenFailure.httpStatus),
+      oauthError: boundedOAuthError(tokenFailure.oauthError),
+    }) : null,
     stage: freezeAggregate(stage),
     cleanup: freezeAggregate(cleanup),
     stageRowsWritten: sumRowsWritten(stage),
@@ -82,6 +94,16 @@ function nonNegativeInteger(value, label) {
   return number
 }
 
+function boundedHttpStatus(value) {
+  const number = Number(value)
+  return Number.isInteger(number) && number >= 100 && number <= 599 ? number : null
+}
+
+function boundedOAuthError(value) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return /^[a-z][a-z0-9._-]{0,63}$/.test(text) ? text : 'unclassified'
+}
+
 async function main() {
   const [logFile, telemetryFile, outputFile] = process.argv.slice(2)
   if (!logFile || !telemetryFile || !outputFile) {
@@ -103,6 +125,9 @@ async function main() {
       const item = evidence.stage[table]
       return `| ${table} | ${item?.logicalRows ?? 0} | ${item?.rowsWritten ?? 0} | ${item?.segments ?? 0} |`
     })
+    const tokenFailure = evidence.tdxTokenFailure
+      ? `- TDX token failure: \`${evidence.tdxTokenFailure.oauthError}\` (HTTP ${evidence.tdxTokenFailure.httpStatus ?? 'unknown'})`
+      : '- TDX token failure: `none`'
     await writeFile(process.env.GITHUB_STEP_SUMMARY, [
       '## Snapshot D1 write canary',
       '',
@@ -110,6 +135,7 @@ async function main() {
       `- Result: \`${evidence.result}\``,
       `- Active version: \`${evidence.activeVersion ?? 'none'}\``,
       `- Acceptance evidence: **${evidence.acceptanceEvidence ? 'yes' : 'no'}**`,
+      tokenFailure,
       '',
       '| table | logical stage rows | rows_written | committed segments |',
       '| --- | ---: | ---: | ---: |',

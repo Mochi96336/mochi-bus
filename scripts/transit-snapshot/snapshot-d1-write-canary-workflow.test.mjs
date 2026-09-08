@@ -21,7 +21,10 @@ describe('snapshot D1 write canary workflow', () => {
   it('enables the isolated telemetry preload and uploads bounded evidence', () => {
     expect(workflow).toContain('NODE_OPTIONS: --import=./scripts/transit-snapshot/install-d1-write-telemetry.mjs')
     expect(workflow).toContain("SNAPSHOT_D1_WRITE_TELEMETRY: '1'")
+    expect(workflow).toContain('SNAPSHOT_D1_WRITE_TELEMETRY_FILE: snapshot-d1-write-telemetry.jsonl')
+    expect(workflow).not.toContain('.transit-snapshot/d1-write-telemetry.jsonl')
     expect(workflow).toContain('summarize-d1-write-telemetry.mjs')
+    expect(workflow).toContain('snapshot-d1-write-telemetry.jsonl')
     expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
     expect(workflow).toContain('retention-days: 14')
   })

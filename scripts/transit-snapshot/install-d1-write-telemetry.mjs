@@ -14,8 +14,12 @@ import { parseWranglerD1ImportJson, segmentPublisherD1Sql } from './d1-write-tel
 
 const TELEMETRY_ENABLED = process.env.SNAPSHOT_D1_WRITE_TELEMETRY === '1'
 const CAPTURE_MAX_BYTES = 32 * 1024 * 1024
+const TDX_TOKEN_ENDPOINT = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token'
 
-if (TELEMETRY_ENABLED) installSnapshotD1WriteTelemetry()
+if (TELEMETRY_ENABLED) {
+  installSnapshotD1WriteTelemetry()
+  installTdxTokenDiagnostic()
+}
 
 export function installSnapshotD1WriteTelemetry() {
   const require = createRequire(import.meta.url)
@@ -31,6 +35,62 @@ export function installSnapshotD1WriteTelemetry() {
   Object.defineProperty(telemetrySpawnSync, '__snapshotD1WriteTelemetry', { value: true })
   childProcess.spawnSync = telemetrySpawnSync
   syncBuiltinESMExports()
+}
+
+export function installTdxTokenDiagnostic() {
+  const currentFetch = globalThis.fetch
+  if (typeof currentFetch !== 'function' || currentFetch.__snapshotTdxTokenDiagnostic === true) return
+  const diagnosticFetch = createTdxTokenDiagnosticFetch({
+    originalFetch: currentFetch,
+    env: process.env,
+    stdout: process.stdout,
+  })
+  Object.defineProperty(diagnosticFetch, '__snapshotTdxTokenDiagnostic', { value: true })
+  globalThis.fetch = diagnosticFetch
+}
+
+export function createTdxTokenDiagnosticFetch({
+  originalFetch,
+  env = {},
+  stdout = process.stdout,
+} = {}) {
+  if (typeof originalFetch !== 'function') throw new TypeError('originalFetch is required')
+  const telemetryFile = env.SNAPSHOT_D1_WRITE_TELEMETRY_FILE
+    ?? '.transit-snapshot/d1-write-telemetry.jsonl'
+
+  return async function tdxTokenDiagnosticFetch(input, init) {
+    const response = await originalFetch(input, init)
+    if (!isTdxTokenRequest(input, init) || response?.ok === true) return response
+
+    let oauthError = 'unavailable'
+    try {
+      const payload = await response.clone().json()
+      oauthError = boundedOAuthErrorCode(payload?.error)
+    } catch {
+      // Keep the publisher response untouched and report only a bounded classification.
+    }
+
+    try {
+      const record = {
+        schemaVersion: 1,
+        event: 'snapshot_d1_write_telemetry',
+        action: 'tdx_token_error',
+        phase: 'source_fetch',
+        city: env.SNAPSHOT_D1_WRITE_TELEMETRY_CITY ?? null,
+        workflowRunId: env.GITHUB_RUN_ID ?? null,
+        workflowRunAttempt: env.GITHUB_RUN_ATTEMPT ?? null,
+        recordedAt: new Date().toISOString(),
+        httpStatus: Number.isInteger(response?.status) ? response.status : null,
+        oauthError,
+      }
+      mkdirSync(dirname(telemetryFile), { recursive: true })
+      appendFileSync(telemetryFile, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+      stdout?.write?.(`${JSON.stringify(record)}\n`)
+    } catch {
+      // Diagnostics must never change the publisher's request/response semantics.
+    }
+    return response
+  }
 }
 
 export function createSnapshotD1TelemetrySpawnSync({
@@ -159,6 +219,22 @@ export function createSnapshotD1TelemetrySpawnSync({
     if (value === undefined || value === null || value === '') return
     stderr?.write?.(Buffer.isBuffer(value) ? value : String(value))
   }
+}
+
+function isTdxTokenRequest(input, init) {
+  const method = String(init?.method ?? input?.method ?? 'GET').toUpperCase()
+  return method === 'POST' && requestUrl(input) === TDX_TOKEN_ENDPOINT
+}
+
+function requestUrl(input) {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return typeof input?.url === 'string' ? input.url : ''
+}
+
+function boundedOAuthErrorCode(value) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return /^[A-Za-z][A-Za-z0-9._-]{0,63}$/.test(text) ? text.toLowerCase() : 'unclassified'
 }
 
 function isRemoteWranglerD1FileExecute(command, args, execPath) {
