@@ -1,0 +1,80 @@
+name: Snapshot rollback drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type ROLLBACK_TAICHUNG to run a reversible production rollback drill
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transit-snapshot
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: Roll back Taichung and restore original active
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Resolve snapshot resources
+        id: operation
+        run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Validate rollback drill scope
+        shell: bash
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          SNAPSHOT_ENABLED: ${{ steps.operation.outputs.enabled }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = 'refs/heads/main'
+          test "${INPUT_CONFIRMATION}" = 'ROLLBACK_TAICHUNG'
+          test "${SNAPSHOT_ENABLED}" = 'true'
+          test -n "${TRANSIT_DATABASE_ID}"
+          test -n "${TRANSIT_R2_BUCKET_NAME}"
+      - name: Preflight rollback resources
+        run: npm run instance:preflight -- snapshot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+      - name: Execute reversible Taichung rollback drill
+        id: rollback_drill
+        run: node scripts/transit-snapshot/run-rollback-drill.mjs Taichung
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+          ROLLBACK_DRILL_REPORT: ${{ runner.temp }}/snapshot-rollback-drill/report.json
+      - name: Upload rollback drill evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: snapshot-rollback-drill-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/snapshot-rollback-drill/report.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+      - name: Cleanup rollback drill workspace
+        if: always()
+        run: rm -rf "${{ runner.temp }}/snapshot-rollback-drill"
