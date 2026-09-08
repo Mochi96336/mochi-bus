@@ -60,8 +60,33 @@ export function createCityFetchCache({
       logger?.warn?.(`TDX City persistent cache resolve failed for ${city}/${resource}: ${errorMessage(error)}`)
     }
 
-    const response = await fetchImpl(input, init)
-    if (!response.ok) return response
+    let response
+    try {
+      response = await fetchImpl(input, init)
+    } catch (error) {
+      logger?.log?.(JSON.stringify({
+        event: 'tdx_city_cache',
+        city,
+        resource,
+        resolution: 'upstream-error',
+        sourceVersion,
+        status: null,
+        bytes: null,
+      }))
+      throw error
+    }
+    if (!response.ok) {
+      logger?.log?.(JSON.stringify({
+        event: 'tdx_city_cache',
+        city,
+        resource,
+        resolution: 'upstream-error',
+        sourceVersion,
+        status: response.status,
+        bytes: contentLength(response),
+      }))
+      return response
+    }
 
     const body = Buffer.from(await response.arrayBuffer())
     try {
@@ -70,7 +95,15 @@ export function createCityFetchCache({
     } catch (error) {
       logger?.warn?.(`TDX City persistent cache stage failed for ${city}/${resource}: ${errorMessage(error)}`)
     }
-    logger?.log?.(JSON.stringify({ event: 'tdx_city_cache', city, resource, resolution: 'miss' }))
+    logger?.log?.(JSON.stringify({
+      event: 'tdx_city_cache',
+      city,
+      resource,
+      resolution: 'miss',
+      sourceVersion,
+      status: response.status,
+      bytes: body.byteLength,
+    }))
     return jsonResponse(body, response.status)
   }
 }
@@ -96,6 +129,13 @@ function requestMethod(input, init) {
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function contentLength(response) {
+  const value = response.headers.get('Content-Length')
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
 function errorMessage(error) {

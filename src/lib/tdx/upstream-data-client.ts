@@ -52,6 +52,20 @@ export type TDXUpstreamResult = {
   resource: string
 }
 
+export type TDXUpstreamUsageEvent = Readonly<{
+  message: 'tdx_upstream_usage'
+  operation: TelemetryTdxOperation | 'unclassified'
+  resource: string
+  scope: string
+  credentialScope: 'shared' | 'byok'
+  result: 'success' | 'http_error' | 'transport_error' | 'payload_error'
+  status: number | null
+  attempt: number
+  receivedBytes: number | null
+  declaredBytes: number | null
+  failureClass: TelemetryFailureClass | 'none'
+}>
+
 export type TDXUpstreamDataClientDependencies = {
   requestTimeoutMs: number
   assertCircuitsClosed: (keys: readonly string[]) => void
@@ -65,6 +79,7 @@ export type TDXUpstreamDataClientDependencies = {
   ) => Promise<TDXServiceError>
   fetcher?: typeof fetch
   maxSingleflightEntries?: number
+  usageLogger?: (event: TDXUpstreamUsageEvent) => void
 }
 
 // Upstream data ownership lives here. This boundary owns request timeout, one-retry policy,
@@ -125,6 +140,31 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
     let retryCount = 0
     let initialFailureClass: TelemetryFailureClass | undefined
 
+    const observeUsage = (
+      result: TDXUpstreamUsageEvent['result'],
+      details: Pick<TDXUpstreamUsageEvent, 'status' | 'receivedBytes' | 'declaredBytes' | 'failureClass'>,
+    ) => {
+      const event: TDXUpstreamUsageEvent = Object.freeze({
+        message: 'tdx_upstream_usage',
+        operation: request.operation ?? 'unclassified',
+        resource,
+        scope: tdxResponseScope(request.url),
+        credentialScope: request.isShared ? 'shared' : 'byok',
+        result,
+        status: details.status,
+        attempt: retryCount + 1,
+        receivedBytes: details.receivedBytes,
+        declaredBytes: details.declaredBytes,
+        failureClass: details.failureClass,
+      })
+      try {
+        if (dependencies.usageLogger) dependencies.usageLogger(event)
+        else console.info(JSON.stringify(event))
+      } catch {
+        // Quota observability is fail-open and must never affect upstream resolution.
+      }
+    }
+
     while (true) {
       let response: Response
       try {
@@ -136,6 +176,12 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
         const serviceError = new TDXServiceError('TDX request failed', undefined, {
           cause: error,
           failureKind: transportFailureClass(error),
+        })
+        observeUsage('transport_error', {
+          status: null,
+          receivedBytes: null,
+          declaredBytes: null,
+          failureClass: serviceError.failureKind ?? 'unknown',
         })
         if (shouldRetryResolution(serviceError, request.operation, retryCount)) {
           retryCount += 1
@@ -154,6 +200,12 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
           operation: request.operation,
           resource,
         })
+        observeUsage('http_error', {
+          status: response.status,
+          receivedBytes: null,
+          declaredBytes: responseContentLength(response),
+          failureClass: error.failureKind ?? 'unknown',
+        })
         if (error.rateLimited) dependencies.recordCircuitSuccess(circuitKey)
         else if (observesCredentialCooldown) dependencies.recordCircuitSuccess(rateLimitCircuitKey)
         if (shouldRetryResolution(error, request.operation, retryCount)) {
@@ -170,6 +222,12 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
 
       try {
         const parsed = await readJsonResponse(response, request.maxResponseBytes)
+        observeUsage('success', {
+          status: response.status,
+          receivedBytes: parsed.receivedBytes,
+          declaredBytes: parsed.declaredBytes ?? null,
+          failureClass: 'none',
+        })
         return {
           ok: true,
           data: parsed.data,
@@ -186,6 +244,16 @@ export function createTDXUpstreamDataClient(dependencies: TDXUpstreamDataClientD
               cause: error,
               failureKind: 'invalid_json',
             })
+        observeUsage('payload_error', {
+          status: response.status,
+          receivedBytes: serviceError instanceof TDXPayloadTooLargeError
+            ? serviceError.receivedBytes ?? null
+            : null,
+          declaredBytes: serviceError instanceof TDXPayloadTooLargeError
+            ? serviceError.declaredBytes ?? responseContentLength(response)
+            : responseContentLength(response),
+          failureClass: serviceError.failureKind ?? 'unknown',
+        })
         if (serviceError instanceof TDXPayloadTooLargeError) {
           dependencies.recordCircuitSuccess(circuitKey)
           logTDXResponseTooLarge(serviceError, {
@@ -286,4 +354,11 @@ function tdxResponseScope(url: URL): string {
   if (scopeType === 'City' && segments[busIndex + 3]) return `City/${segments[busIndex + 3]}`
   if (scopeType === 'InterCity') return 'InterCity'
   return 'global'
+}
+
+function responseContentLength(response: Response): number | null {
+  const value = response.headers.get('Content-Length')
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
