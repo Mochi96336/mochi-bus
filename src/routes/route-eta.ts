@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono'
+import { getRouteEtaWithSnapshotFallback } from '../application/snapshot-route-eta'
 import { defaultCity, requireEnabledCity, supportedCityCodes } from '../config'
 import {
   parseBusQuery,
@@ -7,8 +8,9 @@ import {
   type ResolvedBusQuery,
 } from '../domain/bus-query'
 import { CityNotEnabledError, CITY_NOT_ENABLED_CODE } from '../domain/city-availability'
-import { getRouteEtaDetail, toRouteEtaResponse } from '../domain/route-page-detail'
+import { toRouteEtaResponse } from '../domain/route-page-detail'
 import { TDX_ACCESS_TOKEN_REJECTED_CODE, TDX_ACCESS_TOKEN_REJECTED_MESSAGE } from '../domain/tdx-api-error'
+import type { TransitBindings } from '../infrastructure/transit/snapshot-repository'
 import {
   isRejectedUserTdxToken,
   QueryResolutionError,
@@ -22,7 +24,7 @@ import {
 } from '../lib/tdx'
 import { ApiInputError, apiInputErrorBody, parseTdxAccessToken } from '../lib/api-input'
 
-type Env = { Bindings: TDXEnv }
+type Env = { Bindings: TDXEnv & TransitBindings }
 const routeEta = new Hono<Env>()
 const noStoreHeaders = { 'Cache-Control': 'no-store' }
 
@@ -33,7 +35,10 @@ routeEta.get('/api/v1/route-eta', async (c) => {
     const resolved = query.stopUid && query.stopName
       ? query as ResolvedBusQuery
       : await resolveBusQuery(env, query)
-    const result = await getRouteEtaDetail(env, resolved)
+    const result = await getRouteEtaWithSnapshotFallback({
+      tdx: env,
+      snapshot: c.env,
+    }, resolved)
     return c.json(toRouteEtaResponse(result), 200, noStoreHeaders)
   } catch (error) {
     return jsonError(c, error)
