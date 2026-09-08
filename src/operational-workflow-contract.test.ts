@@ -5,7 +5,7 @@ import watchdogWorkflow from '../.github/workflows/snapshot-window-watchdog.yml?
 import packageSource from '../package.json?raw'
 import releaseSmokeEntrypointSource from '../scripts/release-smoke/run-authoritative-post-deploy.mjs?raw'
 import releaseSmokeSource from '../scripts/release-smoke/run-post-deploy.mjs?raw'
-import snapshotPublisherSource from '../scripts/sync-transit-snapshot.mjs?raw'
+import snapshotPublisherCoreSource from '../scripts/sync-transit-snapshot-core.mjs?raw'
 import publicProbeSource from '../scripts/transit-snapshot/run-public-probe.mjs?raw'
 import rollbackSource from '../scripts/transit-snapshot/rollback.mjs?raw'
 
@@ -47,9 +47,9 @@ describe('instance operational workflow contracts', () => {
     expect(releaseSmokeEntrypointSource).toContain("'RELEASE_SMOKE_ORIGIN'")
   })
 
-  it('does not retain Mochi production fallbacks in operational entrypoints', () => {
+  it('does not retain Mochi production fallbacks in operational implementations', () => {
     for (const source of [
-      snapshotPublisherSource,
+      snapshotPublisherCoreSource,
       publicProbeSource,
       rollbackSource,
       releaseSmokeEntrypointSource,
