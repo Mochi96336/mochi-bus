@@ -44,10 +44,26 @@ const snapshotPage = {
 }
 
 describe('getRoutePageWithFallback', () => {
-  it('returns the primary TDX page without touching snapshot data', async () => {
+  it('returns the snapshot page without touching TDX static resolution', async () => {
+    const resolveBusQuery = vi.fn()
+    const getRoutePageDetail = vi.fn()
+    const getSnapshotRoutePage = vi.fn(async () => snapshotPage)
+
+    await expect(getRoutePageWithFallback(sources, query, {
+      resolveBusQuery,
+      getRoutePageDetail,
+      getSnapshotRoutePage,
+    })).resolves.toBe(snapshotPage)
+
+    expect(getSnapshotRoutePage).toHaveBeenCalledWith(sources.snapshot, query)
+    expect(resolveBusQuery).not.toHaveBeenCalled()
+    expect(getRoutePageDetail).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the TDX static page when snapshot has no unique match', async () => {
     const resolveBusQuery = vi.fn(async () => resolved)
     const getRoutePageDetail = vi.fn(async () => ({ detail }))
-    const getSnapshotRoutePage = vi.fn()
+    const getSnapshotRoutePage = vi.fn(async () => null)
 
     await expect(getRoutePageWithFallback(sources, query, {
       resolveBusQuery,
@@ -57,36 +73,23 @@ describe('getRoutePageWithFallback', () => {
 
     expect(resolveBusQuery).toHaveBeenCalledWith(sources.tdx, query)
     expect(getRoutePageDetail).toHaveBeenCalledWith(sources.tdx, resolved)
-    expect(getSnapshotRoutePage).not.toHaveBeenCalled()
   })
 
-  it('returns the snapshot page when primary detail loading fails', async () => {
-    const primaryError = new Error('TDX route detail failed')
-    const getSnapshotRoutePage = vi.fn(async () => snapshotPage)
-
-    await expect(getRoutePageWithFallback(sources, query, {
-      resolveBusQuery: vi.fn(async () => resolved),
-      getRoutePageDetail: vi.fn(async () => { throw primaryError }),
-      getSnapshotRoutePage,
-    })).resolves.toBe(snapshotPage)
-
-    expect(getSnapshotRoutePage).toHaveBeenCalledWith(sources.snapshot, query)
-  })
-
-  it('rethrows the original primary error when snapshot has no unique match', async () => {
-    const primaryError = new Error('TDX query resolution failed')
+  it('reports snapshot failures and still uses the TDX compatibility path', async () => {
+    const snapshotError = new Error('Snapshot database unavailable')
     const reportSnapshotFailure = vi.fn()
 
     await expect(getRoutePageWithFallback(sources, query, {
-      resolveBusQuery: vi.fn(async () => { throw primaryError }),
-      getSnapshotRoutePage: vi.fn(async () => null),
+      resolveBusQuery: vi.fn(async () => resolved),
+      getRoutePageDetail: vi.fn(async () => ({ detail })),
+      getSnapshotRoutePage: vi.fn(async () => { throw snapshotError }),
       reportSnapshotFailure,
-    })).rejects.toBe(primaryError)
+    })).resolves.toEqual({ resolved, detail })
 
-    expect(reportSnapshotFailure).not.toHaveBeenCalled()
+    expect(reportSnapshotFailure).toHaveBeenCalledWith(snapshotError)
   })
 
-  it('reports snapshot failures but still preserves the original primary error', async () => {
+  it('preserves the TDX error when snapshot and logging are both unavailable', async () => {
     const primaryError = new Error('TDX unavailable')
     const snapshotError = new Error('Snapshot database unavailable')
     const reportSnapshotFailure = vi.fn(() => {
