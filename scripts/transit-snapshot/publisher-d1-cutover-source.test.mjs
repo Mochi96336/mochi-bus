@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const source = readFileSync(new URL('../sync-transit-snapshot.mjs', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../sync-transit-snapshot-core.mjs', import.meta.url), 'utf8')
 
 describe('snapshot publisher D1 cutover source contract', () => {
   it('does not stage or clean stops/pattern_stops in the normal publisher', () => {
