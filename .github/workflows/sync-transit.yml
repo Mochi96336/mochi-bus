@@ -101,6 +101,13 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+      - name: Acquire shared TDX snapshot token
+        if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
+        env:
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          SNAPSHOT_TDX_ACCESS_TOKEN_FILE: .transit-snapshot/tdx-access-token.json
+        run: node scripts/transit-snapshot/prepare-snapshot-tdx-token.mjs
       - name: Apply transit database migrations
         if: github.event_name == 'workflow_dispatch' || steps.operation.outputs.enabled == 'true'
         env:
@@ -124,6 +131,8 @@ jobs:
           SNAPSHOT_WINDOW_DATE: ${{ inputs.window_date }}
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          SNAPSHOT_TDX_ACCESS_TOKEN_FILE: .transit-snapshot/tdx-access-token.json
+          NODE_OPTIONS: --import=./scripts/transit-snapshot/install-snapshot-tdx-token-file.mjs
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -194,3 +203,6 @@ jobs:
             npm run snapshot:repair-legacy-previous -- \
               postflight "$INPUT_CITY" "$INPUT_EXPECTED_ACTIVE" "$INPUT_EXPECTED_PREVIOUS" "$SNAPSHOT_WINDOW_DATE"
           fi
+      - name: Cleanup shared TDX snapshot token
+        if: always()
+        run: rm -f .transit-snapshot/tdx-access-token.json

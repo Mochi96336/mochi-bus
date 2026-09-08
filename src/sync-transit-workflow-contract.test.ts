@@ -32,4 +32,27 @@ describe('Sync transit snapshots workflow contract', () => {
     expect(workflowSource.indexOf(validation)).toBeLessThan(workflowSource.indexOf(repairPreflight))
     expect(workflowSource.indexOf(validation)).toBeLessThan(workflowSource.indexOf(publication))
   })
+
+  it('acquires one shared TDX token before migrations and reuses only its job-local file', () => {
+    const resourcePreflight = '- name: Preflight snapshot resources'
+    const tokenPreflight = '- name: Acquire shared TDX snapshot token'
+    const tokenCommand = 'node scripts/transit-snapshot/prepare-snapshot-tdx-token.mjs'
+    const migrations = '- name: Apply transit database migrations'
+    const publication = '- name: Build and publish snapshot'
+    const tokenFile = 'SNAPSHOT_TDX_ACCESS_TOKEN_FILE: .transit-snapshot/tdx-access-token.json'
+    const preload = 'NODE_OPTIONS: --import=./scripts/transit-snapshot/install-snapshot-tdx-token-file.mjs'
+    const cleanup = '- name: Cleanup shared TDX snapshot token'
+
+    expect(workflowSource).toContain(tokenCommand)
+    expect(workflowSource.match(new RegExp(tokenCommand.replaceAll('.', '\\.'), 'g'))).toHaveLength(1)
+    expect(workflowSource.indexOf(resourcePreflight)).toBeLessThan(workflowSource.indexOf(tokenPreflight))
+    expect(workflowSource.indexOf(tokenPreflight)).toBeLessThan(workflowSource.indexOf(migrations))
+    expect(workflowSource.indexOf(migrations)).toBeLessThan(workflowSource.indexOf(publication))
+    expect(workflowSource).toContain(tokenFile)
+    expect(workflowSource).toContain(preload)
+    expect(workflowSource).toContain(cleanup)
+    expect(workflowSource).toContain('if: always()')
+    expect(workflowSource).not.toContain('SNAPSHOT_TDX_ACCESS_TOKEN:')
+    expect(workflowSource).not.toContain('access_token: ${{')
+  })
 })
