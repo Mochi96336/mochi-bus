@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { renderHomePage } from '../application/home-page'
 import { getRoutePageWithFallback } from '../application/route-page'
+import { getSnapshotRouteStopGroups } from '../application/snapshot-route-stop-groups'
 import { getSnapshotStopRouteSuggestions } from '../application/stop-route-suggestions'
 import {
   defaultCity,
@@ -155,7 +156,16 @@ bus.get('/api/v1/stops', async (c) => {
     const routeName = requiredQueryString(c.req.query('route'), '公車路線', 40)
     const routeUid = optionalQueryString(c.req.query('routeUid'), 'RouteUID', 100)
 
-    const groups = await getRouteStopGroups(tdxEnv(c), city, routeName, routeUid)
+    // The normal setup flow already carries stable RouteUID identity. Reuse the
+    // active snapshot's pattern-stop artifacts so selecting a route does not pay
+    // another static TDX StopOfRoute read. Legacy/no-snapshot links keep the
+    // existing TDX path unchanged.
+    const snapshotGroups = routeUid
+      ? await getSnapshotRouteStopGroups(c.env, city, routeName, routeUid)
+      : []
+    const groups = snapshotGroups.length
+      ? snapshotGroups
+      : await getRouteStopGroups(tdxEnv(c), city, routeName, routeUid)
     return c.json({ schemaVersion: 2, city, routeName, routeUid: routeUid ?? null, groups }, 200, {
       'Cache-Control': 'public, max-age=300',
     })
