@@ -28,7 +28,31 @@ export function createTdxStaticSourceCache({
 
   const resolve = async ({ resource, input, init }) => {
     try {
-      const sourceVersion = await probeSourceVersion(fetchImpl, input, init)
+      let probe
+      try {
+        probe = await probeSourceVersion(fetchImpl, input, init)
+        logger?.log?.(JSON.stringify({
+          event: eventName,
+          resource,
+          resolution: 'probe',
+          sourceVersion: probe.sourceVersion,
+          result: probe.result,
+          status: probe.status,
+          bytes: probe.bytes,
+        }))
+      } catch (error) {
+        logger?.log?.(JSON.stringify({
+          event: eventName,
+          resource,
+          resolution: 'probe',
+          sourceVersion: null,
+          result: 'transport_error',
+          status: null,
+          bytes: null,
+        }))
+        throw error
+      }
+      const sourceVersion = probe.sourceVersion
       if (!sourceVersion) return { body: null, sourceVersion: null }
 
       const state = await storage.getJson(stateKey(cachePrefix, resource), STATE_MAX_BYTES)
@@ -244,10 +268,16 @@ async function probeSourceVersion(fetchImpl, input, init) {
   const response = await fetchImpl(url, { ...init, method: 'GET' })
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined)
-    return null
+    return { sourceVersion: null, result: 'http_error', status: response.status, bytes: null }
   }
-  const payload = await response.json()
-  return Array.isArray(payload) ? nonEmpty(payload[0]?.UpdateTime) : null
+  const body = Buffer.from(await response.arrayBuffer())
+  const payload = JSON.parse(body.toString('utf8'))
+  return {
+    sourceVersion: Array.isArray(payload) ? nonEmpty(payload[0]?.UpdateTime) : null,
+    result: 'success',
+    status: response.status,
+    bytes: body.byteLength,
+  }
 }
 
 function stateKey(cachePrefix, resource) {

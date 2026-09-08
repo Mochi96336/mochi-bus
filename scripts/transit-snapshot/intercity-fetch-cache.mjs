@@ -77,8 +77,31 @@ export function createIntercityFetchCache({
       }
     }
 
-    const response = await fetchImpl(input, init)
-    if (!response.ok) return response
+    let response
+    try {
+      response = await fetchImpl(input, init)
+    } catch (error) {
+      logger?.log?.(JSON.stringify({
+        event: 'tdx_intercity_cache',
+        resource,
+        resolution: 'upstream-error',
+        sourceVersion,
+        status: null,
+        bytes: null,
+      }))
+      throw error
+    }
+    if (!response.ok) {
+      logger?.log?.(JSON.stringify({
+        event: 'tdx_intercity_cache',
+        resource,
+        resolution: 'upstream-error',
+        sourceVersion,
+        status: response.status,
+        bytes: contentLength(response),
+      }))
+      return response
+    }
 
     const body = Buffer.from(await response.arrayBuffer())
     if (persistent?.stage) {
@@ -92,7 +115,14 @@ export function createIntercityFetchCache({
       // Without durable R2 storage, keep the old workflow-attempt cache behavior.
       await writeCacheFailOpen(cachePath, body, resource, logger)
     }
-    logger?.log?.(JSON.stringify({ event: 'tdx_intercity_cache', resource, resolution: 'miss' }))
+    logger?.log?.(JSON.stringify({
+      event: 'tdx_intercity_cache',
+      resource,
+      resolution: 'miss',
+      sourceVersion,
+      status: response.status,
+      bytes: body.byteLength,
+    }))
     return jsonResponse(body, response.status)
   }
 }
@@ -154,6 +184,13 @@ function nonEmpty(value) {
 
 function sanitize(value) {
   return String(value).replace(SAFE_SCOPE, '_').slice(0, 160)
+}
+
+function contentLength(response) {
+  const value = response.headers.get('Content-Length')
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
 function errorMessage(error) {
