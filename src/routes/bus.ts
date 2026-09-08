@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { renderHomePage } from '../application/home-page'
 import { getRoutePageWithFallback } from '../application/route-page'
+import { resolveBusQueryWithSnapshotFallback } from '../application/snapshot-bus-query'
 import { getSnapshotRouteStopGroups } from '../application/snapshot-route-stop-groups'
 import { getSnapshotStopRouteSuggestions } from '../application/stop-route-suggestions'
 import {
@@ -74,8 +75,10 @@ bus.get('/bus', async (c) => {
 
   try {
     const query = parseRequestQuery(c)
-    const resolved = await resolveBusQuery(tdxEnv(c), query)
+    const env = tdxEnv(c)
+    const resolved = await resolveBusQueryWithSnapshotFallback(c.env, env, query)
     if (!query.stopUid
+      || query.routeName !== resolved.routeName
       || query.stopName !== resolved.stopName
       || query.routeUid !== resolved.routeUid
       || query.subRouteUid !== resolved.subRouteUid) {
