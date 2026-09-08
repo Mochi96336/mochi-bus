@@ -76,7 +76,7 @@ describe('snapshot-backed Route ETA', () => {
   it('uses snapshot station order and only sends the route-wide realtime ETA request', async () => {
     const getSnapshotRouteStopGroups = vi.fn(async () => [group])
     const getLegacyRouteEtaDetail = vi.fn(async () => legacyResult)
-    const fetchRouteEta = vi.fn(async () => realtimeRows())
+    const fetchRouteEta = vi.fn(async (_env: TDXEnv, _url: URL, _ttlSeconds: number) => realtimeRows())
     const getSnapshotSchedule = vi.fn(async () => null)
     const getBusSchedule = vi.fn(async () => [] as ScheduleItem[])
 
