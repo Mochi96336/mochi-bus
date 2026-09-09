@@ -40,6 +40,20 @@ describe('instance operation workflow scope', () => {
     ).enabled).toBe(true)
   })
 
+  it('attaches quota-aware static source floors only to weekly-sharded snapshots', () => {
+    expect(resolveOperationScope(
+      'snapshot', plan({ snapshotSchedule: 'taipei-weekly-sharded' }), resources(),
+    ).staticSourceRefreshDays).toEqual({
+      city: { topology: 14, schedule: 21, shape: 28 },
+      intercity: { topology: 21, schedule: 35, shape: 56 },
+    })
+    expect(resolveOperationScope('snapshot', plan({ snapshotSchedule: 'daily' }), resources())
+      .staticSourceRefreshDays).toEqual({
+      city: { topology: 0, schedule: 0, shape: 0 },
+      intercity: { topology: 0, schedule: 0, shape: 0 },
+    })
+  })
+
   it('uses each verification check as an explicit workflow gate', () => {
     const disabled = plan({
       checks: { releaseSmoke: false, publicProbe: false, windowWatchdog: false },
@@ -65,9 +79,13 @@ describe('instance operation workflow scope', () => {
     })
   })
 
-  it('writes validated resource identity to GitHub outputs', () => {
+  it('writes validated resource identity and refresh policy to GitHub outputs', () => {
     const appendFile = vi.fn()
-    writeOperationScope(resolveOperationScope('publicProbe', plan(), resources()), {
+    writeOperationScope(resolveOperationScope(
+      'snapshot',
+      plan({ snapshotSchedule: 'taipei-weekly-sharded' }),
+      resources(),
+    ), {
       GITHUB_OUTPUT: '/tmp/output',
     }, appendFile)
 
@@ -78,6 +96,12 @@ describe('instance operation workflow scope', () => {
     expect(content).toContain('d1_database_id=123e4567-e89b-42d3-a456-426614174000\n')
     expect(content).toContain('r2_bucket_name=chiayi-transit-shapes\n')
     expect(content).toContain('public_origin=https://bus.example\n')
+    expect(content).toContain('static_city_topology_refresh_days=14\n')
+    expect(content).toContain('static_city_schedule_refresh_days=21\n')
+    expect(content).toContain('static_city_shape_refresh_days=28\n')
+    expect(content).toContain('static_intercity_topology_refresh_days=21\n')
+    expect(content).toContain('static_intercity_schedule_refresh_days=35\n')
+    expect(content).toContain('static_intercity_shape_refresh_days=56\n')
   })
 
   it('fails closed for unknown operation names', () => {

@@ -19,15 +19,52 @@ export function createTdxStaticSourceCache({
   sourceLabel,
   eventName,
   logger = console,
+  minimumRefreshMsForResource = () => 0,
+  bypassMinimumRefresh = false,
+  now = () => Date.now(),
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function')
   if (!storage) throw new TypeError('storage is required')
   if (!nonEmpty(cachePrefix)) throw new TypeError('cachePrefix is required')
   if (!nonEmpty(sourceLabel)) throw new TypeError('sourceLabel is required')
   if (!nonEmpty(eventName)) throw new TypeError('eventName is required')
+  if (typeof minimumRefreshMsForResource !== 'function') throw new TypeError('minimumRefreshMsForResource must be a function')
+  if (typeof now !== 'function') throw new TypeError('now must be a function')
 
   const resolve = async ({ resource, input, init }) => {
     try {
+      let state = null
+      try {
+        state = await storage.getJson(stateKey(cachePrefix, resource), STATE_MAX_BYTES)
+      } catch (error) {
+        logger?.warn?.(`TDX ${sourceLabel} persistent cache state read failed for ${resource}: ${errorMessage(error)}`)
+      }
+
+      let cachedBody = null
+      let cachedBodyChecked = false
+      const minimumRefreshMs = refreshFloorMs(minimumRefreshMsForResource, resource)
+      const ageMs = validState(state, cachePrefix, resource) ? stateAgeMs(state, now) : null
+      if (!bypassMinimumRefresh && minimumRefreshMs > 0 && ageMs !== null && ageMs < minimumRefreshMs) {
+        cachedBodyChecked = true
+        try {
+          cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger)
+        } catch (error) {
+          logger?.warn?.(`TDX ${sourceLabel} persistent cache body read failed for ${resource}: ${errorMessage(error)}`)
+        }
+        if (cachedBody !== null) {
+          logger?.log?.(JSON.stringify({
+            event: eventName,
+            resource,
+            resolution: 'freshness-hit',
+            sourceVersion: state.sourceVersion,
+            bytes: cachedBody.byteLength,
+            ageMs,
+            minimumRefreshMs,
+          }))
+          return { body: cachedBody, sourceVersion: state.sourceVersion }
+        }
+      }
+
       let probe
       try {
         probe = await probeSourceVersion(fetchImpl, input, init)
@@ -55,27 +92,28 @@ export function createTdxStaticSourceCache({
       const sourceVersion = probe.sourceVersion
       if (!sourceVersion) return { body: null, sourceVersion: null }
 
-      const state = await storage.getJson(stateKey(cachePrefix, resource), STATE_MAX_BYTES)
       if (!validState(state, cachePrefix, resource) || state.sourceVersion !== sourceVersion) {
         return { body: null, sourceVersion }
       }
 
-      const body = await storage.getBuffer(state.payloadKey, PAYLOAD_MAX_BYTES)
-      if (body === null) return { body: null, sourceVersion }
-      const digest = sha256(body)
-      if (digest !== state.sha256 || body.byteLength !== state.bytes) {
-        logger?.warn?.(`TDX ${sourceLabel} persistent cache integrity mismatch for ${resource}`)
-        return { body: null, sourceVersion }
+      if (!cachedBodyChecked) {
+        try {
+          cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger)
+        } catch (error) {
+          logger?.warn?.(`TDX ${sourceLabel} persistent cache body read failed for ${resource}: ${errorMessage(error)}`)
+          return { body: null, sourceVersion }
+        }
       }
+      if (cachedBody === null) return { body: null, sourceVersion }
 
       logger?.log?.(JSON.stringify({
         event: eventName,
         resource,
         resolution: 'hit',
         sourceVersion,
-        bytes: body.byteLength,
+        bytes: cachedBody.byteLength,
       }))
-      return { body, sourceVersion }
+      return { body: cachedBody, sourceVersion }
     } catch (error) {
       logger?.warn?.(`TDX ${sourceLabel} persistent cache read failed for ${resource}: ${errorMessage(error)}`)
       return { body: null, sourceVersion: null }
@@ -145,7 +183,7 @@ export function createTdxStaticSourceCache({
         sha256: candidate.sha256,
         semanticHash: candidate.semanticHash,
         bytes: candidate.bytes,
-        refreshedAt: new Date().toISOString(),
+        refreshedAt: new Date(currentTimeMs(now)).toISOString(),
       })
       logger?.log?.(JSON.stringify({
         event: eventName,
@@ -305,6 +343,41 @@ function validCandidate(value, cachePrefix) {
     && /^[a-f0-9]{64}$/.test(value.semanticHash)
     && Number.isSafeInteger(value.bytes)
     && value.bytes >= 0
+}
+
+async function verifiedCachedBody(storage, state, sourceLabel, resource, logger) {
+  const body = await storage.getBuffer(state.payloadKey, PAYLOAD_MAX_BYTES)
+  if (body === null) return null
+  const digest = sha256(body)
+  if (digest !== state.sha256 || body.byteLength !== state.bytes) {
+    logger?.warn?.(`TDX ${sourceLabel} persistent cache integrity mismatch for ${resource}`)
+    return null
+  }
+  return body
+}
+
+function refreshFloorMs(resolveMinimumRefreshMs, resource) {
+  try {
+    const value = Number(resolveMinimumRefreshMs(resource))
+    return Number.isFinite(value) && value >= 0 ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function stateAgeMs(state, now) {
+  if (typeof state.refreshedAt !== 'string') return null
+  const refreshedAt = Date.parse(state.refreshedAt)
+  if (!Number.isFinite(refreshedAt)) return null
+  const current = currentTimeMs(now)
+  if (current < refreshedAt) return null
+  return current - refreshedAt
+}
+
+function currentTimeMs(now) {
+  const value = now()
+  const milliseconds = value instanceof Date ? value.getTime() : Number(value)
+  return Number.isFinite(milliseconds) ? milliseconds : Date.now()
 }
 
 async function stateSemanticHash(state, cachePrefix, resource, storage) {
