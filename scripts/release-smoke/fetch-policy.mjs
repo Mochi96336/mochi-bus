@@ -10,6 +10,19 @@ export function createReleaseSmokeFetch({ fetchImpl = globalThis.fetch } = {}) {
   }
 }
 
+export async function withReleaseSmokeFetch(operation, { globalObject = globalThis } = {}) {
+  if (typeof operation !== 'function') throw new TypeError('operation must be a function')
+  if (!globalObject || typeof globalObject !== 'object') throw new TypeError('globalObject must be an object')
+
+  const originalFetch = globalObject.fetch
+  globalObject.fetch = createReleaseSmokeFetch({ fetchImpl: originalFetch })
+  try {
+    return await operation()
+  } finally {
+    globalObject.fetch = originalFetch
+  }
+}
+
 export function finalSnapshotOnlyUrl(input) {
   let url
   try {
