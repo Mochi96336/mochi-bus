@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { createReleaseSmokeFetch, finalSnapshotOnlyUrl } from './fetch-policy.mjs'
 
 const origin = 'https://bus.example.test'
 const initialArrivals = `${origin}/api/v1/map/place/place-1/arrivals?city=Taipei&release_smoke=run:sha:initial-arrivals`
 const finalArrivals = `${origin}/api/v1/map/place/place-1/arrivals?city=Taipei&release_smoke=run:sha:final-arrivals`
+const authoritativeSource = readFileSync(new URL('./run-authoritative-post-deploy.mjs', import.meta.url), 'utf8')
 
 describe('release smoke fetch policy', () => {
   it('keeps initial realtime coverage but makes final arrivals snapshot-only', () => {
@@ -46,5 +48,12 @@ describe('release smoke fetch policy', () => {
 
     await wrapped(initialArrivals, init)
     expect(fetchImpl).toHaveBeenCalledWith(initialArrivals, init)
+  })
+
+  it('installs the policy only around the authoritative production smoke call', () => {
+    expect(authoritativeSource).toContain("import { createReleaseSmokeFetch } from './fetch-policy.mjs'")
+    expect(authoritativeSource).toContain('globalThis.fetch = createReleaseSmokeFetch({ fetchImpl: originalFetch })')
+    expect(authoritativeSource).toContain('await runPostDeploySmoke({ ...env, RELEASE_SMOKE_ORIGIN: origin })')
+    expect(authoritativeSource).toContain('finally {\n    globalThis.fetch = originalFetch\n  }')
   })
 })
