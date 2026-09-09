@@ -35,6 +35,7 @@ import {
   bindRollbackRoutingAuthority,
   readRollbackRoutingAuthority,
 } from './transit-snapshot/rollback-routing-authority.mjs'
+import { isSnapshotTdxTerminalAuthError } from './transit-snapshot/snapshot-tdx-lazy-auth.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
 const operationalResources = loadOperationalResources()
@@ -91,7 +92,7 @@ async function fetchWithRetry(url, options, describe) {
     try {
       response = await fetchWithTimeout(url, options)
     } catch (error) {
-      if (attempt === TDX_MAX_ATTEMPTS - 1) {
+      if (isSnapshotTdxTerminalAuthError(error) || attempt === TDX_MAX_ATTEMPTS - 1) {
         throw new Error(`${describe} failed: ${error instanceof Error ? error.message : String(error)}`)
       }
       await new Promise((resolve) => setTimeout(resolve, 2 ** (attempt + 1) * 1000))

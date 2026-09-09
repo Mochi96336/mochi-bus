@@ -9,6 +9,18 @@ const TDX_ORIGIN = 'https://tdx.transportdata.tw'
 const LAZY_ACCESS_TOKEN = 'mochi-snapshot-lazy-auth'
 const MIN_TOKEN_VALIDITY_MS = 30_000
 
+export class SnapshotTdxTerminalAuthError extends Error {
+  constructor(error) {
+    const message = error instanceof Error ? error.message : String(error)
+    super(message, { cause: error })
+    this.name = 'SnapshotTdxTerminalAuthError'
+  }
+}
+
+export function isSnapshotTdxTerminalAuthError(value) {
+  return value instanceof SnapshotTdxTerminalAuthError
+}
+
 export function createSnapshotTdxLazyAuthFetch({
   originalFetch = globalThis.fetch,
   tokenFile,
@@ -20,6 +32,7 @@ export function createSnapshotTdxLazyAuthFetch({
   const configuredFile = nonEmpty(tokenFile)
   let memoryToken = null
   let pendingToken = null
+  let terminalTokenError = null
 
   return async function snapshotTdxLazyAuthFetch(input, init) {
     if (isTdxTokenRequest(input, init)) return lazyTokenResponse()
@@ -33,6 +46,8 @@ export function createSnapshotTdxLazyAuthFetch({
   }
 
   async function sharedToken() {
+    if (terminalTokenError) throw terminalTokenError
+
     const currentNow = safeNow(now)
     if (validMemoryToken(memoryToken, currentNow)) return memoryToken
     if (pendingToken) return pendingToken
@@ -63,6 +78,14 @@ export function createSnapshotTdxLazyAuthFetch({
 
     try {
       return await pendingToken
+    } catch (error) {
+      // acquireSnapshotTdxToken already owns bounded retry for network/timeout/429.
+      // Memoize its terminal outcome so one publisher process cannot multiply an
+      // exhausted OAuth attempt through the outer data-request retry loop.
+      terminalTokenError = error instanceof SnapshotTdxTerminalAuthError
+        ? error
+        : new SnapshotTdxTerminalAuthError(error)
+      throw terminalTokenError
     } finally {
       pendingToken = null
     }
