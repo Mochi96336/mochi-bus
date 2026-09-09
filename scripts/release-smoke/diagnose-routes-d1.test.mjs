@@ -59,4 +59,23 @@ describe('release routes D1 diagnostic', () => {
     ])
     expect(JSON.stringify(reports)).not.toMatch(/token=|secret\.example|\bv2\b/)
   })
+
+  it('fails closed when a successful D1 response omits required count fields', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce([{ active_version: 'secret-version-token' }])
+      .mockResolvedValueOnce([{ routes: 10, patterns: 20 }])
+
+    const reports = await diagnoseRouteCatalogD1({ cities: ['Taipei'], query })
+    expect(reports).toEqual([{
+      city: 'Taipei',
+      result: 'error',
+      stage: 'd1_result_invalid',
+      activeVersionPresent: true,
+      routes: null,
+      patterns: null,
+      places: null,
+      routeWithoutPattern: null,
+    }])
+    expect(JSON.stringify(reports)).not.toContain('secret-version-token')
+  })
 })
