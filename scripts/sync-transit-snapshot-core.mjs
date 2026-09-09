@@ -35,6 +35,7 @@ import {
   bindRollbackRoutingAuthority,
   readRollbackRoutingAuthority,
 } from './transit-snapshot/rollback-routing-authority.mjs'
+import { isSnapshotTdxTerminalAuthError } from './transit-snapshot/snapshot-tdx-lazy-auth.mjs'
 
 const CITY = process.argv[2] ?? 'Chiayi'
 const operationalResources = loadOperationalResources()
@@ -91,7 +92,7 @@ async function fetchWithRetry(url, options, describe) {
     try {
       response = await fetchWithTimeout(url, options)
     } catch (error) {
-      if (attempt === TDX_MAX_ATTEMPTS - 1) {
+      if (isSnapshotTdxTerminalAuthError(error) || attempt === TDX_MAX_ATTEMPTS - 1) {
         throw new Error(`${describe} failed: ${error instanceof Error ? error.message : String(error)}`)
       }
       await new Promise((resolve) => setTimeout(resolve, 2 ** (attempt + 1) * 1000))
@@ -636,7 +637,7 @@ function sqlValue(value) {
   return `'${String(value).replaceAll("'", "''")}'`
 }
 // 必須跟 src/infrastructure/transit/snapshot-repository.ts 的 normalizeStopName 完全一致。
-// 「臺→台」與「火車站/車站→站、去結尾站」是為了讓公路客運與市區公車的同站異名收斂:
+// 「臺→台」與「火車站/車站→站、去結尾站」是為了讓公路客運與市區站牌的同站異名收斂:
 // 雙冬站⇄雙冬、新竹火車站⇄新竹站、高鐵臺中站⇄高鐵台中站(實測南投漏接 -30%)。
 function normalizeName(value) {
   return value.normalize('NFKC').replace(/[\s()（）]/g, '').toLowerCase()
