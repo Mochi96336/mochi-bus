@@ -33,6 +33,7 @@ export async function runPublicProbe({
   publicApi,
   cities = PUBLIC_PROBE_CITIES,
   emitter = (event) => console.log(JSON.stringify(event)),
+  realtimeDetailEmitter = (event) => console.log(JSON.stringify(event)),
   summaryWriter = writePublicProbeSummary,
 }) {
   const evaluatedAt = now().toISOString()
@@ -56,7 +57,14 @@ export async function runPublicProbe({
     let result
     try {
       const reference = await readCityReference(store, city, probeDate)
-      result = await probePublicSurface({ city, probeDate, reference, publicApi, now })
+      result = await probePublicSurface({
+        city,
+        probeDate,
+        reference,
+        publicApi,
+        now,
+        realtimeDetailEmitter,
+      })
     } catch {
       result = publicProbeFailureResult({
         city, probeDate, evaluatedAt: now().toISOString(), failureClass: 'reference_unavailable',
