@@ -3,7 +3,7 @@ import {
   loadOperationalResources,
   resolveOperationalOrigin,
 } from '../instance/operational-resources.mjs'
-import { createReleaseSmokeFetch } from './fetch-policy.mjs'
+import { withReleaseSmokeFetch } from './fetch-policy.mjs'
 import { main as runPostDeploySmoke } from './run-post-deploy.mjs'
 
 export async function main(env = process.env) {
@@ -13,13 +13,9 @@ export async function main(env = process.env) {
     env.RELEASE_SMOKE_ORIGIN,
     'RELEASE_SMOKE_ORIGIN',
   )
-  const originalFetch = globalThis.fetch
-  globalThis.fetch = createReleaseSmokeFetch({ fetchImpl: originalFetch })
-  try {
+  await withReleaseSmokeFetch(async () => {
     await runPostDeploySmoke({ ...env, RELEASE_SMOKE_ORIGIN: origin })
-  } finally {
-    globalThis.fetch = originalFetch
-  }
+  })
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main()
