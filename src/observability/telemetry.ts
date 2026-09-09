@@ -703,23 +703,32 @@ function validPublicProbeFields(value: Record<string, unknown>): boolean {
     || value.sampleProbability !== 1
     || value.httpStatusClass !== 'none'
     || value.cacheResult !== 'not_applicable'
-    || value.emptyReason !== 'not_applicable'
-    || value.qualityBucket !== 'not_applicable') return false
-  // Snapshot hard health and realtime health are separate planes: degraded
-  // events keep source 'snapshot' because the snapshot plane stayed green.
+    || value.emptyReason !== 'not_applicable') return false
+  // Snapshot hard health and realtime health are separate planes. A partial_unknown
+  // degraded event means hard snapshot health is complete but realtime was not
+  // sampled today; no failure class or diagnostic warning is invented for it.
   if (value.result === 'success') {
     return value.failureClass === 'none'
       && value.diagnosticWarningCount === 0
+      && value.qualityBucket === 'not_applicable'
       && value.source === 'snapshot'
       && value.hardChecksPassed === 10
   }
   if (value.result === 'degraded') {
-    return value.failureClass !== 'none'
+    const snapshotOnly = value.failureClass === 'none'
+      && value.diagnosticWarningCount === 0
+      && value.qualityBucket === 'partial_unknown'
+    const realtimeDegraded = value.failureClass !== 'none'
       && Number(value.diagnosticWarningCount) > 0
+      && value.qualityBucket === 'not_applicable'
+    return (snapshotOnly || realtimeDegraded)
       && value.source === 'snapshot'
       && value.hardChecksPassed === 10
   }
-  return value.result === 'error' && value.failureClass !== 'none' && value.source === 'none'
+  return value.result === 'error'
+    && value.failureClass !== 'none'
+    && value.qualityBucket === 'not_applicable'
+    && value.source === 'none'
 }
 
 export function createTelemetryEnvelope(

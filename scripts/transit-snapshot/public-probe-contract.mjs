@@ -11,6 +11,7 @@ export const PUBLIC_PROBE_NETWORK_PREFIX_BYTES = 65_536
 
 export const PUBLIC_PROBE_STATUSES = Object.freeze([
   'healthy',
+  'snapshot_healthy',
   'realtime_degraded',
   'hard_failed',
   'unknown',
@@ -100,6 +101,10 @@ export function validatePublicProbeResult(value) {
     && !(value.failureClass === 'none' && warnings.length === 0 && hardPassed)) {
     throw new Error('Healthy public probe must pass every hard check without warnings')
   }
+  if (value.status === 'snapshot_healthy'
+    && !(value.failureClass === 'none' && warnings.length === 0 && hardPassed)) {
+    throw new Error('Snapshot-only public probe must pass every hard check without realtime claims')
+  }
   if (value.status === 'realtime_degraded'
     && !(hardPassed && warnings.length > 0 && value.failureClass === warnings[0])) {
     throw new Error('Degraded public probe must pass hard checks and carry warnings')
@@ -158,7 +163,10 @@ export function withPublicProbeLatency(result, milliseconds) {
 
 export function createPublicProbeEvent(result, releaseSha = null) {
   const safe = validatePublicProbeResult(result)
-  const hardPassed = safe.status === 'healthy' || safe.status === 'realtime_degraded'
+  const snapshotOnly = safe.status === 'snapshot_healthy'
+  const hardPassed = safe.status === 'healthy'
+    || snapshotOnly
+    || safe.status === 'realtime_degraded'
   return Object.freeze({
     eventSchema: PUBLIC_PROBE_EVENT_SCHEMA_VERSION,
     event: 'public_probe_completed',
@@ -168,7 +176,10 @@ export function createPublicProbeEvent(result, releaseSha = null) {
     deploymentId: null,
     city: safe.city,
     operation: 'public_probe',
-    result: safe.status === 'healthy' ? 'success' : safe.status === 'realtime_degraded' ? 'degraded' : 'error',
+    // Snapshot-only coverage is deliberately degraded rather than reported as a
+    // fully green telemetry event. partial_unknown distinguishes missing realtime
+    // coverage from an actual realtime warning without inventing a failure class.
+    result: safe.status === 'healthy' ? 'success' : hardPassed ? 'degraded' : 'error',
     source: hardPassed ? 'snapshot' : 'none',
     snapshotVersion: safe.activeVersion,
     httpStatusClass: 'none',
@@ -178,7 +189,7 @@ export function createPublicProbeEvent(result, releaseSha = null) {
     sampleProbability: 1,
     failureClass: safe.failureClass,
     emptyReason: 'not_applicable',
-    qualityBucket: 'not_applicable',
+    qualityBucket: snapshotOnly ? 'partial_unknown' : 'not_applicable',
     probeCaseVersion: safe.probeCaseVersion,
     sampleCaseId: safe.sampleCaseId,
     hardChecksPassed: safe.hardChecksPassed,

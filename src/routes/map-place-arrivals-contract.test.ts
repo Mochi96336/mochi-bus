@@ -286,12 +286,12 @@ describe('Map Place Arrivals HTTP boundary', () => {
     expect(capturedEvent(log)).toMatchObject({ result: 'error', failureClass: 'tdx_401' })
   })
 
-  it('preserves city validation after credential scope resolution', async () => {
+  it('validates city before touching TDX credential scope', async () => {
     const response = await request('/api/v1/map/place/PLACE1/arrivals?city=Unknown')
 
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({ error: '請選擇城市' })
-    expect(tdx.tdxCredentialScope).toHaveBeenCalledTimes(1)
+    expect(tdx.tdxCredentialScope).not.toHaveBeenCalled()
     expect(repository.getStopPlaceBundle).not.toHaveBeenCalled()
     expect(capturedEvent(log)).toMatchObject({ result: 'error', failureClass: 'input_validation' })
   })
