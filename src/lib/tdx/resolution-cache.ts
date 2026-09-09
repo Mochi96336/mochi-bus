@@ -66,6 +66,9 @@ export type TDXResolutionCacheDependencies = {
 
 type TDXCacheEntry<T> = { data: T; cachedAt?: number }
 
+const SHARED_QUOTA_COOLDOWN_SECONDS = 5 * 60
+const SHARED_QUOTA_COOLDOWN_URL = 'https://mochi-cache.invalid/tdx/shared-quota-cooldown'
+
 // Logical resolution ownership lives here. This boundary chooses memory, edge, upstream or stale data,
 // validates endpoint schemas, completes resolution telemetry and owns cache identity/writes. It never
 // owns credential state or HTTP retry; token, bounded parsing and circuit transitions remain delegated.
@@ -130,6 +133,11 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
       attemptedUpstream: boolean,
     ): Promise<TDXResolvedData<T>> => {
       const failureClass = error.failureKind ?? 'unknown'
+      if (credentialScope === 'shared' && attemptedUpstream && isQuotaFailure(error)) {
+        await cachePutFailOpen(edgeCache, sharedQuotaCooldownKey(), new Response('1', {
+          headers: { 'Cache-Control': `public, max-age=${SHARED_QUOTA_COOLDOWN_SECONDS}` },
+        }), 'tdx_shared_quota_cooldown', env.TDX_BACKGROUND_TASKS)
+      }
       if (options.staleFallback) {
         try {
           const stale = await options.staleFallback(error)
@@ -206,6 +214,15 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
         failureKind: options.blockedFailureClass,
       })
       error.warning = options.blockedFailureClass === 'quota' ? 'tdx-quota' : 'tdx-rate-limit'
+      return finishFailure(error, false)
+    }
+
+    if (credentialScope === 'shared'
+      && await cacheMatchFailOpen(edgeCache, sharedQuotaCooldownKey(), 'tdx_shared_quota_cooldown')) {
+      const error = new TDXServiceError('TDX resolution blocked by shared quota cooldown', 429, {
+        failureKind: 'quota',
+      })
+      error.warning = 'tdx-quota'
       return finishFailure(error, false)
     }
 
@@ -293,6 +310,14 @@ export function createTDXResolutionCache(dependencies: TDXResolutionCacheDepende
 
 export function withTDXBackgroundTasks<E extends TDXEnv>(env: E, schedule?: BackgroundTaskScheduler): E {
   return schedule ? { ...env, TDX_BACKGROUND_TASKS: schedule } : env
+}
+
+function sharedQuotaCooldownKey(): Request {
+  return new Request(SHARED_QUOTA_COOLDOWN_URL)
+}
+
+function isQuotaFailure(error: TDXServiceError): boolean {
+  return error.warning === 'tdx-quota' || error.failureKind === 'quota'
 }
 
 function validPayload<T>(value: unknown, validate?: (value: unknown) => value is T): value is T {
