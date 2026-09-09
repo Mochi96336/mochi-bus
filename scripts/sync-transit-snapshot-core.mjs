@@ -637,7 +637,7 @@ function sqlValue(value) {
   return `'${String(value).replaceAll("'", "''")}'`
 }
 // 必須跟 src/infrastructure/transit/snapshot-repository.ts 的 normalizeStopName 完全一致。
-// 「臺→台」與「火車站/車站→站、去結尾站」是為了讓公路客運與市區站牌的同站異名收斂:
+// 「臺→台」與「火車站/車站→站、去結尾站」是為了讓公路客運與市區公車的同站異名收斂:
 // 雙冬站⇄雙冬、新竹火車站⇄新竹站、高鐵臺中站⇄高鐵台中站(實測南投漏接 -30%)。
 function normalizeName(value) {
   return value.normalize('NFKC').replace(/[\s()（）]/g, '').toLowerCase()
