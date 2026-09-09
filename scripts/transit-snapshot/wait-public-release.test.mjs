@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { waitForPublicRelease } from './wait-public-release.mjs'
+import {
+  PUBLIC_RELEASE_WAIT_TIMEOUT_MS,
+  waitForPublicRelease,
+} from './wait-public-release.mjs'
 
 const EXPECTED = '0123456789abcdef0123456789abcdef01234567'
 const PREVIOUS = '89abcdef0123456789abcdef0123456789abcdef'
@@ -15,6 +18,10 @@ function release(releaseSha, overrides = {}) {
 }
 
 describe('public probe release propagation gate', () => {
+  it('budgets one serialized ten-minute deploy observation plus propagation headroom', () => {
+    expect(PUBLIC_RELEASE_WAIT_TIMEOUT_MS).toBe(12 * 60 * 1000)
+  })
+
   it('waits through an older release and returns only the exact pushed SHA', async () => {
     let clock = 0
     const fetchImpl = vi.fn()
