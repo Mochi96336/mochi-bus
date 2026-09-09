@@ -141,6 +141,15 @@ jobs:
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
           SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
+          # Static-source freshness floors reduce TDX volume without changing the
+          # published snapshot contract. Manual operator runs always bypass them.
+          SNAPSHOT_CITY_TOPOLOGY_REFRESH_DAYS: '14'
+          SNAPSHOT_CITY_SCHEDULE_REFRESH_DAYS: '21'
+          SNAPSHOT_CITY_SHAPE_REFRESH_DAYS: '28'
+          SNAPSHOT_INTERCITY_TOPOLOGY_REFRESH_DAYS: '21'
+          SNAPSHOT_INTERCITY_SCHEDULE_REFRESH_DAYS: '35'
+          SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: '56'
+          SNAPSHOT_STATIC_SOURCE_BYPASS_FLOOR: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
           # Free D1 is 100k rows_written/account/day. Scheduled publishers share
           # 75k and reserve only after their exact source hash is known to have
           # changed; unchanged cities still run the normal health probe. Keep
