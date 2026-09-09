@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
 import workflowSource from '../.github/workflows/sync-transit.yml?raw'
+import packageSource from '../package.json?raw'
 import { supportedCities } from './config'
 
 function expectedManualCityInput(): string {
@@ -33,27 +34,37 @@ describe('Sync transit snapshots workflow contract', () => {
     expect(workflowSource.indexOf(validation)).toBeLessThan(workflowSource.indexOf(publication))
   })
 
-  it('acquires one shared TDX token before migrations and reuses only its job-local file', () => {
+  it('defers shared TDX auth until a publisher cache miss and keeps the job-local token bounded', () => {
     const resourcePreflight = '- name: Preflight snapshot resources'
-    const tokenPreflight = '- name: Acquire shared TDX snapshot token'
-    const tokenCommand = 'node scripts/transit-snapshot/prepare-snapshot-tdx-token.mjs'
+    const eagerTokenStep = '- name: Acquire shared TDX snapshot token'
+    const eagerTokenCommand = 'node scripts/transit-snapshot/prepare-snapshot-tdx-token.mjs'
     const migrations = '- name: Apply transit database migrations'
     const publication = '- name: Build and publish snapshot'
     const tokenFile = 'SNAPSHOT_TDX_ACCESS_TOKEN_FILE: .transit-snapshot/tdx-access-token.json'
-    const preload = 'NODE_OPTIONS: --import=./scripts/transit-snapshot/install-snapshot-tdx-token-file.mjs'
     const cleanup = '- name: Cleanup shared TDX snapshot token'
 
-    expect(workflowSource).toContain(tokenCommand)
-    expect(workflowSource.match(new RegExp(tokenCommand.replaceAll('.', '\\.'), 'g'))).toHaveLength(1)
-    expect(workflowSource.indexOf(resourcePreflight)).toBeLessThan(workflowSource.indexOf(tokenPreflight))
-    expect(workflowSource.indexOf(tokenPreflight)).toBeLessThan(workflowSource.indexOf(migrations))
+    expect(workflowSource).not.toContain(eagerTokenStep)
+    expect(workflowSource).not.toContain(eagerTokenCommand)
+    expect(workflowSource.indexOf(resourcePreflight)).toBeLessThan(workflowSource.indexOf(migrations))
     expect(workflowSource.indexOf(migrations)).toBeLessThan(workflowSource.indexOf(publication))
     expect(workflowSource).toContain(tokenFile)
-    expect(workflowSource).toContain(preload)
     expect(workflowSource).toContain(cleanup)
     expect(workflowSource).toContain('if: always()')
     expect(workflowSource).not.toContain('SNAPSHOT_TDX_ACCESS_TOKEN:')
     expect(workflowSource).not.toContain('access_token: ${{')
+  })
+
+  it('preloads lazy TDX auth before static caches for both direct and window publishers', () => {
+    const scripts = JSON.parse(packageSource).scripts as Record<string, string>
+    const lazyPreload = '--import ./scripts/transit-snapshot/install-snapshot-tdx-token-file.mjs'
+    const cachePreload = '--import ./scripts/transit-snapshot/install-intercity-fetch-cache.mjs'
+
+    expect(scripts['snapshot:city']).toContain(lazyPreload)
+    expect(scripts['snapshot:window']).toContain(lazyPreload)
+    expect(scripts['snapshot:window']).toContain(cachePreload)
+    expect(scripts['snapshot:window'].indexOf(lazyPreload)).toBeLessThan(
+      scripts['snapshot:window'].indexOf(cachePreload),
+    )
   })
 
   it('sources static refresh floors from operation scope and bypasses them for manual dispatch', () => {
