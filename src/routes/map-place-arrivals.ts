@@ -16,7 +16,7 @@ import {
   getStopPlaceRoutes,
 } from '../infrastructure/transit/snapshot-repository'
 import { cacheMatchFailOpen, cachePutFailOpen } from '../lib/edge-cache'
-import { optionalQueryString, parseOptionalDirection, requiredQueryString } from '../lib/api-input'
+import { ApiInputError, optionalQueryString, parseOptionalDirection, requiredQueryString } from '../lib/api-input'
 import { memoryCacheGet, memoryCacheSet } from '../lib/memory-cache'
 import {
   formatETALabel,
@@ -119,11 +119,15 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
   const tracker = beginMapOperation(c, 'map_place_arrivals', telemetryCity(c.req.query('city')?.trim()))
   try {
     const env = tdxEnv(c)
-    const scope = await tdxCredentialScope(env)
     const city = c.req.query('city')?.trim()
     if (!city || !supportedCityCodes.has(city)) throw new QueryValidationError('請選擇城市')
     const placeId = requiredQueryString(c.req.param('placeId'), '站牌識別碼', 100)
+    const realtimeAllowed = parseRealtimeMode(c.req.query('realtime'))
     const requestedVersion = await requestedProbeSnapshotVersion(c, city)
+    // A snapshot-only read must not hash/access TDX credential state or touch the
+    // shared cooldown cache. It exists for synthetic snapshot verification and
+    // remains opt-in; ordinary product requests keep realtime enabled by default.
+    const scope = realtimeAllowed && !requestedVersion ? await tdxCredentialScope(env) : 'disabled'
     const bundle = requestedVersion
       ? await getPinnedStopPlaceBundle(env, city, placeId, requestedVersion)
       : await getStopPlaceBundle(env, city, placeId)
@@ -159,9 +163,10 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
       && (focusDirection === undefined || route.direction === focusDirection)
       && (!focusSubRouteUid || route.subRouteUid === focusSubRouteUid),
     ) : undefined
-    // Snapshot publication probes verify the pinned bundle itself. They do not
-    // contact TDX or replay realtime state, so source health cannot mask bundle identity.
-    const candidates = requestedVersion
+    // Snapshot publication probes and realtime=0 reads verify the bundle itself.
+    // They do not contact TDX or replay realtime state, so realtime availability
+    // cannot mask snapshot identity/health.
+    const candidates = requestedVersion || !realtimeAllowed
       ? []
       : includeFocusedCandidate(selectRealtimeCandidates(scheduledRoutes), focused)
     const batches = buildStopArrivalBatches(city, candidates.map((route) => ({
@@ -171,7 +176,7 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
     })))
     const etaItems: BusETAItem[] = []
     const staleRouteIdentities = new Set<string>()
-    let rateLimited = requestedVersion ? false : await hasRealtimeCooldown(env, city, scope)
+    let rateLimited = requestedVersion || !realtimeAllowed ? false : await hasRealtimeCooldown(env, city, scope)
     let warning: TDXWarning | undefined = rateLimited ? 'tdx-rate-limit' : undefined
     let realtimeQueries = 0
     for (const batch of batches) {
@@ -294,6 +299,13 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
   } catch (error) {
     return completeMapError(c, tracker, error, '到站時間讀取失敗')
   }
+}
+
+function parseRealtimeMode(value: string | undefined): boolean {
+  const normalized = value?.trim()
+  if (normalized === undefined || normalized === '' || normalized === '1') return true
+  if (normalized === '0') return false
+  throw new ApiInputError(400, 'INVALID_QUERY', 'realtime 必須是 0 或 1')
 }
 
 function scheduleFields(schedules: ScheduleItem[], query: ScheduleQuery, now: Date) {

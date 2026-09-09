@@ -179,13 +179,18 @@ describe('public probe runner', () => {
     expect(result.summary.results.every((item) => item.status === 'record_write_failed')).toBe(true)
   })
 
-  it('summarizes the two health planes separately', () => {
+  it('summarizes snapshot-only and sampled realtime health separately', () => {
     const markdown = publicProbeSummaryMarkdown({
       probeDate: '2026-07-19',
       evaluatedAt: '2026-07-19T00:20:00.000Z',
+      realtimeSampledCities: ['Taipei', 'Kaohsiung'],
       results: [
         {
           city: 'Taipei', status: 'healthy', activeVersion: 'v1', observedVersion: 'v1',
+          hardChecksPassed: PUBLIC_PROBE_HARD_CHECK_COUNT, realtimeWarnings: [], failureClass: 'none', latencyBucket: '1_3s',
+        },
+        {
+          city: 'Taichung', status: 'snapshot_healthy', activeVersion: 'v1', observedVersion: 'v1',
           hardChecksPassed: PUBLIC_PROBE_HARD_CHECK_COUNT, realtimeWarnings: [], failureClass: 'none', latencyBucket: '1_3s',
         },
         {
@@ -195,7 +200,9 @@ describe('public probe runner', () => {
         },
       ],
     })
-    expect(markdown).toContain('- Healthy: Taipei')
+    expect(markdown).toContain('- Realtime sampled: Taipei, Kaohsiung')
+    expect(markdown).toContain('- Healthy (realtime sampled): Taipei')
+    expect(markdown).toContain('- Snapshot healthy (realtime not sampled): Taichung')
     expect(markdown).toContain('- Realtime degraded: Kaohsiung')
     expect(markdown).toContain('- Hard failed: none')
   })

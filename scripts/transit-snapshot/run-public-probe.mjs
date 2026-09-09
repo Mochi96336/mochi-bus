@@ -4,7 +4,7 @@ import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { readBoundedResponseJson } from './active-probe.mjs'
 import { resolvePublicProbeBaseUrl } from './public-probe-origin.mjs'
-import { enabledSnapshotCitiesInScheduleOrder, taipeiDate } from './snapshot-schedule.mjs'
+import { enabledSnapshotCitiesInScheduleOrder, taipeiDate, validDateOnly } from './snapshot-schedule.mjs'
 import {
   createPublicProbeEvent,
   deterministicPublicCaseIndex,
@@ -17,13 +17,19 @@ import { createD1PublicProbeStore, publicProbeRunId } from './public-probe-d1.mj
 
 const OPERATIONS_PLAN = loadOperationsPlan()
 export const PUBLIC_PROBE_CITIES = enabledSnapshotCitiesInScheduleOrder(OPERATIONS_PLAN.enabledCities)
-// The expensive rate-limit bucket allows 30 requests/minute per IP. Each city
-// makes three expensive calls (arrivals, network, journey), so pacing them
-// keeps a full enabled-city sweep well under the limit.
+// Production checks every enabled city's snapshot plane daily, but only four
+// cities run TDX-backed realtime diagnostics each day. A deterministic rolling
+// window covers all 22 cities within six days without spending shared quota on
+// the same nationwide realtime sweep every morning.
+export const PUBLIC_PROBE_REALTIME_SAMPLE_SIZE = 4
+// The expensive rate-limit bucket allows 30 requests/minute per IP. Snapshot-
+// only cities still read arrivals + network; sampled cities additionally run
+// journey ETA. Pacing keeps the whole sweep under the public rate limit.
 export const PUBLIC_PROBE_EXPENSIVE_INTERVAL_MS = 2_500
 
-const HEALTHY_STATUSES = new Set(['healthy', 'realtime_degraded'])
+const HEALTHY_STATUSES = new Set(['healthy', 'snapshot_healthy', 'realtime_degraded'])
 const EXPENSIVE_PATH = /^\/api\/v1\/map\/(?:network|journey-eta$|place\/[^/]+\/arrivals)/
+const DAY_MS = 24 * 60 * 60 * 1000
 
 export async function runPublicProbe({
   env = process.env,
@@ -32,12 +38,16 @@ export async function runPublicProbe({
   store,
   publicApi,
   cities = PUBLIC_PROBE_CITIES,
+  // Library callers keep the previous full-realtime behavior unless they opt
+  // into rotation. The production CLI below explicitly uses the four-city cap.
+  realtimeSampleSize = cities.length,
   emitter = (event) => console.log(JSON.stringify(event)),
   realtimeDetailEmitter = () => undefined,
   summaryWriter = writePublicProbeSummary,
 }) {
   const evaluatedAt = now().toISOString()
   const probeDate = taipeiDate(new Date(evaluatedAt))
+  const realtimeCities = publicProbeRealtimeCities(cities, probeDate, realtimeSampleSize)
   const runId = publicProbeRunId({
     workflowRunId: nullableString(env.GITHUB_RUN_ID),
     workflowRunAttempt: env.GITHUB_RUN_ATTEMPT ?? 1,
@@ -64,6 +74,7 @@ export async function runPublicProbe({
         publicApi,
         now,
         realtimeDetailEmitter,
+        realtimeSampled: realtimeCities.has(city),
       })
     } catch {
       result = publicProbeFailureResult({
@@ -104,6 +115,7 @@ export async function runPublicProbe({
     probeRunId: runId,
     evaluatedAt,
     probeDate,
+    realtimeSampledCities: Object.freeze([...realtimeCities]),
     results: Object.freeze([...results]),
   })
   try {
@@ -117,6 +129,22 @@ export async function runPublicProbe({
     ok: !infrastructureFailed && failed.length === 0,
     failedCities: Object.freeze(failed.map((result) => result.city)),
   })
+}
+
+export function publicProbeRealtimeCities(cities, probeDate, sampleSize) {
+  const ordered = [...cities]
+  if (ordered.length === 0) return new Set()
+  const requested = Number.isFinite(sampleSize) ? Math.floor(sampleSize) : ordered.length
+  const size = Math.max(0, Math.min(ordered.length, requested))
+  if (size === 0) return new Set()
+  if (size === ordered.length) return new Set(ordered)
+
+  const date = validDateOnly(probeDate)
+  const dayIndex = Math.floor(Date.parse(`${date}T00:00:00Z`) / DAY_MS)
+  // Advancing by the sample size gives contiguous, non-overlapping windows
+  // until wrapping. With 22 cities and size 4, every city is sampled in six days.
+  const start = ((dayIndex * size) % ordered.length + ordered.length) % ordered.length
+  return new Set(Array.from({ length: size }, (_, offset) => ordered[(start + offset) % ordered.length]))
 }
 
 async function readCityReference(store, city, probeDate) {
@@ -215,7 +243,8 @@ export class PublicApiError extends Error {
 
 export function publicProbeSummaryMarkdown(summary) {
   const groups = [
-    ['Healthy', 'healthy'],
+    ['Healthy (realtime sampled)', 'healthy'],
+    ['Snapshot healthy (realtime not sampled)', 'snapshot_healthy'],
     ['Realtime degraded', 'realtime_degraded'],
     ['Hard failed', 'hard_failed'],
     ['Unknown', 'unknown'],
@@ -226,6 +255,7 @@ export function publicProbeSummaryMarkdown(summary) {
     '',
     `- Probe date: ${summary.probeDate} (Asia/Taipei)`,
     `- Evaluated at: ${summary.evaluatedAt}`,
+    `- Realtime sampled: ${(summary.realtimeSampledCities ?? []).join(', ') || 'none'}`,
     '',
     '| City | Status | Active | Observed | Hard checks | Warnings | Failure | Latency |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
@@ -251,6 +281,7 @@ async function writePublicProbeSummary(summary) {
   console.log(JSON.stringify({
     message: 'public_probe_batch_completed',
     probeDate: summary.probeDate,
+    realtimeSampledCities: summary.realtimeSampledCities ?? [],
     groups: Object.fromEntries(summary.results.map((item) => [item.city, item.status])),
   }))
 }
@@ -288,6 +319,7 @@ async function main() {
     publicApi: createPublicApiAdapter({
       baseUrl: resolvePublicProbeBaseUrl({ env: process.env }),
     }),
+    realtimeSampleSize: PUBLIC_PROBE_REALTIME_SAMPLE_SIZE,
     realtimeDetailEmitter: (event) => console.log(JSON.stringify(event)),
   })
   process.exitCode = result.ok ? 0 : 1

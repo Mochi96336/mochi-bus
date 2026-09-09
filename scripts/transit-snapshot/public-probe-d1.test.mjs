@@ -8,6 +8,10 @@ import {
 } from './public-probe-contract.mjs'
 
 const migration = readFileSync(new URL('../../migrations/0006_public_probe.sql', import.meta.url), 'utf8')
+const snapshotHealthyMigration = readFileSync(
+  new URL('../../migrations/0008_public_probe_snapshot_healthy.sql', import.meta.url),
+  'utf8',
+)
 
 // Intentionally omit stops / pattern_stops. If the public reference store ever
 // regresses to either high-cardinality table, these tests fail at SQL prepare.
@@ -44,6 +48,7 @@ describe('public probe D1 store', () => {
     db = new DatabaseSync(':memory:')
     db.exec(migration)
     db.exec(migration)
+    db.exec(snapshotHealthyMigration)
     db.exec(REFERENCE_TABLES)
     const fetchImpl = vi.fn(async (_url, init) => {
       const body = JSON.parse(init.body)
@@ -139,6 +144,20 @@ describe('public probe D1 store', () => {
       status: 'realtime_degraded',
       warning_count: 2,
       warnings: 'journey_estimate_unknown,realtime_schedule_only',
+    })
+  })
+
+  it('persists explicit snapshot-only health after the status migration', async () => {
+    const snapshotHealthy = cityResult({ status: 'snapshot_healthy' })
+    await store.startRun({
+      probeRunId: 'gh:302:1', evaluatedAt: snapshotHealthy.evaluatedAt, probeDate: snapshotHealthy.probeDate,
+    })
+    await store.completeCity('gh:302:1', snapshotHealthy)
+
+    expect(db.prepare('SELECT status, warning_count, warnings FROM public_probe_city_results').get()).toEqual({
+      status: 'snapshot_healthy',
+      warning_count: 0,
+      warnings: '',
     })
   })
 
