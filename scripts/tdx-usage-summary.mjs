@@ -12,6 +12,14 @@ const SNAPSHOT_FETCH_EVENTS = new Set([
   'tdx_city_cache',
   'tdx_intercity_cache',
 ])
+const RUNTIME_RESULTS = new Set([
+  'success',
+  'http_error',
+  'transport_error',
+  'payload_error',
+])
+const RUNTIME_CREDENTIAL_SCOPES = new Set(['shared', 'byok'])
+const SNAPSHOT_PROBE_RESULTS = new Set(['success', 'http_error', 'transport_error'])
 
 export function parseTdxUsageText(text) {
   const events = []
@@ -149,15 +157,27 @@ function usageObservation(event) {
   if (!event || typeof event !== 'object') return null
 
   if (event.message === 'tdx_upstream_usage') {
+    const operation = safeLabel(event.operation, null)
+    const resource = safeLabel(event.resource, null)
+    const scope = safeLabel(event.scope, null)
+    const attempt = positiveInteger(event.attempt)
+    if (!operation || !resource || !scope || attempt === null
+      || !RUNTIME_CREDENTIAL_SCOPES.has(event.credentialScope)
+      || !RUNTIME_RESULTS.has(event.result)) return null
+
     const exactBytes = nonNegativeInteger(event.receivedBytes)
     const declaredBytes = exactBytes === null ? nonNegativeInteger(event.declaredBytes) : null
     const status = httpStatus(event.status)
+    if (event.result === 'success' && (status === null || exactBytes === null)) return null
+    if (event.result === 'http_error' && status === null) return null
+    if (event.result === 'transport_error' && status !== null) return null
+
     return {
-      billingScope: event.credentialScope === 'byok' ? 'byok' : 'shared',
+      billingScope: event.credentialScope,
       plane: 'runtime',
-      operation: safeLabel(event.operation, 'unclassified'),
-      resource: safeLabel(event.resource, 'unknown'),
-      scope: safeLabel(event.scope, 'unknown'),
+      operation,
+      resource,
+      scope,
       status,
       success: event.result === 'success',
       exactBytes,
@@ -166,37 +186,60 @@ function usageObservation(event) {
   }
 
   if (SNAPSHOT_PERSISTENT_EVENTS.has(event.event) && event.resolution === 'probe') {
+    const resource = safeLabel(event.resource, null)
+    if (!resource || !SNAPSHOT_PROBE_RESULTS.has(event.result)) return null
     const status = httpStatus(event.status)
+    const exactBytes = nonNegativeInteger(event.bytes)
+    if (event.result === 'success' && (status === null || exactBytes === null)) return null
+    if (event.result === 'http_error' && status === null) return null
+    if (event.result === 'transport_error' && status !== null) return null
+
     return {
       billingScope: 'shared',
       plane: 'snapshot',
       operation: 'source_probe',
-      resource: safeLabel(event.resource, 'unknown'),
+      resource,
       scope: event.event === 'tdx_intercity_persistent_cache' ? 'InterCity' : 'City/*',
       status,
       success: event.result === 'success',
-      exactBytes: nonNegativeInteger(event.bytes),
+      exactBytes,
       declaredBytes: null,
     }
   }
 
   if (SNAPSHOT_FETCH_EVENTS.has(event.event)
     && (event.resolution === 'miss' || event.resolution === 'upstream-error')) {
+    const resource = safeLabel(event.resource, null)
+    const city = event.event === 'tdx_city_cache' ? safeLabel(event.city, null) : null
+    if (!resource || (event.event === 'tdx_city_cache' && !city)) return null
+
     const status = httpStatus(event.status)
-    const success = event.resolution === 'miss' && status !== null && status >= 200 && status < 300
-    const exactBytes = event.resolution === 'miss' ? nonNegativeInteger(event.bytes) : null
-    const declaredBytes = exactBytes === null ? nonNegativeInteger(event.bytes) : null
-    const city = safeLabel(event.city, null)
+    if (event.resolution === 'miss') {
+      const exactBytes = nonNegativeInteger(event.bytes)
+      if (status === null || status < 200 || status >= 300 || exactBytes === null) return null
+      return {
+        billingScope: 'shared',
+        plane: 'snapshot',
+        operation: 'full_source',
+        resource,
+        scope: event.event === 'tdx_intercity_cache' ? 'InterCity' : `City/${city}`,
+        status,
+        success: true,
+        exactBytes,
+        declaredBytes: null,
+      }
+    }
+
     return {
       billingScope: 'shared',
       plane: 'snapshot',
       operation: 'full_source',
-      resource: safeLabel(event.resource, 'unknown'),
-      scope: event.event === 'tdx_intercity_cache' ? 'InterCity' : city ? `City/${city}` : 'City/*',
+      resource,
+      scope: event.event === 'tdx_intercity_cache' ? 'InterCity' : `City/${city}`,
       status,
-      success,
-      exactBytes,
-      declaredBytes,
+      success: false,
+      exactBytes: null,
+      declaredBytes: nonNegativeInteger(event.bytes),
     }
   }
 
@@ -270,18 +313,26 @@ function parseLogLine(line) {
 
 function unwrapUsageEvent(value) {
   if (usageObservation(value)) return value
+  if (typeof value === 'string') {
+    const nested = value.trim()
+    if (nested.startsWith('{')) {
+      const parsed = parseLogLine(nested)
+      if (parsed && typeof parsed !== 'string' && usageObservation(parsed)) return parsed
+    }
+    return null
+  }
   if (!value || typeof value !== 'object') return null
 
-  for (const key of ['log', 'Log', 'messageText', 'Message']) {
+  for (const key of ['log', 'Log', 'messageText', 'Message', 'message']) {
     const nested = value[key]
-    if (typeof nested !== 'string') continue
-    const parsed = parseLogLine(nested.trim())
-    if (parsed && usageObservation(parsed)) return parsed
-  }
-
-  if (typeof value.message === 'string' && value.message.trim().startsWith('{')) {
-    const parsed = parseLogLine(value.message.trim())
-    if (parsed && usageObservation(parsed)) return parsed
+    const candidates = Array.isArray(nested) ? nested : [nested]
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue
+      const text = candidate.trim()
+      if (!text.startsWith('{')) continue
+      const parsed = parseLogLine(text)
+      if (parsed && usageObservation(parsed)) return parsed
+    }
   }
   return null
 }
@@ -306,6 +357,10 @@ function compareGroups(left, right) {
 
 function nonNegativeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function positiveInteger(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : null
 }
 
 function httpStatus(value) {
