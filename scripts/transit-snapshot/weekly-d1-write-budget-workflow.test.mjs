@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const workflow = readFileSync('.github/workflows/snapshot-weekly-d1-budget-proof.yml', 'utf8')
+const publisherWorkflow = readFileSync('.github/workflows/sync-transit.yml', 'utf8')
 const report = readFileSync('scripts/transit-snapshot/weekly-d1-write-budget.mjs', 'utf8')
 
 describe('weekly D1 budget proof workflow', () => {
@@ -13,6 +14,20 @@ describe('weekly D1 budget proof workflow', () => {
     expect(workflow).toContain("- 'scripts/transit-snapshot/weekly-d1-write-budget.mjs'")
     expect(workflow).toContain('node scripts/instance/operation-scope.mjs snapshot')
     expect(workflow).toContain('node scripts/transit-snapshot/weekly-d1-write-budget.mjs')
+  })
+
+  it('uses the exact scheduled publisher budget and growth factor instead of an independent proof policy', () => {
+    const proofBudget = workflow.match(/SNAPSHOT_D1_WRITE_BUDGET: '(\d+)'/)?.[1]
+    const publisherBudget = publisherWorkflow.match(/SNAPSHOT_D1_WRITE_BUDGET: .*&& '(\d+)' \|\| ''/)?.[1]
+    const proofGrowth = workflow.match(/SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR: '([^']+)'/)?.[1]
+    const publisherGrowth = publisherWorkflow.match(/SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR: '([^']+)'/)?.[1]
+
+    expect(proofBudget).toBeDefined()
+    expect(publisherBudget).toBeDefined()
+    expect(proofBudget).toBe(publisherBudget)
+    expect(proofGrowth).toBeDefined()
+    expect(publisherGrowth).toBeDefined()
+    expect(proofGrowth).toBe(publisherGrowth)
   })
 
   it('has no TDX or mutation path and uploads bounded evidence', () => {
