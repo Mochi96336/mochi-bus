@@ -9,6 +9,7 @@ import {
 
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const LOW_CARD_COUNT_FIELDS = ['routes', 'patterns', 'places']
+const SAFE_TDX_WARNINGS = new Set(['tdx-rate-limit', 'tdx-quota', 'tdx-unavailable'])
 
 // Public-network evidence chain: GitHub runner → DNS/TLS → Worker release →
 // public API → active snapshot → route/StopUID/place/journey contract. D1 is
@@ -21,6 +22,7 @@ export async function probePublicSurface({
   publicApi,
   now = () => new Date(),
   probeCaseVersion = PUBLIC_PROBE_CASE_VERSION,
+  realtimeDetailEmitter,
 }) {
   const startedAt = now()
   const sampleCaseId = publicSampleCaseId(city, probeDate, probeCaseVersion)
@@ -110,17 +112,18 @@ export async function probePublicSurface({
     if (!networkPrefixMatches(networkPrefix, city, activeVersion)) throw hardFailure('network_version_mismatch')
     hardChecksPassed += 1
 
-    const warnings = await realtimeDiagnostics({ city, sample: resolvedSample, arrivals, publicApi, sampleCaseId })
+    const realtime = await realtimeDiagnostics({ city, sample: resolvedSample, arrivals, publicApi, sampleCaseId })
+    emitRealtimeDetailFailOpen(realtime.detail, realtimeDetailEmitter)
     return validatePublicProbeResult({
       city,
       probeDate,
       evaluatedAt: now().toISOString(),
-      status: warnings.length ? 'realtime_degraded' : 'healthy',
+      status: realtime.warnings.length ? 'realtime_degraded' : 'healthy',
       activeVersion,
       observedVersion,
-      failureClass: warnings[0] ?? 'none',
+      failureClass: realtime.warnings[0] ?? 'none',
       hardChecksPassed,
-      realtimeWarnings: warnings,
+      realtimeWarnings: realtime.warnings,
       probeCaseVersion,
       sampleCaseId,
       latencyBucket: latencyBucket(now().getTime() - startedAt.getTime()),
@@ -150,8 +153,19 @@ export async function probePublicSurface({
 // city's snapshot health red. Failures inside this plane also never throw.
 async function realtimeDiagnostics({ city, sample, arrivals, publicApi, sampleCaseId }) {
   const warnings = new Set()
+  const detail = {
+    message: 'public_probe_realtime_detail',
+    city,
+    sampleCaseId,
+    arrivalsWarning: safeTdxWarning(arrivals.warning),
+    arrivalsRateLimited: arrivals.realtime?.rateLimited === true,
+    journeyWarning: null,
+    journeyRequestFailed: false,
+    vehiclesWarning: null,
+    vehiclesRequestFailed: false,
+  }
 
-  if (arrivals.warning || arrivals.realtime?.rateLimited === true) warnings.add('realtime_upstream_degraded')
+  if (arrivals.warning || detail.arrivalsRateLimited) warnings.add('realtime_upstream_degraded')
   const sources = arrivals.routes.map((route) => route?.source)
   if (sources.some((source) => source === 'stale-realtime')) warnings.add('realtime_stale_replay')
   if (Number(arrivals.realtime?.candidates) > 0
@@ -165,26 +179,47 @@ async function realtimeDiagnostics({ city, sample, arrivals, publicApi, sampleCa
       city,
       legs: [{ key: `probe:${sampleCaseId}`, patternId: sample.patternId, sequence: sample.stopSequence }],
     })
+    detail.journeyWarning = safeTdxWarning(journey?.warning)
     if (journey?.warning) warnings.add('realtime_upstream_degraded')
     const estimate = Array.isArray(journey?.estimates) ? journey.estimates[0] : undefined
     if (journey?.schemaVersion !== 1 || !estimate || estimate.source === 'none') {
       warnings.add('journey_estimate_unknown')
     }
   } catch {
+    detail.journeyRequestFailed = true
     warnings.add('journey_estimate_unknown')
   }
 
   try {
     const vehicles = await publicApi.getJson(`/api/v1/map/vehicles?city=${encodeURIComponent(city)}&route=${encodeURIComponent(sample.routeName)}`)
+    detail.vehiclesWarning = safeTdxWarning(vehicles?.warning)
     // An empty vehicles list is legal data (no bus on the road right now).
     if (vehicles?.schemaVersion !== 1 || !Array.isArray(vehicles.vehicles) || vehicles.warning) {
       warnings.add('vehicles_upstream_degraded')
     }
   } catch {
+    detail.vehiclesRequestFailed = true
     warnings.add('vehicles_upstream_degraded')
   }
 
-  return [...warnings].sort()
+  return Object.freeze({
+    warnings: Object.freeze([...warnings].sort()),
+    detail: Object.freeze(detail),
+  })
+}
+
+function emitRealtimeDetailFailOpen(detail, emitter) {
+  if (typeof emitter !== 'function') return false
+  try {
+    emitter(detail)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function safeTdxWarning(value) {
+  return SAFE_TDX_WARNINGS.has(value) ? value : null
 }
 
 async function publicJson(publicApi, path, failureClass) {
