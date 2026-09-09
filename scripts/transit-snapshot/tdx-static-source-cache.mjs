@@ -106,6 +106,24 @@ export function createTdxStaticSourceCache({
       }
       if (cachedBody === null) return { body: null, sourceVersion }
 
+      // A successful same-version probe is a real revalidation of the promoted
+      // payload, but only after the cached bytes have passed size + SHA-256.
+      // Renew the refresh lease so the configured floor remains a revalidation
+      // interval instead of degenerating into a probe on every later run. The
+      // state write is best-effort: failure only costs future probes and must not
+      // make already-verified bytes unusable.
+      if (minimumRefreshMs > 0) {
+        await renewRevalidationLease({
+          storage,
+          state,
+          cachePrefix,
+          resource,
+          sourceLabel,
+          logger,
+          now,
+        })
+      }
+
       logger?.log?.(JSON.stringify({
         event: eventName,
         resource,
@@ -354,6 +372,19 @@ async function verifiedCachedBody(storage, state, sourceLabel, resource, logger)
     return null
   }
   return body
+}
+
+async function renewRevalidationLease({ storage, state, cachePrefix, resource, sourceLabel, logger, now }) {
+  try {
+    await storage.putJson(stateKey(cachePrefix, resource), {
+      ...state,
+      refreshedAt: new Date(currentTimeMs(now)).toISOString(),
+    })
+    return true
+  } catch (error) {
+    logger?.warn?.(`TDX ${sourceLabel} persistent cache revalidation lease write failed for ${resource}: ${errorMessage(error)}`)
+    return false
+  }
 }
 
 function refreshFloorMs(resolveMinimumRefreshMs, resource) {

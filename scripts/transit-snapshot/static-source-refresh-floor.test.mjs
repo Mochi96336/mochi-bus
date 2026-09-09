@@ -108,6 +108,49 @@ describe('static source refresh policy', () => {
     await expect(cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} }))
       .resolves.toEqual({ body, sourceVersion: '2026-09-01T00:00:00+08:00' })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+    // The same-version probe revalidates the verified payload and renews its
+    // refresh lease. The next scheduled run must not immediately probe again.
+    nowMs += DAY_MS
+    await expect(cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} }))
+      .resolves.toEqual({ body, sourceVersion: '2026-09-01T00:00:00+08:00' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(logger.log.mock.calls.map(([line]) => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      event: 'tdx_intercity_persistent_cache',
+      resource: 'Shape',
+      resolution: 'freshness-hit',
+      ageMs: DAY_MS,
+      minimumRefreshMs: 56 * DAY_MS,
+    }))
+  })
+
+  it('keeps serving verified bytes if revalidation lease persistence fails', async () => {
+    let nowMs = Date.parse('2026-09-01T00:00:00Z')
+    const storage = memoryStorage()
+    const originalPutJson = storage.putJson.bind(storage)
+    let failLeaseWrite = false
+    storage.putJson = async (key, value) => {
+      if (failLeaseWrite) throw new Error('lease write unavailable')
+      return originalPutJson(key, value)
+    }
+    const logger = { log: vi.fn(), warn: vi.fn() }
+    const env = { SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: '56' }
+    const { cache, fetchImpl, body } = await promotedShape({ env, now: () => nowMs, storage, logger })
+
+    nowMs += 57 * DAY_MS
+    failLeaseWrite = true
+    await expect(cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} }))
+      .resolves.toEqual({ body, sourceVersion: '2026-09-01T00:00:00+08:00' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('revalidation lease write failed'))
+
+    // A failed lease write must fail open for correctness: the verified body is
+    // still usable, but a later run probes again because the old lease remains.
+    failLeaseWrite = false
+    nowMs += DAY_MS
+    await expect(cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} }))
+      .resolves.toEqual({ body, sourceVersion: '2026-09-01T00:00:00+08:00' })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
   it('lets an operator manual run bypass the floor', async () => {
