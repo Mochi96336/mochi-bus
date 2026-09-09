@@ -61,6 +61,24 @@ export function budgetDecision({ budgetRows, reservedRows, estimatedRows }) {
   })
 }
 
+export async function estimateScheduledD1WriteForCity({
+  city,
+  env = process.env,
+  readState = (targetCity) => readPublishedState(targetCity, env),
+  readCleanupRows = (targetCity) => readScheduledCleanupRows(targetCity, env),
+}) {
+  if (!city) throw new Error('D1 write estimate requires a city')
+  const state = await readState(city)
+  if (!state?.counts) throw new Error(`D1 write budget requires published snapshot counts for ${city}`)
+  const counts = Object.freeze(normalizeCounts(state.counts))
+  const cleanupRows = await readCleanupRows(city)
+  const estimate = estimateScheduledPublishRowsWritten(counts, {
+    growthFactor: env.SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR,
+    cleanupRows,
+  })
+  return Object.freeze({ city, counts, estimate })
+}
+
 export async function reserveScheduledD1Budget({
   city,
   env = process.env,
@@ -71,13 +89,8 @@ export async function reserveScheduledD1Budget({
   const budgetRows = parseOptionalPositiveInteger(env.SNAPSHOT_D1_WRITE_BUDGET)
   if (budgetRows === null) return Object.freeze({ enabled: false, allowed: true })
 
-  const state = await readState(city)
-  if (!state?.counts) throw new Error(`D1 write budget requires published snapshot counts for ${city}`)
-  const cleanupRows = await readCleanupRows(city)
-  const estimate = estimateScheduledPublishRowsWritten(state.counts, {
-    growthFactor: env.SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR,
-    cleanupRows,
-  })
+  const cityEstimate = await estimateScheduledD1WriteForCity({ city, env, readState, readCleanupRows })
+  const estimate = cityEstimate.estimate
   const ledgerPath = env.SNAPSHOT_D1_WRITE_BUDGET_FILE || DEFAULT_LEDGER
   const ledger = await readLedger(ledgerPath, budgetRows)
   const existing = ledger.reservations.find((item) => item.city === city && item.status === 'reserved')
