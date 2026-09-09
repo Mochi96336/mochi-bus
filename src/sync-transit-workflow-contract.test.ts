@@ -55,4 +55,25 @@ describe('Sync transit snapshots workflow contract', () => {
     expect(workflowSource).not.toContain('SNAPSHOT_TDX_ACCESS_TOKEN:')
     expect(workflowSource).not.toContain('access_token: ${{')
   })
+
+  it('sources static refresh floors from operation scope and bypasses them for manual dispatch', () => {
+    const bindings = [
+      ['SNAPSHOT_CITY_TOPOLOGY_REFRESH_DAYS', 'static_city_topology_refresh_days'],
+      ['SNAPSHOT_CITY_SCHEDULE_REFRESH_DAYS', 'static_city_schedule_refresh_days'],
+      ['SNAPSHOT_CITY_SHAPE_REFRESH_DAYS', 'static_city_shape_refresh_days'],
+      ['SNAPSHOT_INTERCITY_TOPOLOGY_REFRESH_DAYS', 'static_intercity_topology_refresh_days'],
+      ['SNAPSHOT_INTERCITY_SCHEDULE_REFRESH_DAYS', 'static_intercity_schedule_refresh_days'],
+      ['SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS', 'static_intercity_shape_refresh_days'],
+    ] as const
+
+    for (const [envName, outputName] of bindings) {
+      expect(workflowSource).toContain(
+        `${envName}: ${{ steps.operation.outputs.${outputName} }}`,
+      )
+      expect(workflowSource).not.toMatch(new RegExp(`${envName}: ['\"]?\\d+`))
+    }
+    expect(workflowSource).toContain(
+      "SNAPSHOT_STATIC_SOURCE_BYPASS_FLOOR: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}",
+    )
+  })
 })
