@@ -73,7 +73,7 @@ function setup(overrides: Partial<TDXResolutionCacheDependencies> = {}) {
 function stubCache(
   match: (request: Request) => Promise<Response | undefined> = vi.fn(async () => undefined),
 ) {
-  const put = vi.fn(async () => undefined)
+  const put = vi.fn(async (_request: Request, _response: Response) => undefined)
   vi.stubGlobal('caches', { default: { match, put } })
   return { match, put }
 }
@@ -162,7 +162,9 @@ describe('TDX resolution cache boundary', () => {
 
     expect(state.fetchUpstream).not.toHaveBeenCalled()
     expect(cache.put).toHaveBeenCalledOnce()
-    const [key, response] = vi.mocked(cache.put).mock.calls[0]
+    const firstPut = vi.mocked(cache.put).mock.calls[0]
+    expect(firstPut).toBeDefined()
+    const [key, response] = firstPut!
     expect(key.url).toBe(sharedQuotaCooldownUrl)
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=300')
     expect(events[0]).toMatchObject({ resolution: 'upstream', result: 'error', failureClass: 'quota' })
@@ -176,7 +178,9 @@ describe('TDX resolution cache boundary', () => {
     await expect(state.resolver.fetchTDXJson(environment(), url, 30, { validate })).rejects.toBe(error)
 
     expect(cache.put).toHaveBeenCalledOnce()
-    expect(vi.mocked(cache.put).mock.calls[0][0].url).toBe(sharedQuotaCooldownUrl)
+    const firstPut = vi.mocked(cache.put).mock.calls[0]
+    expect(firstPut).toBeDefined()
+    expect(firstPut![0].url).toBe(sharedQuotaCooldownUrl)
   })
 
   it('uses a shared edge quota marker before token acquisition while preserving stale fallback', async () => {
