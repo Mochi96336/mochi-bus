@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/release-routes-diagnostic.yml'
       - 'scripts/release-smoke/diagnose-routes.mjs'
+      - 'scripts/release-smoke/diagnose-routes-d1.mjs'
 
 permissions:
   contents: read
@@ -31,6 +32,12 @@ jobs:
 
       - name: Compile production instance identity
         run: node scripts/instance/compile-config.mjs
+
+      - name: Diagnose read-only D1 route catalogue state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release-smoke/diagnose-routes-d1.mjs
 
       - name: Diagnose bounded production route metadata
         run: node scripts/release-smoke/diagnose-routes.mjs
