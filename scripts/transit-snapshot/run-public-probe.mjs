@@ -33,7 +33,7 @@ export async function runPublicProbe({
   publicApi,
   cities = PUBLIC_PROBE_CITIES,
   emitter = (event) => console.log(JSON.stringify(event)),
-  realtimeDetailEmitter = (event) => console.log(JSON.stringify(event)),
+  realtimeDetailEmitter = () => undefined,
   summaryWriter = writePublicProbeSummary,
 }) {
   const evaluatedAt = now().toISOString()
@@ -288,6 +288,7 @@ async function main() {
     publicApi: createPublicApiAdapter({
       baseUrl: resolvePublicProbeBaseUrl({ env: process.env }),
     }),
+    realtimeDetailEmitter: (event) => console.log(JSON.stringify(event)),
   })
   process.exitCode = result.ok ? 0 : 1
 }
