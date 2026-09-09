@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createIntercitySourceCache } from './intercity-source-cache.mjs'
 import {
   staticSourceMinimumRefreshMs,
+  staticSourceRefreshDaysForSchedule,
   staticSourceRefreshFloorBypassed,
 } from './static-source-refresh-policy.mjs'
 
@@ -47,6 +48,21 @@ async function promotedShape({ env, now, storage = memoryStorage(), fetchImpl = 
 }
 
 describe('static source refresh policy', () => {
+  it('attaches quota-aware floors only to the weekly-sharded schedule', () => {
+    expect(staticSourceRefreshDaysForSchedule('taipei-weekly-sharded')).toEqual({
+      city: { topology: 14, schedule: 21, shape: 28 },
+      intercity: { topology: 21, schedule: 35, shape: 56 },
+    })
+    expect(staticSourceRefreshDaysForSchedule('daily')).toEqual({
+      city: { topology: 0, schedule: 0, shape: 0 },
+      intercity: { topology: 0, schedule: 0, shape: 0 },
+    })
+    expect(staticSourceRefreshDaysForSchedule('manual')).toEqual({
+      city: { topology: 0, schedule: 0, shape: 0 },
+      intercity: { topology: 0, schedule: 0, shape: 0 },
+    })
+  })
+
   it('maps topology, schedule and shape floors independently and fails open on invalid values', () => {
     const env = {
       SNAPSHOT_CITY_TOPOLOGY_REFRESH_DAYS: '14',
