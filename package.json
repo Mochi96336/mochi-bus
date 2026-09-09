@@ -17,6 +17,7 @@
     "dev": "npm run build:map && wrangler dev --config .generated/instance/wrangler.instance.jsonc",
     "deploy": "npm run build:map && wrangler deploy --config .generated/instance/wrangler.instance.jsonc --minify",
     "release:smoke": "node scripts/release-smoke/run-authoritative-post-deploy.mjs",
+    "tdx:usage-summary": "node scripts/tdx-usage-summary.mjs",
     "pretest": "npm run instance:compile",
     "test": "vitest run",
     "pretest:e2e": "npm run instance:compile",
