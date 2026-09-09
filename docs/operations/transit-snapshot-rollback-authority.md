@@ -14,6 +14,17 @@
 - explicit target 與預設 `state.previousVersion` 使用完全相同的 target validation。
 - 不提供 `--force` 或其他略過 authority／integrity gates 的選項。
 
+「目前服務版本由誰決定」與「該版本的高基數 routing data 在哪裡驗證」是兩件事。前者永遠是 D1 `dataset_versions.active_version`；後者由四個 routing completion manifests 決定：
+
+- **0/4 manifests：`legacy-d1`**。這是 pre-cutover 版本，高基數 `stops` / `pattern_stops` 仍以 D1 為 rollback validation authority。
+- **1–3/4 manifests：incomplete**。沒有可接受的 routing authority，mutation 前 fail closed。
+- **4/4 manifests：R2 authority**。四份 completion manifest、counts、fingerprints 與 deterministic pattern-stop sample 都必須通過 bounded validation；之後再與 root manifest 做 binding。
+  - root manifest 完全沒有列出四份 completion manifests：`legacy-backfill`。這是 rollout 期間回填的相容模式，仍可依已驗證的 R2 routing authority執行 rollback。
+  - root manifest只綁一部分：fail closed。
+  - root manifest完整綁定四份 manifest的 exact bytes + SHA-256：`root-bound`。
+
+`legacy-backfill` 可作為 rollback authority，不代表已可刪除 legacy D1。只有 production evidence證明保留的 active／previous rollback window 都是 `root-bound`，才可把 destructive legacy high-card row/index/schema cleanup列入下一步。
+
 ## Commands
 
 預設 rollback 到可信 state 中的 previous：
@@ -56,26 +67,48 @@ Reconcile 只驗證並更新 R2 state，永遠不修改 D1 active pointer。相�
 
 ## Validation responsibility
 
-Rollback／reconcile 寫入前，指定版本必須通過：
+Rollback／reconcile 寫入前，所有 target 先判定 routing authority，再走對應完整性路徑。
 
-- D1 routes、patterns、stops、places、pattern stops 均非零。
+### 共用的低基數與 artifact gates
+
+不論 legacy 或 R2 routing authority，都必須驗證：
+
+- D1 routes、patterns、stop_places 非零。
+- pattern → route 無 dangling reference，catalogue route 都有 pattern。
+- root manifest schema/city/version合法。
+- network object 存在、size（若可得）與 manifest 一致，bounded prefix 的 schema／city／version 正確。
+- deterministic route sample的 shape、route schedule、place bundle以 root manifest descriptor的 bytes 與 SHA-256 完整驗證。
+
+### `legacy-d1` target
+
+只有 0/4 routing completion manifests 的 pre-cutover target，才要求 D1 高基數 validation：
+
+- D1 `stops`、`pattern_stops` 非零。
 - route／pattern／stop／place 交叉引用無 dangling rows。
 - 每個 pattern 至少兩站。
-- catalogue route 都有 pattern。
-- pattern stop 的 place 與 canonical stop 一致。
-- manifest schema v2、city、version、五項 counts 完全一致。
-- manifest 宣告 network、shape、schedule、place 四類 artifacts。
-- network object 存在、size（若可得）與 manifest 一致，bounded prefix 的 schema／city／version 正確。
-- 一組 deterministic exact pattern 的 shape、route schedule、place bundle 以 manifest bytes 與 SHA-256 完整驗證。
+- pattern stop 的 place 與 canonical stop一致。
+- root manifest counts必須與包含高基數 D1 rows的 legacy evidence一致。
 
-這些是 mutation 前的 target／metadata integrity gate。切換後仍由 public smoke 負責：
+這條路徑保留的是舊版本 rollback compatibility；它不是新 snapshot publisher 的正常儲存模型。
+
+### R2 routing-authority target
+
+四份 routing completion manifests全部存在時，不得要求或偷偷 fallback到 D1 `stops` / `pattern_stops`：
+
+- completion manifests必須全部存在且可 bounded-read；部分存在直接 fail closed。
+- manifest identity、cross-manifest counts、descriptor keys/bytes/SHA-256必須一致。
+- deterministic pattern-stop artifact必須依 descriptor fingerprint完整驗證，並提供 rollback sample的 `patternId` / `placeId`。
+- R2 authority的 pattern/place counts必須與低基數 D1 `patterns` / `stop_places`一致；stops/patternStops counts由 R2 authority提供。
+- 四份 completion manifests再與 root manifest做 exact fingerprint binding；無 binding為 `legacy-backfill`，完整 binding為 `root-bound`，partial/mismatched binding fail closed。
+
+切換後仍由 public smoke 負責：
 
 - route catalogue 回報 exact active version 與 count。
 - exact route variant 存在且至少兩站。
 - exact place bundle 使用該 active version並包含同一 variant。
 - public network prefix 回報同一 active version。
 
-日常 active probe 的 freshness window、durable probe evidence、sample rotation與 realtime diagnostics 不屬於 rollback target 的 mutation 前責任，因此不直接複製全部 11 項 hard checks。
+日常 active probe 的 freshness window、durable probe evidence、sample rotation與 realtime diagnostics 不屬於 rollback target 的 mutation 前責任，因此不直接複製全部 active hard checks。
 
 ## Optimistic concurrency
 
@@ -113,3 +146,5 @@ GitHub Actions publisher 共用 `transit-snapshot` concurrency group；本機 CL
 ## Production safety
 
 合併程式碼不會自動執行 rollback 或 reconcile。執行前必須另行確認城市、D1 active、可信 previous、完整 validation evidence 與操作授權；不得拿既有 legacy repair 城市當 rehearsal，也不得建立一次性 production executor。
+
+若要決定是否可以退休 legacy D1 high-card data，不可只看某一次 rollback成功；應使用 rollback drill的 pre-mutation authority evidence確認 active、previous與實際 rollback target的 mode，並要求保留 window 的 `rootBoundRollbackWindow=true` 後再進 destructive cleanup。

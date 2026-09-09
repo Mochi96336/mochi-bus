@@ -6,7 +6,7 @@ A6b 每日從 GitHub Actions 公網 runner 建立一條與發布流程、A6a wat
 GitHub public network → DNS/TLS → Worker release → public API → active snapshot → route/place/journey contract
 ```
 
-A6a watchdog 只讀 D1、不打公開 API;它的 Green 不能代替公網可用性。這個 probe 反向:每日 08:20 Asia/Taipei(UTC cron `20 0 * * *`)對全部 22 個 snapshot 城市走真實公開路徑。D1 只作唯讀參考(`dataset_versions.active_version`、counts、deterministic sample),所有 hard 判定都來自公開 API 的實際回應。Probe 只寫自己的 `public_probe_*` 表,不修改 dataset_versions、R2、artifacts 或 snapshot window/watchdog 結果。
+A6a watchdog 只讀 D1、不打公開 API;它的 Green 不能代替公網可用性。這個 probe 反向:每日 08:20 Asia/Taipei(UTC cron `20 0 * * *`)對全部 22 個 snapshot 城市走真實公開路徑。D1 只作唯讀低基數參考(`dataset_versions.active_version`、routes/patterns/stop_places counts、deterministic sample),所有 hard 判定都來自公開 API 的實際回應。`stops` / `pattern_stops` 不再是 root-bound 新版本的 D1 reference；route detail、place bundle、network 與 journey 路徑會經公開 Worker 實際 exercise R2 routing authority。Probe 只寫自己的 `public_probe_*` 表,不修改 dataset_versions、R2、artifacts 或 snapshot window/watchdog 結果。
 
 每日 public probe 的 GET 必須使用與一般使用者相同的公開 URL，不附加 synthetic case query、`snapshot` 或 publisher `probe`。`sampleCaseId` 只用於 deterministic rotation、journey leg identity、D1 evidence 與 telemetry。`probe` 仍保留給帶 exact active `snapshot=<version>` 與 bounded city/window identity 的 publisher snapshot-pinned reads。
 
@@ -21,7 +21,7 @@ Snapshot hard health 與 realtime health 是分開的平面;`hard = Green、real
 | Check | Failure class |
 | --- | --- |
 | D1 active pointer 存在且格式合法 | `active_pointer_missing` / `active_pointer_invalid` |
-| active version 的 routes/patterns/stops/places/pattern_stops 非空 | `active_rows_empty` |
+| active version 的低基數 D1 routes/patterns/stop_places 非空 | `active_rows_empty` |
 | catalogue 沒有無 pattern 的 route | `route_without_pattern` |
 | `/api/v1/map/routes` 回 200 且 schemaVersion 2 | `public_routes_failed` / `public_schema_invalid` |
 | routes source 為 `snapshot` | `public_source_not_snapshot` |
@@ -30,6 +30,8 @@ Snapshot hard health 與 realtime health 是分開的平面;`hard = Green、real
 | deterministic route detail 有 sampled variant 且 ≥2 stops | `route_sample_failed` |
 | deterministic place arrivals 用 place-bundle 且版本相符 | `place_bundle_sample_failed` |
 | `/api/v1/map/network` 64 KiB prefix 的 schema/city/version 相符 | `network_missing` / `network_version_mismatch` |
+
+高基數 `stops` / `pattern_stops` 的完整性不靠 public probe 直接 COUNT D1：root-bound 版本沒有這份 D1 copy。routing completion manifests、root binding 與 artifact fingerprint 是 publisher/rollback authority gate 的責任；public probe則從使用者真正會走的公開 route/place/network/journey surface驗證 active version沒有因 authority cutover而破壞。
 
 ### Realtime diagnostics(只降 Yellow)
 
