@@ -3,6 +3,8 @@ import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { queryD1 } from '../transit-snapshot/window-d1.mjs'
 import { resolveDiagnosticTargets } from './diagnose-routes.mjs'
 
+const SAFE_CITY = /^[A-Za-z][A-Za-z0-9]{0,63}$/
+
 export const ACTIVE_ROUTE_CATALOG_SQL = `
 SELECT active_version
 FROM dataset_versions
@@ -24,7 +26,9 @@ SELECT
 `
 
 export async function diagnoseRouteCatalogD1({ cities, query }) {
-  if (!Array.isArray(cities) || cities.length === 0 || typeof query !== 'function') {
+  if (!Array.isArray(cities) || cities.length === 0
+    || cities.some((city) => typeof city !== 'string' || !SAFE_CITY.test(city))
+    || typeof query !== 'function') {
     throw new Error('invalid D1 diagnostic input')
   }
 
@@ -51,6 +55,13 @@ export async function diagnoseRouteCatalogD1({ cities, query }) {
         places: safeCount(row.places),
         routeWithoutPattern: safeCount(row.route_without_pattern),
       }
+      if (Object.values(counts).some((value) => value === null)) {
+        reports.push(report(city, 'error', 'd1_result_invalid', {
+          activeVersionPresent: true,
+        }))
+        continue
+      }
+
       const activeRowsEmpty = counts.routes === 0 || counts.patterns === 0 || counts.places === 0
       reports.push(report(
         city,
@@ -79,6 +90,7 @@ function report(city, result, stage, details = {}) {
 }
 
 function safeCount(value) {
+  if (value === undefined || value === null || value === '') return null
   const number = Number(value)
   return Number.isSafeInteger(number) && number >= 0 && number <= 10_000_000 ? number : null
 }
