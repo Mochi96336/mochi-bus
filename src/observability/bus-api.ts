@@ -7,6 +7,7 @@ import {
 import { releaseIdentity } from './release-identity'
 import type {
   TelemetryCity,
+  TelemetryEmptyReason,
   TelemetryFailureClass,
   TelemetryOperation,
   TelemetryResult,
@@ -16,6 +17,7 @@ import type {
 type BusSourceOutcome = Readonly<{
   result: TelemetryResult
   source: TelemetrySource
+  emptyReason: TelemetryEmptyReason
 }>
 
 /**
@@ -47,10 +49,11 @@ export function beginBusApiOperation(
  * measure and eventually make rare.
  */
 export function busStaticLookupOutcome(snapshotUsed: boolean, itemCount: number): BusSourceOutcome {
+  const emptyReason = itemCount > 0 ? 'not_applicable' as const : 'no_routes' as const
   if (snapshotUsed) {
-    return { result: itemCount > 0 ? 'success' : 'empty', source: 'snapshot' }
+    return { result: itemCount > 0 ? 'success' : 'empty', source: 'snapshot', emptyReason }
   }
-  return { result: itemCount > 0 ? 'degraded' : 'empty', source: 'tdx_static' }
+  return { result: itemCount > 0 ? 'degraded' : 'empty', source: 'tdx_static', emptyReason }
 }
 
 /**
@@ -59,10 +62,11 @@ export function busStaticLookupOutcome(snapshotUsed: boolean, itemCount: number)
  * static. The legacy discovery branch remains an explicit fallback source.
  */
 export function busStopRoutesOutcome(snapshotUsed: boolean, itemCount: number): BusSourceOutcome {
+  const emptyReason = itemCount > 0 ? 'not_applicable' as const : 'no_routes' as const
   if (snapshotUsed) {
-    return { result: itemCount > 0 ? 'success' : 'empty', source: 'mixed' }
+    return { result: itemCount > 0 ? 'success' : 'empty', source: 'mixed', emptyReason }
   }
-  return { result: itemCount > 0 ? 'degraded' : 'empty', source: 'fallback' }
+  return { result: itemCount > 0 ? 'degraded' : 'empty', source: 'fallback', emptyReason }
 }
 
 export function completeBusApiError(tracker: ApiOperationTracker, status: ApiErrorStatus): boolean {
@@ -75,7 +79,9 @@ export function completeBusApiError(tracker: ApiOperationTracker, status: ApiErr
 }
 
 function busApiFailureClass(status: ApiErrorStatus): TelemetryFailureClass {
-  if (status === 400 || status === 404) return 'input_validation'
+  if (status === 400 || status === 404 || status === 413 || status === 415 || status === 422) {
+    return 'input_validation'
+  }
   if (status === 401) return 'tdx_401'
   if (status === 429) return 'tdx_429'
   return 'unknown'
