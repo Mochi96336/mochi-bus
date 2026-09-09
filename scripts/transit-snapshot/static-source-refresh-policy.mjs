@@ -2,6 +2,22 @@ const DAY_MS = 24 * 60 * 60 * 1_000
 const TOPOLOGY_RESOURCES = new Set(['Route', 'Stop', 'StopOfRoute'])
 const SCOPES = new Set(['city', 'intercity'])
 
+const ZERO_REFRESH_DAYS = Object.freeze({
+  city: Object.freeze({ topology: 0, schedule: 0, shape: 0 }),
+  intercity: Object.freeze({ topology: 0, schedule: 0, shape: 0 }),
+})
+
+const WEEKLY_SHARDED_REFRESH_DAYS = Object.freeze({
+  city: Object.freeze({ topology: 14, schedule: 21, shape: 28 }),
+  intercity: Object.freeze({ topology: 21, schedule: 35, shape: 56 }),
+})
+
+export function staticSourceRefreshDaysForSchedule(snapshotSchedule) {
+  return snapshotSchedule === 'taipei-weekly-sharded'
+    ? WEEKLY_SHARDED_REFRESH_DAYS
+    : ZERO_REFRESH_DAYS
+}
+
 export function staticSourceMinimumRefreshMs(env, scope, resource) {
   if (!SCOPES.has(scope)) return 0
   const group = resourceGroup(resource)
