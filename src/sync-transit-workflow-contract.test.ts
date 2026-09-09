@@ -68,7 +68,7 @@ describe('Sync transit snapshots workflow contract', () => {
 
     for (const [envName, outputName] of bindings) {
       expect(workflowSource).toContain(
-        `${envName}: ${{ steps.operation.outputs.${outputName} }}`,
+        `${envName}: \${{ steps.operation.outputs.${outputName} }}`,
       )
       expect(workflowSource).not.toMatch(new RegExp(`${envName}: ['\"]?\\d+`))
     }
