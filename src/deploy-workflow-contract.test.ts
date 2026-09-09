@@ -14,6 +14,31 @@ function stepSource(name: string, nextName?: string): string {
   return workflowSource.slice(start, end)
 }
 
+describe('Deploy workflow trigger contract', () => {
+  it('skips only explicitly non-runtime test and documentation pushes', () => {
+    expect(workflowSource).toContain('    paths-ignore:')
+    for (const path of [
+      "'README.md'",
+      "'docs/**'",
+      "'test/**'",
+      "'**/*.test.ts'",
+      "'**/*.test.mjs'",
+    ]) {
+      expect(workflowSource).toContain(`      - ${path}`)
+    }
+  })
+
+  it('does not broadly ignore runtime, dependency, config, script, or workflow paths', () => {
+    expect(workflowSource).not.toContain("      - 'src/**'")
+    expect(workflowSource).not.toContain("      - 'web/**'")
+    expect(workflowSource).not.toContain("      - 'scripts/**'")
+    expect(workflowSource).not.toContain("      - 'package*.json'")
+    expect(workflowSource).not.toContain("      - 'instances/**'")
+    expect(workflowSource).not.toContain("      - '.github/**'")
+    expect(workflowSource).not.toContain("      - '**/*.md'")
+  })
+})
+
 describe('Deploy workflow post-deploy smoke contract', () => {
   it('resolves the instance before deploy and gates post-deploy verification', () => {
     const resolve = stepPosition('Resolve release verification scope')
