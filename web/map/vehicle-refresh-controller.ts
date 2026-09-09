@@ -17,6 +17,8 @@ type VehicleRefreshOptions<Route, Response> = {
   setInterval?: (callback: () => void, intervalMs: number) => TimerHandle
   clearInterval?: (handle: TimerHandle) => void
   createAbortController?: () => AbortController
+  isVisible?: () => boolean
+  subscribeVisibility?: (callback: () => void) => () => void
 }
 
 export type VehicleRefreshController<Route> = {
@@ -26,9 +28,11 @@ export type VehicleRefreshController<Route> = {
 }
 
 /**
- * Owns the timer, request cancellation and stale-session checks for live vehicle
- * positions. Rendering remains outside this controller so Leaflet and drawer
- * side effects stay in the map entry layer.
+ * Owns the timer, request cancellation, page visibility and stale-session checks
+ * for live vehicle positions. Hidden tabs keep no polling timer and abort an
+ * active request; returning to the foreground refreshes immediately.
+ * Rendering remains outside this controller so Leaflet and drawer side effects
+ * stay in the map entry layer.
  */
 export function createVehicleRefreshController<Route, Response>(
   options: VehicleRefreshOptions<Route, Response>,
@@ -43,11 +47,19 @@ export function createVehicleRefreshController<Route, Response>(
   const clearIntervalFn = options.clearInterval
     ?? ((handle) => globalThis.clearInterval(handle as ReturnType<typeof globalThis.setInterval>))
   const createAbortController = options.createAbortController ?? (() => new AbortController())
+  const isVisible = options.isVisible
+    ?? (() => typeof document === 'undefined' || document.visibilityState === 'visible')
+  const subscribeVisibility = options.subscribeVisibility ?? ((callback) => {
+    if (typeof document === 'undefined') return () => {}
+    document.addEventListener('visibilitychange', callback)
+    return () => document.removeEventListener('visibilitychange', callback)
+  })
 
   let timer: TimerHandle | undefined
   let epoch = 0
   let session: VehicleRefreshSession<Route> | undefined
   let activeAbortController: AbortController | undefined
+  let unsubscribeVisibility: (() => void) | undefined
 
   function clearScheduled(): void {
     if (timer === undefined) return
@@ -55,12 +67,22 @@ export function createVehicleRefreshController<Route, Response>(
     timer = undefined
   }
 
+  function schedule(): void {
+    if (timer !== undefined || !session || !isVisible()) return
+    timer = setIntervalFn(() => void refresh(), intervalMs)
+  }
+
+  function abortActive(): void {
+    activeAbortController?.abort()
+    activeAbortController = undefined
+  }
+
   async function refresh(): Promise<void> {
     const currentSession = session
     const currentEpoch = epoch
-    if (!currentSession || !options.isActive(currentSession)) return
+    if (!currentSession || !isVisible() || !options.isActive(currentSession)) return
 
-    activeAbortController?.abort()
+    abortActive()
     const abortController = createAbortController()
     activeAbortController = abortController
 
@@ -74,6 +96,7 @@ export function createVehicleRefreshController<Route, Response>(
         abortController.signal.aborted
         || epoch !== currentEpoch
         || session !== currentSession
+        || !isVisible()
         || !options.isActive(currentSession)
       ) return
       options.onResponse(response)
@@ -82,6 +105,7 @@ export function createVehicleRefreshController<Route, Response>(
         !abortController.signal.aborted
         && epoch === currentEpoch
         && session === currentSession
+        && isVisible()
         && options.isActive(currentSession)
       ) options.onError(error)
     } finally {
@@ -89,12 +113,24 @@ export function createVehicleRefreshController<Route, Response>(
     }
   }
 
+  function visibilityChanged(): void {
+    if (!session) return
+    if (!isVisible()) {
+      clearScheduled()
+      abortActive()
+      return
+    }
+    void refresh()
+    schedule()
+  }
+
   function stop(): void {
     epoch += 1
     session = undefined
-    activeAbortController?.abort()
-    activeAbortController = undefined
+    abortActive()
     clearScheduled()
+    unsubscribeVisibility?.()
+    unsubscribeVisibility = undefined
     options.onStop()
   }
 
@@ -102,8 +138,10 @@ export function createVehicleRefreshController<Route, Response>(
     start(nextSession) {
       stop()
       session = nextSession
+      unsubscribeVisibility = subscribeVisibility(visibilityChanged)
+      if (!isVisible()) return
       void refresh()
-      timer = setIntervalFn(() => void refresh(), intervalMs)
+      schedule()
     },
     refresh,
     stop,
