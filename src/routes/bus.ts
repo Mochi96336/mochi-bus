@@ -48,6 +48,12 @@ import {
   parseTdxAccessToken,
   requiredQueryString,
 } from '../lib/api-input'
+import {
+  beginBusApiOperation,
+  busStaticLookupOutcome,
+  busStopRoutesOutcome,
+  completeBusApiError,
+} from '../observability/bus-api'
 
 type Env = { Bindings: TDXEnv & TransitBindings }
 const bus = new Hono<Env>()
@@ -154,6 +160,7 @@ bus.get('/api/v1/eta', async (c) => {
 })
 
 bus.get('/api/v1/stops', async (c) => {
+  const tracker = beginBusApiOperation('bus_stops', c.req.query('city'), c.env.CF_VERSION_METADATA)
   try {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const routeName = requiredQueryString(c.req.query('route'), '公車路線', 40)
@@ -166,32 +173,44 @@ bus.get('/api/v1/stops', async (c) => {
     const snapshotGroups = routeUid
       ? await getSnapshotRouteStopGroups(c.env, city, routeName, routeUid)
       : []
-    const groups = snapshotGroups.length
+    const snapshotUsed = snapshotGroups.length > 0
+    const groups = snapshotUsed
       ? snapshotGroups
       : await getRouteStopGroups(tdxEnv(c), city, routeName, routeUid)
+    tracker.complete({
+      ...busStaticLookupOutcome(snapshotUsed, groups.length),
+      httpStatus: 200,
+    })
     return c.json({ schemaVersion: 2, city, routeName, routeUid: routeUid ?? null, groups }, 200, {
       'Cache-Control': 'public, max-age=300',
     })
   } catch (error) {
-    return jsonError(c, error)
+    return jsonError(c, error, tracker)
   }
 })
 
 bus.get('/api/v1/routes', async (c) => {
+  const tracker = beginBusApiOperation('bus_routes', c.req.query('city'), c.env.CF_VERSION_METADATA)
   try {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     // 快照目錄優先:除了省 TDX 額度,也只有它包含攤入本縣市的公路客運路線;
     // 沒建快照的縣市才退回 TDX 即時目錄(只有市區公車)。
     const snapshotRoutes = await getSnapshotRouteCatalog(c.env, city)
-    const routes = snapshotRoutes.length ? snapshotRoutes : await getRouteCatalog(tdxEnv(c), city)
+    const snapshotUsed = snapshotRoutes.length > 0
+    const routes = snapshotUsed ? snapshotRoutes : await getRouteCatalog(tdxEnv(c), city)
+    tracker.complete({
+      ...busStaticLookupOutcome(snapshotUsed, routes.length),
+      httpStatus: 200,
+    })
     // TDX 原始目錄已在 edge 快取；API schema 不交給瀏覽器長快取，避免舊欄位卡住 UI。
     return c.json({ schemaVersion: 2, city, routes }, 200, noStoreHeaders)
   } catch (error) {
-    return jsonError(c, error)
+    return jsonError(c, error, tracker)
   }
 })
 
 bus.get('/api/v1/stop-routes', async (c) => {
+  const tracker = beginBusApiOperation('bus_stop_routes', c.req.query('city'), c.env.CF_VERSION_METADATA)
   try {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const stopName = requiredQueryString(c.req.query('stop'), '站牌名稱', 80)
@@ -204,6 +223,10 @@ bus.get('/api/v1/stop-routes', async (c) => {
     if (stopUid) {
       const snapshot = await getSnapshotStopRouteSuggestions(env, city, stopUid)
       if (snapshot) {
+        tracker.complete({
+          ...busStopRoutesOutcome(true, snapshot.buses.length),
+          httpStatus: 200,
+        })
         return c.json({
           city,
           stopName,
@@ -218,9 +241,13 @@ bus.get('/api/v1/stop-routes', async (c) => {
       getStopRouteSuggestions(env, city, stopName, stopUid),
       stopUid ? getStopPlaceByStopUid(c.env, city, stopUid).catch(() => null) : Promise.resolve(null),
     ])
+    tracker.complete({
+      ...busStopRoutesOutcome(false, buses.length),
+      httpStatus: 200,
+    })
     return c.json({ city, stopName, place, buses }, 200, noStoreHeaders)
   } catch (error) {
-    return jsonError(c, error)
+    return jsonError(c, error, tracker)
   }
 })
 
@@ -363,8 +390,13 @@ function renderPageError(c: Context<Env>, error: unknown) {
   }), presentation.status)
 }
 
-function jsonError(c: Context<Env>, error: unknown) {
+function jsonError(
+  c: Context<Env>,
+  error: unknown,
+  tracker?: ReturnType<typeof beginBusApiOperation>,
+) {
   const presentation = presentBusApiError(error, c.req.header('Authorization'))
+  if (tracker) completeBusApiError(tracker, presentation.status)
   if (presentation.shouldLog) console.error('bus_api_failed', error)
   return c.json(presentation.body, presentation.status, noStoreHeaders)
 }
