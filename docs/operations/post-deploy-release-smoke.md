@@ -71,7 +71,9 @@ Route detail city 有設定 `demoQuery` 時使用其 `routeName`，但不硬編 
 
 若 `demoQuery` 為 `null`，runner 會從 catalogue 中可被公開 route endpoint 接受的 route name 裡，以排序後第一個名稱作為 deterministic sample。Instance schema、operational loader 與 selector 都將 route name 限制為最多 40 字元，與 `/api/v1/map/route` 的輸入契約一致；過長名稱不會成為自動 sample。
 
-通過 route detail 後，runner 取該 variant 第一個 stop 的 canonical place，再讀取 place arrivals。Arrivals 無論當下 realtime healthy 或 degraded，都必須維持：
+通過 route detail 後，runner 取該 variant 第一個 stop 的 canonical place，再讀取 place arrivals。Initial HTTP 保留正常 realtime 行為，因此每個 deploy 仍會驗一次真實 realtime/degraded integration；10 分鐘 observation 後的 final HTTP 則由 authoritative runner adapter 將自身 `final-arrivals` synthetic request 加上 `realtime=0`，只驗 snapshot/place-bundle/schedule postflight，避免同一個 release smoke 再製造第二次明確的 TDX realtime fan-out。
+
+兩個 phase 的 Arrivals 都必須維持：
 
 - schema 1
 - `scheduleSource === place-bundle`
@@ -81,7 +83,9 @@ Route detail city 有設定 `demoQuery` 時使用其 `routeName`，但不硬編 
 - warning 只允許既有 TDX warning enum
 - realtime candidates/queries/rateLimited 欄位有效
 
-Smoke 不刻意製造 TDX 故障，也不新增 production test backdoor。若當下自然出現 rate limit、quota 或 upstream unavailable，契約仍必須提供結構可用的 snapshot/schedule fallback。
+Final policy 只存在 GitHub runner process，不修改 Worker，也不依賴 production test backdoor；它只匹配 release smoke 自己產生、phase 精確為 `final-arrivals` 的 synthetic query。Initial request、fresh Chromium traffic與一般 public API 流量完全不改寫。
+
+Smoke 不刻意製造 TDX 故障。若 initial realtime 當下自然出現 rate limit、quota 或 upstream unavailable，契約仍必須提供結構可用的 snapshot/schedule fallback；final 則必須在不接觸 realtime upstream 的情況下維持同一個 place-bundle/schedule 結構。
 
 ## Fresh-browser boot
 
@@ -104,7 +108,7 @@ browser context 先看到舊 SHA，或同一 SHA 但 Worker version 尚未一致
 
 Initial HTTP 與 fresh-browser smoke 通過後，workflow 預設維持 10 分鐘觀察窗，每分鐘重新讀取 release endpoint。期間 release SHA 或 Worker version 改變、identity 不可讀或 release endpoint 失效都使 job 失敗。
 
-觀察窗結束後，再跑一次完整 HTTP/assets/API postflight。這避免只在 deployment propagation 的第一個成功瞬間取樣。
+觀察窗結束後，再跑一次完整 HTTP/assets/API postflight；唯一差異是 final arrivals 強制 `realtime=0`。因此 final 仍重新驗證 pages、hashed assets、兩個代表城市的 snapshot routes/network、route detail、stop-place 與 place-bundle schedule contract，同時不為同一 deploy 重複消耗明確的 TDX arrivals realtime fan-out。
 
 ## Failure policy
 
@@ -112,7 +116,7 @@ A8 不自動 rollback。
 
 - release 尚未 propagation：等待，直到 bounded timeout
 - hard smoke failure：deploy job 失敗，停止把此 workflow 描述成成功 deployment
-- TDX degraded 但 fallback contract 有效：smoke 可成功，report 記錄 `degradedObserved`
+- initial TDX degraded 但 fallback contract 有效：smoke 可成功，initial report 記錄 `degradedObserved`
 - data/snapshot 單城問題：由 snapshot operations 處理，不回退無關 Worker
 
 人工 rollback 前仍須確認問題可重現、命中新 release，且不是 TDX、單城 snapshot 或 transient propagation。
@@ -127,7 +131,7 @@ Workflow 永遠上傳 `release-smoke-report.json`，保留 14 天。
 - Worker version ID／created time
 - started/completed time
 - page、asset、hashed asset、city counts
-- 是否觀察到合法 degraded response
+- initial/final HTTP phase 是否觀察到合法 degraded response
 - browser error counters
 - observation check count
 
@@ -138,7 +142,7 @@ Workflow 永遠上傳 `release-smoke-report.json`，保留 14 天。
 CLI target selection 與 instance runtime contract 由下列測試驗證，不需接觸 production：
 
 ```text
-npm run test -- scripts/release-smoke/run-post-deploy.test.mjs scripts/instance/operational-resources.test.mjs
+npm run test -- scripts/release-smoke/run-post-deploy.test.mjs scripts/release-smoke/fetch-policy.test.mjs scripts/instance/operational-resources.test.mjs
 npm run test:instance
 ```
 
