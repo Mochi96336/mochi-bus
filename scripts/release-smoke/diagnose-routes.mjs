@@ -8,10 +8,10 @@ const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SECONDARY_CITY_CANARIES = Object.freeze(['Chiayi'])
 
 export function resolveDiagnosticTargets(config) {
-  const enabledCities = config?.enabledCities
-  const defaultCity = config?.defaultCity
-  const demoQuery = config?.demoQuery
-  const publicOrigin = config?.publicOrigin
+  const enabledCities = config?.transit?.enabledCities ?? config?.enabledCities
+  const defaultCity = config?.transit?.defaultCity ?? config?.defaultCity
+  const demoQuery = config?.transit?.demoQuery ?? config?.demoQuery
+  const publicOrigin = config?.site?.canonicalOrigin ?? config?.publicOrigin
   let origin
   try {
     origin = new URL(publicOrigin)
