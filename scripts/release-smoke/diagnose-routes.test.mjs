@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  classifyPublicErrorPayload,
   diagnoseRoutes,
   resolveDiagnosticTargets,
   summarizeRoutesPayload,
@@ -39,6 +40,7 @@ describe('release routes diagnostic', () => {
       stage: 'contract_ok',
       status: 200,
       contentType: 'json',
+      publicErrorClass: 'not_applicable',
       schemaVersion: 2,
       responseCityMatches: true,
       source: 'snapshot',
@@ -84,6 +86,37 @@ describe('release routes diagnostic', () => {
       { city: 'Kaohsiung', stage: 'json_parse', status: 200, contentType: 'json' },
     ])
     expect(JSON.stringify(reports)).not.toMatch(/secret|token=|<html>|bus\.example/i)
+  })
+
+  it('classifies known public error messages without copying arbitrary bodies into diagnostics', async () => {
+    expect(classifyPublicErrorPayload({
+      error: '共用的 TDX 額度可能已用完，暫時查不到即時到站；地圖與已同步路網仍可使用，也可到「我的公車」的進階設定填自己的 TDX 憑證。',
+    })).toBe('tdx_quota')
+    expect(classifyPublicErrorPayload({ error: '暫時無法取得公車資料' })).toBe('generic')
+    expect(classifyPublicErrorPayload({ error: 'token=https://secret.example' })).toBe('unknown')
+
+    const responses = [
+      new Response(JSON.stringify({
+        error: '共用的 TDX 額度可能已用完，暫時查不到即時到站；地圖與已同步路網仍可使用，也可到「我的公車」的進階設定填自己的 TDX 憑證。',
+      }), { status: 502, headers: { 'Content-Type': 'application/json' } }),
+      new Response(JSON.stringify({ error: 'token=https://secret.example' }), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ]
+    const reports = await diagnoseRoutes({
+      origin: 'https://bus.example',
+      cities: ['Taipei', 'Chiayi'],
+      fetchImpl: vi.fn(async () => responses.shift()),
+    })
+
+    expect(reports.map(({ city, stage, status, publicErrorClass }) => ({
+      city, stage, status, publicErrorClass,
+    }))).toEqual([
+      { city: 'Taipei', stage: 'http_status', status: 502, publicErrorClass: 'tdx_quota' },
+      { city: 'Chiayi', stage: 'http_status', status: 502, publicErrorClass: 'unknown' },
+    ])
+    expect(JSON.stringify(reports)).not.toMatch(/token=|secret\.example|共用的 TDX 額度|暫時無法取得公車資料/)
   })
 
   it('classifies malformed route identities without copying them into diagnostics', () => {
