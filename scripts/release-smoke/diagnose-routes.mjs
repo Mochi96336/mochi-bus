@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { loadOperationalResources } from '../instance/operational-resources.mjs'
 
 const MAX_JSON_BYTES = 2_097_152
 const HTTP_TIMEOUT_MS = 20_000
@@ -178,19 +178,9 @@ function safeCount(value) {
 }
 
 export async function main(env = process.env) {
-  const configPath = env.RELEASE_ROUTES_DIAGNOSTIC_INSTANCE ?? 'instances/mochi-production.json'
-  let config
-  try {
-    config = JSON.parse(await readFile(configPath, 'utf8'))
-  } catch {
-    console.error(JSON.stringify({ event: 'release_routes_diagnostic', result: 'error', stage: 'configuration' }))
-    process.exitCode = 1
-    return
-  }
-
   let targets
   try {
-    targets = resolveDiagnosticTargets(config)
+    targets = resolveDiagnosticTargets(loadOperationalResources({ env }))
   } catch {
     console.error(JSON.stringify({ event: 'release_routes_diagnostic', result: 'error', stage: 'configuration' }))
     process.exitCode = 1
