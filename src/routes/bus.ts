@@ -160,7 +160,7 @@ bus.get('/api/v1/eta', async (c) => {
 })
 
 bus.get('/api/v1/stops', async (c) => {
-  const tracker = beginBusApiOperation('bus_stops', c.req.query('city'), c.env.CF_VERSION_METADATA)
+  const tracker = beginBusApiOperation('bus_stops', c.req.query('city'), c.env?.CF_VERSION_METADATA)
   try {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const routeName = requiredQueryString(c.req.query('route'), '公車路線', 40)
@@ -190,7 +190,7 @@ bus.get('/api/v1/stops', async (c) => {
 })
 
 bus.get('/api/v1/routes', async (c) => {
-  const tracker = beginBusApiOperation('bus_routes', c.req.query('city'), c.env.CF_VERSION_METADATA)
+  const tracker = beginBusApiOperation('bus_routes', c.req.query('city'), c.env?.CF_VERSION_METADATA)
   try {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     // 快照目錄優先:除了省 TDX 額度,也只有它包含攤入本縣市的公路客運路線;
@@ -210,7 +210,7 @@ bus.get('/api/v1/routes', async (c) => {
 })
 
 bus.get('/api/v1/stop-routes', async (c) => {
-  const tracker = beginBusApiOperation('bus_stop_routes', c.req.query('city'), c.env.CF_VERSION_METADATA)
+  const tracker = beginBusApiOperation('bus_stop_routes', c.req.query('city'), c.env?.CF_VERSION_METADATA)
   try {
     const city = requireEnabledCity(c.req.query('city')?.trim() || defaultCity)
     const stopName = requiredQueryString(c.req.query('stop'), '站牌名稱', 80)
