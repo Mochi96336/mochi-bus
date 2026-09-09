@@ -1,9 +1,22 @@
 import { pathToFileURL } from 'node:url'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
-import { queryD1 } from '../transit-snapshot/window-d1.mjs'
 import { resolveDiagnosticTargets } from './diagnose-routes.mjs'
 
 const SAFE_CITY = /^[A-Za-z][A-Za-z0-9]{0,63}$/
+const MAX_D1_RESPONSE_BYTES = 65_536
+const D1_TIMEOUT_MS = 15_000
+const D1_READ_LIMIT_MARKER = "Your account has exceeded D1's free tier daily row read limit."
+const D1_WRITE_LIMIT_MARKER = "Your account has exceeded D1's free tier daily row write limit."
+const D1_FAILURE_CLASSES = new Set([
+  'none',
+  'free_rows_read_limit',
+  'free_rows_write_limit',
+  'network',
+  'response_invalid',
+  'api_rejected',
+  'result_invalid',
+  'unknown',
+])
 
 export const ACTIVE_ROUTE_CATALOG_SQL = `
 SELECT active_version
@@ -24,6 +37,84 @@ SELECT
         WHERE p.version = r.version AND p.city_code = r.city_code AND p.route_uid = r.route_uid
       )) AS route_without_pattern
 `
+
+class D1DiagnosticFailure extends Error {
+  constructor(failureClass) {
+    super('D1 diagnostic query failed')
+    this.name = 'D1DiagnosticFailure'
+    this.failureClass = D1_FAILURE_CLASSES.has(failureClass) ? failureClass : 'unknown'
+  }
+}
+
+export async function requestDiagnosticD1({
+  accountId,
+  apiToken,
+  databaseId,
+  sql,
+  params,
+  fetchImpl = fetch,
+}) {
+  if (!accountId || !apiToken || !databaseId || typeof sql !== 'string'
+    || !sql.trim().toUpperCase().startsWith('SELECT') || !Array.isArray(params)
+    || typeof fetchImpl !== 'function') {
+    throw new D1DiagnosticFailure('unknown')
+  }
+
+  let response
+  try {
+    response = await fetchImpl(
+      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/d1/database/${encodeURIComponent(databaseId)}/query`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sql, params }),
+        signal: AbortSignal.timeout(D1_TIMEOUT_MS),
+      },
+    )
+  } catch {
+    throw new D1DiagnosticFailure('network')
+  }
+
+  let text
+  try {
+    text = await readBoundedText(response, MAX_D1_RESPONSE_BYTES)
+  } catch {
+    throw new D1DiagnosticFailure('response_invalid')
+  }
+
+  let payload
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    throw new D1DiagnosticFailure('response_invalid')
+  }
+
+  if (!response?.ok || payload?.success !== true) {
+    throw new D1DiagnosticFailure(classifyD1ApiFailure(payload))
+  }
+  const result = Array.isArray(payload?.result) ? payload.result : null
+  if (!result || result.length !== 1
+    || result[0]?.success !== true || !Array.isArray(result[0]?.results)) {
+    throw new D1DiagnosticFailure('result_invalid')
+  }
+  return result[0].results
+}
+
+export function classifyD1ApiFailure(payload) {
+  const messages = Array.isArray(payload?.errors)
+    ? payload.errors.map((item) => typeof item?.message === 'string' ? item.message : '')
+    : []
+  if (messages.some((message) => message.includes(D1_READ_LIMIT_MARKER))) {
+    return 'free_rows_read_limit'
+  }
+  if (messages.some((message) => message.includes(D1_WRITE_LIMIT_MARKER))) {
+    return 'free_rows_write_limit'
+  }
+  return 'api_rejected'
+}
 
 export async function diagnoseRouteCatalogD1({ cities, query }) {
   if (!Array.isArray(cities) || cities.length === 0
@@ -69,8 +160,10 @@ export async function diagnoseRouteCatalogD1({ cities, query }) {
         activeRowsEmpty ? 'active_rows_empty' : 'reference_ok',
         { activeVersionPresent: true, ...counts },
       ))
-    } catch {
-      reports.push(report(city, 'error', 'd1_query_failed'))
+    } catch (error) {
+      reports.push(report(city, 'error', 'd1_query_failed', {
+        d1FailureClass: error instanceof D1DiagnosticFailure ? error.failureClass : 'unknown',
+      }))
     }
   }
   return Object.freeze(reports)
@@ -81,6 +174,7 @@ function report(city, result, stage, details = {}) {
     city,
     result,
     stage,
+    d1FailureClass: safeD1FailureClass(details.d1FailureClass),
     activeVersionPresent: details.activeVersionPresent === true,
     routes: safeCount(details.routes),
     patterns: safeCount(details.patterns),
@@ -89,10 +183,35 @@ function report(city, result, stage, details = {}) {
   })
 }
 
+function safeD1FailureClass(value) {
+  return D1_FAILURE_CLASSES.has(value) ? value : 'none'
+}
+
 function safeCount(value) {
   if (value === undefined || value === null || value === '') return null
   const number = Number(value)
   return Number.isSafeInteger(number) && number >= 0 && number <= 10_000_000 ? number : null
+}
+
+async function readBoundedText(response, maximumBytes) {
+  if (!response?.body) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let received = 0
+  let body = ''
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      if (received > maximumBytes) throw new Error('response too large')
+      body += decoder.decode(value, { stream: true })
+    }
+    body += decoder.decode()
+    return body
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
 }
 
 export async function main(env = process.env) {
@@ -113,11 +232,10 @@ export async function main(env = process.env) {
     return
   }
 
-  const query = (sql, params) => queryD1({
+  const query = (sql, params) => requestDiagnosticD1({
     accountId: env.CLOUDFLARE_ACCOUNT_ID,
     apiToken: env.CLOUDFLARE_API_TOKEN,
     databaseId: resources.d1DatabaseId,
-    fetchImpl: fetch,
     sql,
     params,
   })
