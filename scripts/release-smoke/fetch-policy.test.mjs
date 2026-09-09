@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { createReleaseSmokeFetch, finalSnapshotOnlyUrl } from './fetch-policy.mjs'
+import {
+  createReleaseSmokeFetch,
+  finalSnapshotOnlyUrl,
+  withReleaseSmokeFetch,
+} from './fetch-policy.mjs'
 
 const origin = 'https://bus.example.test'
 const initialArrivals = `${origin}/api/v1/map/place/place-1/arrivals?city=Taipei&release_smoke=run:sha:initial-arrivals`
@@ -50,10 +54,21 @@ describe('release smoke fetch policy', () => {
     expect(fetchImpl).toHaveBeenCalledWith(initialArrivals, init)
   })
 
-  it('installs the policy only around the authoritative production smoke call', () => {
-    expect(authoritativeSource).toContain("import { createReleaseSmokeFetch } from './fetch-policy.mjs'")
-    expect(authoritativeSource).toContain('globalThis.fetch = createReleaseSmokeFetch({ fetchImpl: originalFetch })')
+  it('restores the original fetch even when the smoke operation throws', async () => {
+    const originalFetch = vi.fn(async () => new Response('{}'))
+    const globalObject = { fetch: originalFetch }
+    const failure = new Error('synthetic smoke failure')
+
+    await expect(withReleaseSmokeFetch(async () => {
+      expect(globalObject.fetch).not.toBe(originalFetch)
+      throw failure
+    }, { globalObject })).rejects.toBe(failure)
+    expect(globalObject.fetch).toBe(originalFetch)
+  })
+
+  it('installs the tested lifecycle only around the authoritative production smoke call', () => {
+    expect(authoritativeSource).toContain("import { withReleaseSmokeFetch } from './fetch-policy.mjs'")
+    expect(authoritativeSource).toContain('await withReleaseSmokeFetch(async () => {')
     expect(authoritativeSource).toContain('await runPostDeploySmoke({ ...env, RELEASE_SMOKE_ORIGIN: origin })')
-    expect(authoritativeSource).toContain('finally {\n    globalThis.fetch = originalFetch\n  }')
   })
 })
