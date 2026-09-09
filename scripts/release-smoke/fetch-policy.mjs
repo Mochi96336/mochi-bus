@@ -5,7 +5,7 @@ export function createReleaseSmokeFetch({ fetchImpl = globalThis.fetch } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function')
 
   return function releaseSmokeFetch(input, init) {
-    const rewritten = finalSnapshotOnlyUrl(input)
+    const rewritten = finalSnapshotOnlyInput(input)
     return fetchImpl(rewritten ?? input, init)
   }
 }
@@ -24,6 +24,12 @@ export function finalSnapshotOnlyUrl(input) {
 
   url.searchParams.set('realtime', '0')
   return url
+}
+
+function finalSnapshotOnlyInput(input) {
+  const url = finalSnapshotOnlyUrl(input)
+  if (!url) return null
+  return input instanceof Request ? new Request(url, input) : url
 }
 
 function requestUrl(input) {
