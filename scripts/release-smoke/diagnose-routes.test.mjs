@@ -29,6 +29,18 @@ describe('release routes diagnostic', () => {
     })).toThrow('invalid diagnostic configuration')
   })
 
+  it('reads the raw production instance schema used by instances/mochi-production.json', () => {
+    expect(resolveDiagnosticTargets({
+      schemaVersion: 1,
+      site: { canonicalOrigin: 'https://bus.example' },
+      transit: {
+        enabledCities: ['Taipei', 'NewTaipei', 'Chiayi'],
+        defaultCity: 'Taipei',
+        demoQuery: { city: 'Taipei', routeName: '307', stopUid: 'TPE213044' },
+      },
+    })).toEqual({ origin: 'https://bus.example', cities: ['Taipei', 'Chiayi'] })
+  })
+
   it('reports only bounded contract metadata for healthy and fallback payloads', () => {
     expect(summarizeRoutesPayload(healthy, 'Taipei', {
       status: 200,
