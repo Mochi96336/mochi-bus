@@ -29,5 +29,8 @@ jobs:
           node-version-file: .nvmrc
           check-latest: false
 
+      - name: Compile production instance identity
+        run: node scripts/instance/compile-config.mjs
+
       - name: Diagnose bounded production route metadata
         run: node scripts/release-smoke/diagnose-routes.mjs
