@@ -4,7 +4,12 @@ import { resolvePublicProbeBaseUrl } from './public-probe-origin.mjs'
 
 const FULL_SHA = /^[a-f0-9]{40}$/
 const RELEASE_RESPONSE_LIMIT_BYTES = 16 * 1024
-export const PUBLIC_RELEASE_WAIT_TIMEOUT_MS = 5 * 60 * 1000
+// Deploys are serialized and each completed Worker release observes production
+// for ten minutes before the next queued deploy can start. Twelve minutes lets
+// a push probe survive one existing observation window plus the next Worker
+// deployment while still leaving ample room inside the workflow's 20-minute cap
+// for the ~3-minute nationwide probe itself.
+export const PUBLIC_RELEASE_WAIT_TIMEOUT_MS = 12 * 60 * 1000
 export const PUBLIC_RELEASE_WAIT_POLL_MS = 5 * 1000
 
 export async function waitForPublicRelease({
