@@ -4,6 +4,17 @@ on:
   push:
     branches:
       - main
+    # CI already validates every PR. A main commit that changes only tests or
+    # documentation cannot change the Worker/assets, so avoid a redundant
+    # production deployment and ten-minute post-deploy observation window.
+    # Keep this list deliberately narrow: package/config/scripts/runtime/workflow
+    # changes must still deploy even when accompanied by ignored files.
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - 'test/**'
+      - '**/*.test.ts'
+      - '**/*.test.mjs'
   workflow_dispatch:
 
 permissions:
