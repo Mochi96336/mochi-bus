@@ -54,23 +54,26 @@ export async function readVehicles(c: Context<MapEnv>) {
     if (!city || !supportedCityCodes.has(city)) throw new QueryValidationError('請選擇縣市')
     if (!routeName || routeName.length > 40) throw new QueryValidationError('路線格式錯誤')
 
+    const env = tdxEnv(c)
     const url = new URL(
       `https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/${tdxRouteScope(city, routeUid)}/${encodeURIComponent(routeName)}`,
     )
-    // Keep $format first for cache-key continuity with the existing route-specific request,
-    // then narrow fields and identities so a cache miss transfers only records this handler can use.
+    // Shared credentials are quota-constrained. Keep one canonical upstream/cache object per
+    // RouteUID so opposite directions share the same 30-second response; direction remains a
+    // defensive local filter below. BYOK keeps the narrower direction filter because its quota
+    // and transfer cost belong to that caller rather than the shared service account.
     url.searchParams.set('$format', 'JSON')
     url.searchParams.set('$select', VEHICLE_SELECT)
     const filters: string[] = []
     if (routeUid) filters.push(`RouteUID eq '${escapeODataString(routeUid)}'`)
-    if (direction !== undefined) filters.push(`Direction eq ${direction}`)
+    if (env.TDX_USER_ACCESS_TOKEN && direction !== undefined) filters.push(`Direction eq ${direction}`)
     if (filters.length) url.searchParams.set('$filter', filters.join(' and '))
 
     let items: VehicleItem[] = []
     let warning: TDXWarning | undefined
     let upstreamSucceeded = false
     try {
-      items = await fetchTDXJson<VehicleItem[]>(tdxEnv(c), url, 15, {
+      items = await fetchTDXJson<VehicleItem[]>(env, url, 15, {
         operation: 'vehicle_positions',
         city: telemetryCity(city),
         validate: isTDXRecordArray<VehicleItem>,
@@ -86,7 +89,7 @@ export async function readVehicles(c: Context<MapEnv>) {
     }
 
     // Keep local identity filtering as a defensive boundary even though stable identities are
-    // now also pushed upstream; malformed/out-of-scope rows must not leak into the public response.
+    // also pushed upstream; malformed/out-of-scope rows must not leak into the public response.
     const identityMatchedItems = items
       .filter((item) => !routeUid || item.RouteUID === routeUid)
       .filter((item) => direction === undefined || item.Direction === direction)

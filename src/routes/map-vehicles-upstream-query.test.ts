@@ -19,10 +19,14 @@ const bindings = {
 
 const VEHICLE_SELECT = 'PlateNumb,RouteUID,Direction,BusPosition,Speed,Azimuth,GPSTime,UpdateTime'
 
-function request(query: string): Promise<Response> {
+function request(query: string, authorization?: string): Promise<Response> {
   const app = new Hono<MapEnv>()
   app.get('/api/v1/map/vehicles', readVehicles)
-  return Promise.resolve(app.request(`https://bus.example/api/v1/map/vehicles?${query}`, {}, bindings))
+  return Promise.resolve(app.request(
+    `https://bus.example/api/v1/map/vehicles?${query}`,
+    authorization ? { headers: { Authorization: authorization } } : {},
+    bindings,
+  ))
 }
 
 describe('vehicle upstream request policy', () => {
@@ -33,7 +37,7 @@ describe('vehicle upstream request policy', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
   })
 
-  it('selects only public vehicle fields and pushes stable identity filters upstream', async () => {
+  it('canonicalizes shared vehicle reads at RouteUID scope so directions share one cache key', async () => {
     const response = await request('city=Taipei&route=307&routeUid=TPE307&direction=0')
     expect(response.status).toBe(200)
 
@@ -41,17 +45,29 @@ describe('vehicle upstream request policy', () => {
     expect(url.pathname).toBe('/api/basic/v2/Bus/RealTimeByFrequency/City/Taipei/307')
     expect(url.searchParams.get('$format')).toBe('JSON')
     expect(url.searchParams.get('$select')).toBe(VEHICLE_SELECT)
-    expect(url.searchParams.get('$filter')).toBe("RouteUID eq 'TPE307' and Direction eq 0")
+    expect(url.searchParams.get('$filter')).toBe("RouteUID eq 'TPE307'")
   })
 
-  it('uses InterCity scope for THB identities while keeping the same narrow field set', async () => {
+  it('uses the same shared InterCity cache object across THB directions', async () => {
     const response = await request('city=Taichung&route=9010&routeUid=THB9010&direction=1')
     expect(response.status).toBe(200)
 
     const url = tdx.fetchTDXJson.mock.calls[0][1] as URL
     expect(url.pathname).toBe('/api/basic/v2/Bus/RealTimeByFrequency/InterCity/9010')
     expect(url.searchParams.get('$select')).toBe(VEHICLE_SELECT)
-    expect(url.searchParams.get('$filter')).toBe("RouteUID eq 'THB9010' and Direction eq 1")
+    expect(url.searchParams.get('$filter')).toBe("RouteUID eq 'THB9010'")
+  })
+
+  it('keeps BYOK vehicle reads direction-specific to avoid extra personal-token transfer', async () => {
+    const response = await request(
+      'city=Taipei&route=307&routeUid=TPE307&direction=0',
+      'Bearer personal-token',
+    )
+    expect(response.status).toBe(200)
+
+    const url = tdx.fetchTDXJson.mock.calls[0][1] as URL
+    expect(url.searchParams.get('$select')).toBe(VEHICLE_SELECT)
+    expect(url.searchParams.get('$filter')).toBe("RouteUID eq 'TPE307' and Direction eq 0")
   })
 
   it('keeps route-only reads compatible and simply omits the identity filter', async () => {
