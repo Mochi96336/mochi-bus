@@ -22,6 +22,24 @@ function createIntervalClock() {
   }
 }
 
+function createVisibility(initial = true) {
+  let visible = initial
+  const callbacks = new Set<() => void>()
+
+  return {
+    isVisible: () => visible,
+    subscribe(callback: () => void) {
+      callbacks.add(callback)
+      return () => callbacks.delete(callback)
+    },
+    change(nextVisible: boolean) {
+      visible = nextVisible
+      for (const callback of [...callbacks]) callback()
+    },
+    size: () => callbacks.size,
+  }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((resolvePromise) => {
@@ -61,6 +79,81 @@ describe('createVehicleRefreshController', () => {
 
     await clock.tick()
     expect(load).toHaveBeenCalledTimes(2)
+    expect(clock.size()).toBe(1)
+  })
+
+  it('stops polling while hidden, aborts in-flight work and refreshes on foreground return', async () => {
+    const clock = createIntervalClock()
+    const visibility = createVisibility()
+    const first = deferred<string>()
+    const signals: AbortSignal[] = []
+    const load = vi.fn((_city: string, _route: string, signal: AbortSignal) => {
+      signals.push(signal)
+      return signals.length === 1 ? first.promise : Promise.resolve('foreground')
+    })
+    const onResponse = vi.fn()
+    const controller = createVehicleRefreshController({
+      load,
+      isActive: () => true,
+      onResponse,
+      onError: vi.fn(),
+      onStop: vi.fn(),
+      setInterval: clock.setInterval,
+      clearInterval: clock.clearInterval,
+      isVisible: visibility.isVisible,
+      subscribeVisibility: visibility.subscribe,
+    })
+
+    controller.start({ cityCode: 'Taipei', route: '307' })
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(clock.size()).toBe(1)
+    expect(visibility.size()).toBe(1)
+
+    visibility.change(false)
+    expect(signals[0]?.aborted).toBe(true)
+    expect(clock.size()).toBe(0)
+    await clock.tick()
+    expect(load).toHaveBeenCalledTimes(1)
+
+    first.resolve('hidden late response')
+    await flush()
+    expect(onResponse).not.toHaveBeenCalled()
+
+    visibility.change(true)
+    await flush()
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(onResponse).toHaveBeenCalledWith('foreground')
+    expect(clock.size()).toBe(1)
+
+    controller.stop()
+    expect(clock.size()).toBe(0)
+    expect(visibility.size()).toBe(0)
+  })
+
+  it('does not start polling until an initially hidden page becomes visible', async () => {
+    const clock = createIntervalClock()
+    const visibility = createVisibility(false)
+    const load = vi.fn(async () => 'positions')
+    const controller = createVehicleRefreshController({
+      load,
+      isActive: () => true,
+      onResponse: vi.fn(),
+      onError: vi.fn(),
+      onStop: vi.fn(),
+      setInterval: clock.setInterval,
+      clearInterval: clock.clearInterval,
+      isVisible: visibility.isVisible,
+      subscribeVisibility: visibility.subscribe,
+    })
+
+    controller.start({ cityCode: 'Taipei', route: '307' })
+    await flush()
+    expect(load).not.toHaveBeenCalled()
+    expect(clock.size()).toBe(0)
+
+    visibility.change(true)
+    await flush()
+    expect(load).toHaveBeenCalledTimes(1)
     expect(clock.size()).toBe(1)
   })
 
