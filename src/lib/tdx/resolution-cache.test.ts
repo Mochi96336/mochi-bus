@@ -6,6 +6,7 @@ import { createTDXResolutionCache, type TDXEnv, type TDXResolutionCacheDependenc
 import type { TDXUpstreamResult } from './upstream-data-client'
 
 const url = new URL('https://tdx.transportdata.tw/api/basic/v2/Bus/Route/City/Taipei?case=resolution')
+const sharedQuotaCooldownUrl = 'https://mochi-cache.invalid/tdx/shared-quota-cooldown'
 const validate = (value: unknown): value is Array<{ id: string }> => (
   Array.isArray(value) && value.every((item) => item !== null && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')
 )
@@ -31,6 +32,21 @@ function success(data: unknown = [{ id: 'fresh' }], leader = true): TDXUpstreamR
     circuitKey: 'data/fixture',
     resource: 'Route',
   }
+}
+
+function failed(error: TDXServiceError): TDXUpstreamResult {
+  return {
+    outcome: { ok: false, error, retryCount: 0 },
+    leader: true,
+    circuitKey: 'data/fixture',
+    resource: 'Route',
+  }
+}
+
+function quotaError(): TDXServiceError {
+  const error = new TDXServiceError('quota exhausted', 429, { failureKind: 'quota' })
+  error.warning = 'tdx-quota'
+  return error
 }
 
 function setup(overrides: Partial<TDXResolutionCacheDependencies> = {}) {
@@ -108,10 +124,11 @@ describe('TDX resolution cache boundary', () => {
 
     expect(fetchUpstream).toHaveBeenCalledTimes(3)
     expect(state.getTDXToken).toHaveBeenCalledTimes(3)
-    expect(cache.match).toHaveBeenCalledTimes(3)
+    expect(cache.match).toHaveBeenCalledTimes(4)
     const cacheUrls = vi.mocked(cache.match).mock.calls.map(([request]) => request.url)
-    expect(new Set(cacheUrls).size).toBe(3)
+    expect(new Set(cacheUrls).size).toBe(4)
     expect(cacheUrls[0]).toBe(`https://mochi-cache.invalid/tdx/${encodeURIComponent(url.toString())}`)
+    expect(cacheUrls[1]).toBe(sharedQuotaCooldownUrl)
     expect(cacheUrls.join('\n')).not.toContain('token-a')
     expect(cacheUrls.join('\n')).not.toContain('token-b')
   })
@@ -131,6 +148,72 @@ describe('TDX resolution cache boundary', () => {
     expect(match).toHaveBeenCalledOnce()
     expect(state.getTDXToken).not.toHaveBeenCalled()
     expect(events[0]).toMatchObject({ resolution: 'edge', dataAgeBucket: '1_5m' })
+  })
+
+  it('persists a five-minute edge marker when shared token acquisition reports quota exhaustion', async () => {
+    const events: TelemetryEnvelope[] = []
+    const cache = stubCache()
+    const error = quotaError()
+    const state = setup({ getTDXToken: vi.fn(async () => { throw error }) })
+
+    await expect(state.resolver.fetchTDXJson(environment(events), url, 30, {
+      operation: 'vehicle_positions', validate,
+    })).rejects.toBe(error)
+
+    expect(state.fetchUpstream).not.toHaveBeenCalled()
+    expect(cache.put).toHaveBeenCalledOnce()
+    const [key, response] = vi.mocked(cache.put).mock.calls[0]
+    expect(key.url).toBe(sharedQuotaCooldownUrl)
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=300')
+    expect(events[0]).toMatchObject({ resolution: 'upstream', result: 'error', failureClass: 'quota' })
+  })
+
+  it('persists the same edge marker when a shared data request reports quota exhaustion', async () => {
+    const cache = stubCache()
+    const error = quotaError()
+    const state = setup({ fetchUpstream: vi.fn(async () => failed(error)) })
+
+    await expect(state.resolver.fetchTDXJson(environment(), url, 30, { validate })).rejects.toBe(error)
+
+    expect(cache.put).toHaveBeenCalledOnce()
+    expect(vi.mocked(cache.put).mock.calls[0][0].url).toBe(sharedQuotaCooldownUrl)
+  })
+
+  it('uses a shared edge quota marker before token acquisition while preserving stale fallback', async () => {
+    const events: TelemetryEnvelope[] = []
+    const match = vi.fn(async (request: Request) => (
+      request.url === sharedQuotaCooldownUrl ? new Response('1') : undefined
+    ))
+    stubCache(match)
+    const state = setup()
+
+    const result = await state.resolver.resolveTDXJson(environment(events), url, 30, {
+      operation: 'vehicle_positions',
+      validate,
+      staleFallback: async () => ({ data: [{ id: 'stale' }], dataAgeMilliseconds: 8 * 60_000 }),
+    })
+
+    expect(result).toMatchObject({ resolution: 'stale_replay', degraded: true, data: [{ id: 'stale' }] })
+    expect(state.getTDXToken).not.toHaveBeenCalled()
+    expect(state.fetchUpstream).not.toHaveBeenCalled()
+    expect(match).toHaveBeenCalledTimes(2)
+    expect(events[0]).toMatchObject({ result: 'degraded', failureClass: 'quota', dataAgeBucket: '5_30m' })
+  })
+
+  it('never applies the shared quota marker to BYOK requests', async () => {
+    const match = vi.fn(async (request: Request) => (
+      request.url === sharedQuotaCooldownUrl ? new Response('1') : undefined
+    ))
+    stubCache(match)
+    const state = setup()
+
+    await expect(state.resolver.fetchTDXJson(personalEnvironment('token-a'), url, 30, { validate }))
+      .resolves.toEqual([{ id: 'fresh' }])
+
+    expect(match).toHaveBeenCalledOnce()
+    expect(match.mock.calls[0][0].url).not.toBe(sharedQuotaCooldownUrl)
+    expect(state.getTDXToken).toHaveBeenCalledOnce()
+    expect(state.fetchUpstream).toHaveBeenCalledOnce()
   })
 
   it('uses stale data for cooldown without token or upstream work', async () => {
