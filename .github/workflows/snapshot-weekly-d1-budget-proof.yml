@@ -1,0 +1,62 @@
+name: Snapshot weekly D1 budget proof
+
+on:
+  schedule:
+    # 02:45 Asia/Taipei, before the 03:17 snapshot publication window.
+    - cron: '45 18 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      # Budget/schedule changes should immediately prove the current production
+      # state instead of waiting for the next scheduled preflight.
+      - '.github/workflows/snapshot-weekly-d1-budget-proof.yml'
+      - 'scripts/transit-snapshot/d1-write-budget.mjs'
+      - 'scripts/transit-snapshot/snapshot-schedule.mjs'
+      - 'scripts/transit-snapshot/weekly-d1-write-budget.mjs'
+
+concurrency:
+  group: snapshot-weekly-d1-budget-proof
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Resolve snapshot operation scope
+        id: operation
+        run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Prove full weekly D1 write budget
+        if: steps.operation.outputs.enabled == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+          SNAPSHOT_D1_WRITE_BUDGET: '75000'
+          SNAPSHOT_D1_ESTIMATE_GROWTH_FACTOR: '1.10'
+          SNAPSHOT_WEEKLY_D1_BUDGET_REPORT: .transit-snapshot/weekly-d1-write-budget.json
+        run: node scripts/transit-snapshot/weekly-d1-write-budget.mjs
+      - name: Upload weekly D1 budget evidence
+        if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-weekly-d1-budget-proof
+          path: .transit-snapshot/weekly-d1-write-budget.json
+          if-no-files-found: warn
+          retention-days: 14
