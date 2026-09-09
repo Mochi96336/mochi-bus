@@ -18,7 +18,7 @@ Mochi Bus 的起點，是一次搭公車時的小抱怨:有些工具有地圖，
 - **封面(`/`)**:固定通勤用的極簡看板。只呈現常用站牌與即時 ETA,30 秒自動刷新、切回分頁立即刷新;即時資料中斷時退回時刻表估計(含班距制與發車時間推估)。
 - **地圖(`/map`)**:全台 22 縣市的路線地圖。選縣市看路線、展開全城路網、點地圖找附近站牌與到站時間、路線規劃(直達 + 一次轉乘)、即時車輛位置。支援依連線 IP 跳到所在縣市、瀏覽器返回鍵逐層退回、可分享 URL。
 
-跑在 Cloudflare Workers 上:Hono + D1(路網快照)+ R2(線形與時刻表)+ Leaflet/Vite 前端。
+跑在 Cloudflare Workers 上:Hono + D1(版本、路線目錄與站點地理索引)+ R2(站序、路由索引、線形與時刻表)+ Leaflet/Vite 前端。
 
 `bus.moc96336.com` 是 Mochi 維護的公開參考實例,不是 Mochi Bus 唯一能運作的地方。想架一套自己的版本,請看[部署自己的 Mochi Bus](docs/SELF-HOSTING.md)。
 
@@ -77,10 +77,10 @@ npm run dev
 
 ## 資料管線
 
-`scripts/sync-transit-snapshot.mjs` 從 TDX 抓一個縣市的路線、站牌、線形與時刻表,寫成:
+`scripts/sync-transit-snapshot.mjs` 從 TDX 抓一個縣市的路線、站牌、線形與時刻表，發布成 hybrid D1/R2 快照：
 
-- **D1**(`migrations/0001_transit_snapshot.sql`):routes / patterns / stops / stop_places / pattern_stops,以 `version` 欄位做不可變版本,`dataset_versions` 指向現行版本
-- **R2**:每條 pattern 的 GeoJSON 線形、每條路線的時刻表、每站牌的 place bundle、全城 network.json
+- **D1**：保存低基數、適合 SQL 查詢的 `dataset_versions`、`routes`、`patterns`、`stop_places`，以及 snapshot window/probe 等操作 metadata。新版本不再把高基數 `stops` / `pattern_stops` 寫入 D1；schema 中仍保留這兩表，只為 pre-cutover 版本的 legacy rollback／migration 相容性。
+- **R2**：保存 ordered pattern stops、place/direct-routing、transfer-routing shards、stop lookup，以及既有的 GeoJSON 線形、時刻表、place bundle、`network.json`、root/completion manifests 與 state metadata。root-bound 版本的高基數 routing authority 在 R2，completion manifests 不完整時 Worker／publisher／rollback 會 fail closed，而不是回頭讀不存在的 D1 copy。
 
 GitHub Actions(`.github/workflows/sync-transit.yml`)每天跑,縣市按星期分片以壓在 D1 免費額度內;內容沒變的縣市由 hash 檢查跳過。手動 `workflow_dispatch` 可強制重匯單一縣市。
 
