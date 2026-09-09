@@ -2,10 +2,27 @@ import { pathToFileURL } from 'node:url'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
 
 const MAX_JSON_BYTES = 2_097_152
+const MAX_ERROR_JSON_BYTES = 65_536
 const HTTP_TIMEOUT_MS = 20_000
 const SAFE_CITY = /^[A-Za-z][A-Za-z0-9]{0,63}$/
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SECONDARY_CITY_CANARIES = Object.freeze(['Chiayi'])
+const PUBLIC_ERROR_CLASSES = new Map([
+  ['TDX 即時查詢暫時受限（額度或頻率），地圖與已同步路網仍可使用。', 'tdx_rate_limit'],
+  ['共用的 TDX 額度可能已用完，暫時查不到即時到站；地圖與已同步路網仍可使用，也可到「我的公車」的進階設定填自己的 TDX 憑證。', 'tdx_quota'],
+  ['TDX 暫時連不上，地圖與已同步路網仍可使用。', 'tdx_unavailable'],
+  ['暫時無法取得公車資料', 'generic'],
+])
+const SAFE_PUBLIC_ERROR_CLASSES = new Set([
+  'not_applicable',
+  'tdx_rate_limit',
+  'tdx_quota',
+  'tdx_unavailable',
+  'generic',
+  'missing',
+  'unknown',
+  'unparseable',
+])
 
 export function resolveDiagnosticTargets(config) {
   const enabledCities = config?.enabledCities
@@ -78,6 +95,7 @@ export function summarizeRoutesPayload(value, city, responseMeta = {}) {
     stage: contractReason === null ? 'contract_ok' : 'contract',
     status: safeStatus(responseMeta.status),
     contentType: safeContentType(responseMeta.contentType),
+    publicErrorClass: 'not_applicable',
     schemaVersion: Number.isSafeInteger(object?.schemaVersion) ? object.schemaVersion : null,
     responseCityMatches: object?.city === city,
     source,
@@ -86,6 +104,13 @@ export function summarizeRoutesPayload(value, city, responseMeta = {}) {
     invalidRouteIdentityCount: safeCount(invalidRouteIdentityCount),
     contractReason,
   })
+}
+
+export function classifyPublicErrorPayload(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.error !== 'string') {
+    return 'missing'
+  }
+  return PUBLIC_ERROR_CLASSES.get(value.error) ?? 'unknown'
 }
 
 async function diagnoseCity({ origin, city, fetchImpl }) {
@@ -105,7 +130,19 @@ async function diagnoseCity({ origin, city, fetchImpl }) {
 
   const status = safeStatus(response?.status)
   const contentType = safeContentType(response?.headers?.get?.('Content-Type'))
-  if (!response?.ok) return failure(city, 'http_status', { status, contentType })
+  if (!response?.ok) {
+    let publicErrorClass = 'not_applicable'
+    if (contentType === 'json') {
+      try {
+        publicErrorClass = classifyPublicErrorPayload(JSON.parse(
+          await readBoundedText(response, MAX_ERROR_JSON_BYTES),
+        ))
+      } catch {
+        publicErrorClass = 'unparseable'
+      }
+    }
+    return failure(city, 'http_status', { status, contentType, publicErrorClass })
+  }
   if (contentType !== 'json') return failure(city, 'content_type', { status, contentType })
 
   let body
@@ -152,6 +189,7 @@ function failure(city, stage, meta = {}) {
     stage,
     status: safeStatus(meta.status),
     contentType: safeContentType(meta.contentType),
+    publicErrorClass: safePublicErrorClass(meta.publicErrorClass),
     schemaVersion: null,
     responseCityMatches: false,
     source: 'other',
@@ -171,6 +209,10 @@ function safeContentType(value) {
   if (normalized === 'json' || normalized.includes('json')) return 'json'
   if (normalized === 'html' || normalized.includes('html')) return 'html'
   return normalized ? 'other' : 'missing'
+}
+
+function safePublicErrorClass(value) {
+  return SAFE_PUBLIC_ERROR_CLASSES.has(value) ? value : 'not_applicable'
 }
 
 function safeCount(value) {
