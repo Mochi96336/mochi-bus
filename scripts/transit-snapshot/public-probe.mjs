@@ -23,6 +23,7 @@ export async function probePublicSurface({
   now = () => new Date(),
   probeCaseVersion = PUBLIC_PROBE_CASE_VERSION,
   realtimeDetailEmitter,
+  realtimeSampled = true,
 }) {
   const startedAt = now()
   const sampleCaseId = publicSampleCaseId(city, probeDate, probeCaseVersion)
@@ -91,7 +92,10 @@ export async function probePublicSurface({
     const resolvedSample = Object.freeze({ ...sample, placeId, stopSequence })
     hardChecksPassed += 1
 
-    const arrivals = await publicJson(publicApi, `/api/v1/map/place/${encodeURIComponent(placeId)}/arrivals?city=${encodeURIComponent(city)}`, 'place_bundle_sample_failed')
+    const arrivalsRealtime = realtimeSampled ? '' : '&realtime=0'
+    const arrivals = await publicJson(publicApi,
+      `/api/v1/map/place/${encodeURIComponent(placeId)}/arrivals?city=${encodeURIComponent(city)}${arrivalsRealtime}`,
+      'place_bundle_sample_failed')
     if (arrivals?.schemaVersion !== 1
       || arrivals?.scheduleSource !== 'place-bundle'
       || arrivals?.snapshotVersion !== activeVersion
@@ -111,6 +115,23 @@ export async function probePublicSurface({
     }
     if (!networkPrefixMatches(networkPrefix, city, activeVersion)) throw hardFailure('network_version_mismatch')
     hardChecksPassed += 1
+
+    if (!realtimeSampled) {
+      return validatePublicProbeResult({
+        city,
+        probeDate,
+        evaluatedAt: now().toISOString(),
+        status: 'snapshot_healthy',
+        activeVersion,
+        observedVersion,
+        failureClass: 'none',
+        hardChecksPassed,
+        realtimeWarnings: [],
+        probeCaseVersion,
+        sampleCaseId,
+        latencyBucket: latencyBucket(now().getTime() - startedAt.getTime()),
+      })
+    }
 
     const realtime = await realtimeDiagnostics({ city, sample: resolvedSample, arrivals, publicApi, sampleCaseId })
     emitRealtimeDetailFailOpen(realtime.detail, realtimeDetailEmitter)
