@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeeklyD1WriteBudgetReport,
-  queryD1RowsWithMeta,
+  extractD1RowsRead,
   readWeeklyCleanupRowsByCity,
   readWeeklyCleanupRowsEvidence,
   WEEKLY_CLEANUP_ROWS_SQL,
@@ -66,7 +66,7 @@ describe('weekly D1 write budget proof', () => {
     expect(query).toHaveBeenCalledOnce()
   })
 
-  it('reads Cloudflare rows_read without issuing a second D1 request', async () => {
+  it('observes Cloudflare rows_read through the existing D1 transport without a second request', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       result: [{
@@ -76,24 +76,43 @@ describe('weekly D1 write budget proof', () => {
       }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
-    const result = await queryD1RowsWithMeta({
-      accountId: 'account-id',
-      apiToken: 'secret-token',
-      databaseId: 'database-id',
+    const evidence = await readWeeklyCleanupRowsEvidence({
+      env: {
+        CLOUDFLARE_ACCOUNT_ID: 'account-id',
+        CLOUDFLARE_API_TOKEN: 'secret-token',
+        TRANSIT_DATABASE_ID: 'database-id',
+      },
       fetchImpl,
-      sql: WEEKLY_CLEANUP_ROWS_SQL,
-      params: [],
     })
 
-    expect(result).toEqual({
-      rows: [{ city_code: 'Taipei', cleanup_rows: 345 }],
-      rowsRead: 112_345,
-    })
+    expect([...evidence.rowsByCity.entries()]).toEqual([['Taipei', 345]])
+    expect(evidence.rowsRead).toBe(112_345)
     expect(fetchImpl).toHaveBeenCalledOnce()
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).not.toContain('secret-token')
     expect(init.headers.Authorization).toBe('Bearer secret-token')
     expect(JSON.parse(init.body)).toEqual({ sql: WEEKLY_CLEANUP_ROWS_SQL, params: [] })
+  })
+
+  it('treats malformed rows_read as unavailable evidence without changing proof acceptance', async () => {
+    expect(extractD1RowsRead({
+      result: [{ meta: { rows_read: -1 } }],
+    })).toBeNull()
+    expect(extractD1RowsRead({
+      result: [{ meta: { rows_read: 'not-a-number' } }],
+    })).toBeNull()
+    expect(extractD1RowsRead({
+      result: [{ meta: { rows_read: 123 } }],
+    })).toBe(123)
+
+    const evidence = await readWeeklyCleanupRowsEvidence({
+      query: async () => ({
+        rows: [{ city_code: 'Taipei', cleanup_rows: 1 }],
+        rowsRead: -1,
+      }),
+    })
+    expect([...evidence.rowsByCity.entries()]).toEqual([['Taipei', 1]])
+    expect(evidence.rowsRead).toBeNull()
   })
 
   it('fails closed on malformed or duplicate aggregated cleanup rows', async () => {
@@ -107,10 +126,6 @@ describe('weekly D1 write budget proof', () => {
         { city_code: 'Taipei', cleanup_rows: 2 },
       ],
     })).rejects.toThrow('Weekly D1 cleanup rows are invalid')
-
-    await expect(readWeeklyCleanupRowsEvidence({
-      query: async () => ({ rows: [], rowsRead: -1 }),
-    })).rejects.toThrow('Weekly D1 cleanup rows_read is invalid')
   })
 
   it('covers every enabled weekly-sharded city exactly once and reports worst-case headroom', async () => {
