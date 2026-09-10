@@ -53,11 +53,13 @@ describe('snapshot bus query resolution', () => {
     const getStopPlaceByStopUid = vi.fn(async () => place)
     const getStopPlaceRoutes = vi.fn(async () => [route()])
     const resolveBusQuery = vi.fn(async () => legacy)
+    const reportStopLookupFallback = vi.fn()
 
     const result = await resolveBusQueryWithSnapshotFallback(snapshot, tdx, query, {
       getStopPlaceByStopUid,
       getStopPlaceRoutes,
       resolveBusQuery,
+      reportStopLookupFallback,
     })
 
     expect(result).toEqual({
@@ -65,7 +67,12 @@ describe('snapshot bus query resolution', () => {
       routeName: '307',
       stopName: '共同站',
     })
-    expect(getStopPlaceByStopUid).toHaveBeenCalledWith(snapshot, 'Taipei', 'STOP-2')
+    expect(getStopPlaceByStopUid).toHaveBeenCalledWith(
+      snapshot,
+      'Taipei',
+      'STOP-2',
+      reportStopLookupFallback,
+    )
     expect(getStopPlaceRoutes).toHaveBeenCalledWith(snapshot, 'Taipei', 'PLACE-1')
     expect(resolveBusQuery).not.toHaveBeenCalled()
   })

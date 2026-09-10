@@ -59,7 +59,7 @@ beforeEach(() => {
 })
 
 describe('Map Place lookup handlers', () => {
-  it('preserves search response and cache contract through the stop-lookup boundary', async () => {
+  it('preserves search response and cache contract through the observed stop-lookup boundary', async () => {
     stopLookupRepository.searchStopPlaces.mockResolvedValue([place])
 
     const response = await request('/api/v1/map/search?city=Taipei&q=%E6%B8%AC%E8%A9%A6')
@@ -72,7 +72,13 @@ describe('Map Place lookup handlers', () => {
       query: '測試',
       places: [place],
     })
-    expect(stopLookupRepository.searchStopPlaces).toHaveBeenCalledWith(bindings, 'Taipei', '測試')
+    expect(stopLookupRepository.searchStopPlaces).toHaveBeenCalledWith(
+      bindings,
+      'Taipei',
+      '測試',
+      10,
+      expect.any(Function),
+    )
   })
 
   it('rejects invalid search input before repository access', async () => {
@@ -125,7 +131,7 @@ describe('Map Place lookup handlers', () => {
     await expect(missing.json()).resolves.toEqual({ error: '找不到這個站牌' })
   })
 
-  it('preserves StopUID lookup response and cache contract through the stop-lookup boundary', async () => {
+  it('preserves StopUID lookup response and cache contract through the observed stop-lookup boundary', async () => {
     stopLookupRepository.getStopPlaceByStopUid.mockResolvedValue(place)
 
     const response = await request('/api/v1/map/stop-place?city=Taipei&stopUid=STOP1')
@@ -138,6 +144,11 @@ describe('Map Place lookup handlers', () => {
       stopUid: 'STOP1',
       place,
     })
-    expect(stopLookupRepository.getStopPlaceByStopUid).toHaveBeenCalledWith(bindings, 'Taipei', 'STOP1')
+    expect(stopLookupRepository.getStopPlaceByStopUid).toHaveBeenCalledWith(
+      bindings,
+      'Taipei',
+      'STOP1',
+      expect.any(Function),
+    )
   })
 })

@@ -10,6 +10,7 @@ import {
 } from '../infrastructure/transit/snapshot-place-routing-repository'
 import {
   getStopPlaceByStopUid,
+  type StopLookupFallbackObserver,
   type StopLookupPlace,
 } from '../infrastructure/transit/snapshot-stop-lookup-repository'
 import type { TransitBindings } from '../infrastructure/transit/snapshot-repository'
@@ -21,6 +22,7 @@ import {
   type TDXEnv,
 } from '../lib/tdx'
 import type { TDXResolutionOptions } from '../lib/tdx/resolution-cache'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 
 const STOP_ROUTE_ETA_CACHE_SECONDS = 15
 const MAX_SUGGESTIONS = 40
@@ -60,6 +62,7 @@ type StopRouteSuggestionDependencies = {
     env: TransitBindings,
     city: string,
     stopUid: string,
+    observeFallback?: StopLookupFallbackObserver,
   ) => Promise<StopLookupPlace | null>
   getStopPlaceRoutes: (
     env: TransitBindings,
@@ -69,6 +72,7 @@ type StopRouteSuggestionDependencies = {
   resolveRealtime: RealtimeResolver
   reportSnapshotFailure: (error: unknown) => void
   reportRealtimeFailure: (error: unknown) => void
+  reportStopLookupFallback: StopLookupFallbackObserver
 }
 
 const defaultDependencies: StopRouteSuggestionDependencies = {
@@ -79,6 +83,7 @@ const defaultDependencies: StopRouteSuggestionDependencies = {
   ).data,
   reportSnapshotFailure: (error) => console.error('stop_route_snapshot_fallback_failed', error),
   reportRealtimeFailure: (error) => console.error('stop_route_realtime_failed', error),
+  reportStopLookupFallback: () => {},
 }
 
 /**
@@ -97,11 +102,21 @@ export async function getSnapshotStopRouteSuggestions(
   dependencies: Partial<StopRouteSuggestionDependencies> = {},
 ): Promise<StopRouteSuggestionResult | null> {
   const deps = { ...defaultDependencies, ...dependencies }
+  const reportStopLookupFallback = dependencies.reportStopLookupFallback
+    ?? createSnapshotFallbackReporter({
+      operation: 'bus_stop_routes',
+      versionMetadata: env.CF_VERSION_METADATA,
+    })
 
   let place: StopLookupPlace | null
   let routes: StopPlaceRoute[]
   try {
-    place = await deps.getStopPlaceByStopUid(env, city, stopUid)
+    place = await deps.getStopPlaceByStopUid(
+      env,
+      city,
+      stopUid,
+      reportStopLookupFallback,
+    )
     if (!place) return null
     routes = await deps.getStopPlaceRoutes(env, city, place.placeId)
     if (!routes.length) return null

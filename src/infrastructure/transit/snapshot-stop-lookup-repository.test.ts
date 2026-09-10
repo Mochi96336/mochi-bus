@@ -212,37 +212,62 @@ describe('R2 stop lookup read path', () => {
     expect(legacy.searchStopPlaces).not.toHaveBeenCalled()
   })
 
-  it('negatively caches a missing manifest for 60 seconds', async () => {
+  it('negatively caches a missing manifest for 60 seconds while reporting each affected request', async () => {
     const storage = bucket()
     const bindings = env(storage.r2)
+    const firstObserver = vi.fn()
+    const secondObserver = vi.fn()
 
-    await getStopPlaceByStopUid(bindings, city, 'S1')
-    await getStopPlaceByStopUid(bindings, city, 'S1')
+    await getStopPlaceByStopUid(bindings, city, 'S1', firstObserver)
+    await getStopPlaceByStopUid(bindings, city, 'S1', secondObserver)
 
     expect(storage.reads).toEqual([manifestKey])
     expect(legacy.getStopPlaceByStopUid).toHaveBeenCalledTimes(2)
+    expect(firstObserver).toHaveBeenCalledWith({
+      city,
+      snapshotVersion: version,
+      reason: 'manifest_missing',
+    })
+    expect(secondObserver).toHaveBeenCalledWith({
+      city,
+      snapshotVersion: version,
+      reason: 'manifest_missing',
+    })
   })
 
   it('does not cache a transient manifest R2 failure', async () => {
     const storage = bucket({ throwKeys: [manifestKey] })
     const bindings = env(storage.r2)
+    const observer = vi.fn()
 
-    await getStopPlaceByStopUid(bindings, city, 'S1')
+    await getStopPlaceByStopUid(bindings, city, 'S1', observer)
     await getStopPlaceByStopUid(bindings, city, 'S1')
 
     expect(storage.reads).toEqual([manifestKey, manifestKey])
     expect(legacy.getStopPlaceByStopUid).toHaveBeenCalledTimes(2)
+    expect(observer).toHaveBeenCalledWith({
+      city,
+      snapshotVersion: version,
+      reason: 'manifest_read_failed',
+    })
   })
 
-  it('falls back the whole search when any required shard is missing', async () => {
+  it('falls back the whole search when any required shard is missing and reports once', async () => {
     const data = await dataset()
     delete data.objects[shardKey(2)]
     const storage = bucket({ objects: data.objects })
+    const observer = vi.fn()
 
-    await expect(searchStopPlaces(env(storage.r2), city, '北')).resolves.toEqual([
+    await expect(searchStopPlaces(env(storage.r2), city, '北', 10, observer)).resolves.toEqual([
       { placeId: 'legacy', name: 'Legacy', latitude: 1, longitude: 2 },
     ])
     expect(legacy.searchStopPlaces).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenCalledWith({
+      city,
+      snapshotVersion: version,
+      reason: 'routing_authority_incomplete',
+    })
   })
 
   it('falls back when shard bytes no longer match the manifest fingerprint', async () => {
@@ -252,21 +277,40 @@ describe('R2 stop lookup read path', () => {
     stops[0].placeName = 'Overwritten'
     data.objects[shardKey(1)] = changed
     const storage = bucket({ objects: data.objects })
+    const observer = vi.fn()
 
-    await expect(getStopPlaceByStopUid(env(storage.r2), city, 'S1')).resolves.toEqual({
+    await expect(getStopPlaceByStopUid(env(storage.r2), city, 'S1', observer)).resolves.toEqual({
       placeId: 'legacy', name: 'Legacy', latitude: 1, longitude: 2, distanceMeters: 0,
     })
     expect(legacy.getStopPlaceByStopUid).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenCalledWith({
+      city,
+      snapshotVersion: version,
+      reason: 'routing_authority_invalid',
+    })
   })
 
-  it('keeps partial-binding callers on the legacy implementation', async () => {
-    const partial = { TRANSIT_DB: {} as D1Database } as TransitBindings
+  it('keeps observer failures from changing the compatibility fallback result', async () => {
+    const storage = bucket()
+    const observer = vi.fn(() => { throw new Error('telemetry unavailable') })
 
-    await getStopPlaceByStopUid(partial, city, 'S1')
-    await searchStopPlaces(partial, city, '北')
+    await expect(getStopPlaceByStopUid(env(storage.r2), city, 'S1', observer)).resolves.toEqual({
+      placeId: 'legacy', name: 'Legacy', latitude: 1, longitude: 2, distanceMeters: 0,
+    })
+    expect(observer).toHaveBeenCalledTimes(1)
+    expect(legacy.getStopPlaceByStopUid).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps partial-binding callers on the legacy implementation without inventing R2 fallback evidence', async () => {
+    const partial = { TRANSIT_DB: {} as D1Database } as TransitBindings
+    const observer = vi.fn()
+
+    await getStopPlaceByStopUid(partial, city, 'S1', observer)
+    await searchStopPlaces(partial, city, '北', 10, observer)
 
     expect(legacy.getActiveSnapshotVersion).not.toHaveBeenCalled()
     expect(legacy.getStopPlaceByStopUid).toHaveBeenCalledTimes(1)
     expect(legacy.searchStopPlaces).toHaveBeenCalledTimes(1)
+    expect(observer).not.toHaveBeenCalled()
   })
 })

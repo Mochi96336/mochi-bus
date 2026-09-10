@@ -15,6 +15,7 @@ import {
   parseRadius,
   requiredQueryString,
 } from '../lib/api-input'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 import { mapJsonError, type MapEnv } from './map-http-context'
 
 // map.ts owns public paths and registration order; this module owns request handling only.
@@ -24,7 +25,11 @@ export async function searchPlaces(c: Context<MapEnv>) {
     const query = c.req.query('q')?.trim()
     if (!city || !supportedCityCodes.has(city)) throw new QueryValidationError('請選擇縣市')
     if (!query || query.length > 40) throw new QueryValidationError('請輸入站牌名稱')
-    const places = await searchStopPlaces(c.env, city, query)
+    const reportFallback = createSnapshotFallbackReporter({
+      operation: 'map_search',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
+    const places = await searchStopPlaces(c.env, city, query, 10, reportFallback)
     return c.json({ schemaVersion: 1, city, query, places }, 200, {
       'Cache-Control': 'public, max-age=3600',
     })
@@ -83,7 +88,11 @@ export async function readStopPlace(c: Context<MapEnv>) {
     const city = c.req.query('city')?.trim()
     if (!city || !supportedCityCodes.has(city)) throw new QueryValidationError('請選擇城市')
     const stopUid = requiredQueryString(c.req.query('stopUid'), 'StopUID', 100)
-    const place = await getStopPlaceByStopUid(c.env, city, stopUid)
+    const reportFallback = createSnapshotFallbackReporter({
+      operation: 'map_stop_place',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
+    const place = await getStopPlaceByStopUid(c.env, city, stopUid, reportFallback)
     if (!place) return c.json({ error: '找不到這個站牌' }, 404)
     return c.json({ schemaVersion: 1, city, stopUid, place }, 200, {
       'Cache-Control': 'public, max-age=3600',
