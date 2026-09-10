@@ -25,6 +25,8 @@
 
 `legacy-backfill` 可作為 rollback authority，不代表已可刪除 legacy D1。只有 production evidence證明保留的 active／previous rollback window 都是 `root-bound`，才可把 destructive legacy high-card row/index/schema cleanup列入下一步。
 
+舊版本的 backfill只新增同版本 routing artifacts/completion manifests，不回頭改寫 immutable root `manifest.json`，所以最多把舊版本從 `legacy-d1` 升成 `legacy-backfill`，不能 retroactively 變成 `root-bound`。新 publisher會在建立 root manifest前把四份 completion manifests納入 artifact fingerprint，因此新 publication天然是 `root-bound`。Authority evidence用 `nativeRootBoundPublicationsRequired` 表示在目前 retained active／previous window下，至少還需要幾次成功的原生 publication才能自然得到完整 root-bound window：active與previous皆 root-bound為 0；active已 root-bound但previous仍是 legacy為 1；active仍是 legacy則為 2。這只是 readiness evidence，不會觸發 publication，也不會放寬 rollback drill gate。
+
 ## Commands
 
 預設 rollback 到可信 state 中的 previous：
@@ -76,8 +78,8 @@ Rollback／reconcile 寫入前，所有 target 先判定 routing authority，再
 - D1 routes、patterns、stop_places 非零。
 - pattern → route 無 dangling reference，catalogue route 都有 pattern。
 - root manifest schema/city/version合法。
-- network object 存在、size（若可得）與 manifest 一致，bounded prefix 的 schema／city／version 正確。
-- deterministic route sample的 shape、route schedule、place bundle以 root manifest descriptor的 bytes 與 SHA-256 完整驗證。
+- network object 存在、size（若可得）與 manifest 一致，bounded prefix 的 schema／city／version正確。
+- deterministic route sample的 shape、route schedule、place bundle以 root manifest descriptor的 bytes 與 SHA-256完整驗證。
 
 ### `legacy-d1` target
 
@@ -123,7 +125,7 @@ RETURNING active_version
 
 Reconcile 不寫 D1，但在完整驗證後、寫 R2 state 前會再次讀取 D1 active；若 authority 已改變，停止而不寫 stale metadata。
 
-GitHub Actions publisher 共用 `transit-snapshot` concurrency group；本機 CLI 不依賴 workflow lock，因此 D1 optimistic guard 與寫入前 authority re-read 是必要的最後防線。
+GitHub Actions publisher共用 `transit-snapshot` concurrency group；本機 CLI 不依賴 workflow lock，因此 D1 optimistic guard 與寫入前 authority re-read 是必要的最後防線。
 
 ## Failure semantics
 
