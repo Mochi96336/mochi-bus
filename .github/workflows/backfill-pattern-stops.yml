@@ -39,6 +39,10 @@ on:
         options:
           - active
           - previous
+      confirmation:
+        description: Type BACKFILL_<City>_<target> for the selected production R2 target
+        required: true
+        type: string
 
 concurrency:
   group: pattern-stop-backfill-${{ inputs.city }}
@@ -65,6 +69,8 @@ jobs:
       - name: Validate backfill scope
         env:
           CITY: ${{ inputs.city }}
+          TARGET: ${{ inputs.target }}
+          CONFIRMATION: ${{ inputs.confirmation }}
           SNAPSHOT_ENABLED: ${{ steps.operation.outputs.enabled }}
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
@@ -74,6 +80,7 @@ jobs:
           test -n "$TRANSIT_DATABASE_ID"
           test -n "$TRANSIT_R2_BUCKET_NAME"
           node scripts/instance/assert-operation-city.mjs "$CITY"
+          test "$CONFIRMATION" = "BACKFILL_${CITY}_${TARGET}"
       - name: Export pattern stops
         env:
           CITY: ${{ inputs.city }}
