@@ -1,11 +1,53 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildD1ReadInsightsReport,
+  fetchD1ReadAttribution,
   MAX_QUERY_SHAPE_LENGTH,
   sanitizeQueryShape,
 } from './d1-read-insights.mjs'
 
-describe('D1 read insights sanitizer', () => {
+function graphqlResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function queryGroup({ query = null, rowsRead = 100, avgRowsRead = 50, count = 2 } = {}) {
+  return {
+    sum: { queryDurationMs: 8, rowsRead, rowsWritten: 0, rowsReturned: 4 },
+    avg: { queryDurationMs: 4, rowsRead: avgRowsRead, rowsWritten: 0, rowsReturned: 2 },
+    count,
+    dimensions: { query },
+  }
+}
+
+function queryPayload(groups) {
+  return {
+    data: {
+      viewer: {
+        accounts: [{ d1QueriesAdaptiveGroups: groups }],
+      },
+    },
+  }
+}
+
+function dailyPayload(groups) {
+  return {
+    data: {
+      viewer: {
+        accounts: [{ d1AnalyticsAdaptiveGroups: groups }],
+      },
+    },
+  }
+}
+
+const dailyGroup = {
+  sum: { readQueries: 321, writeQueries: 7, rowsRead: 4_800_000, rowsWritten: 12_345 },
+  dimensions: { date: '2026-09-10', databaseId: 'db-id' },
+}
+
+describe('D1 read attribution', () => {
   it('removes comments and string/numeric literals while keeping the SQL shape useful', () => {
     const shape = sanitizeQueryShape(`
       -- city-specific probe
@@ -36,64 +78,131 @@ describe('D1 read insights sanitizer', () => {
     expect(shape.endsWith('…')).toBe(true)
   })
 
-  it('normalizes and sorts metric-only evidence without preserving raw query text', () => {
-    const report = buildD1ReadInsightsReport([
-      {
-        query: "SELECT * FROM routes WHERE city_code = 'Taipei'",
-        totalRowsRead: 10,
-        avgRowsRead: 5,
-        numberOfTimesRun: 2,
-        avgDurationMs: 1.25,
-        queryEfficiency: 0.5,
-      },
-      {
-        query: "SELECT * FROM pattern_stops WHERE version = 'secret-version'",
-        totalRowsRead: 50_000,
-        avgRowsRead: 25_000,
-        numberOfTimesRun: 2,
-        avgDurationMs: 4.5,
-        queryEfficiency: 0.1,
-      },
-    ], {
-      generatedAt: '2026-09-10T01:00:00.000Z',
-      timePeriod: '1d',
-    })
+  it('retains groups without query text and keeps daily aggregate evidence independent', () => {
+    const rawQuery = "SELECT * FROM pattern_stops WHERE version = 'secret-version' AND city_code = 'Taipei'"
+    const report = buildD1ReadInsightsReport({
+      queryWindowUsed: '1d',
+      queryGroups: [
+        queryGroup({ query: null, rowsRead: 90_000, avgRowsRead: 90_000, count: 1 }),
+        queryGroup({ query: rawQuery, rowsRead: 50_000, avgRowsRead: 25_000, count: 2 }),
+      ],
+      dailyTotals: [dailyGroup],
+    }, { generatedAt: '2026-09-10T03:00:00.000Z' })
 
     expect(report).toMatchObject({
-      schemaVersion: 1,
-      generatedAt: '2026-09-10T01:00:00.000Z',
-      timePeriod: '1d',
-      capturedQueryCount: 2,
-      capturedTotalRowsRead: 50_010,
-      capturedExecutions: 4,
+      schemaVersion: 2,
+      generatedAt: '2026-09-10T03:00:00.000Z',
+      requestedTimePeriod: '1d',
+      queryWindowUsed: '1d',
+      queryDataset: {
+        groupCount: 2,
+        groupsWithQuery: 1,
+        groupsWithoutQuery: 1,
+        capturedTotalRowsRead: 140_000,
+        capturedExecutions: 3,
+      },
+      dailyTotals: [{
+        date: '2026-09-10',
+        rowsRead: 4_800_000,
+        rowsWritten: 12_345,
+        readQueries: 321,
+        writeQueries: 7,
+      }],
     })
     expect(report.queries[0]).toMatchObject({
-      totalRowsRead: 50_000,
-      avgRowsRead: 25_000,
-      numberOfTimesRun: 2,
+      queryShape: '<query-unavailable>',
+      queryAvailable: false,
+      totalRowsRead: 90_000,
     })
-    expect(report.queries[0].queryFingerprint).toMatch(/^[0-9a-f]{16}$/)
-    expect(report.queries[0].queryShape).toContain('FROM pattern_stops')
+    expect(report.queries[1].queryShape).toContain('FROM pattern_stops')
+    expect(report.queries[1].queryFingerprint).toMatch(/^[0-9a-f]{16}$/)
     expect(JSON.stringify(report)).not.toContain('secret-version')
     expect(JSON.stringify(report)).not.toContain('Taipei')
   })
 
-  it('fails closed on unbounded or invalid metric payloads', () => {
-    expect(() => buildD1ReadInsightsReport(new Array(101).fill({})))
-      .toThrow('bounded array')
-    expect(() => buildD1ReadInsightsReport([{
-      query: 'SELECT 1',
-      totalRowsRead: -1,
-      avgRowsRead: 0,
-      numberOfTimesRun: 1,
-      avgDurationMs: 0,
-    }])).toThrow('totalRowsRead')
-    expect(() => buildD1ReadInsightsReport([{
-      query: 'SELECT 1',
-      totalRowsRead: 1,
-      avgRowsRead: Number.NaN,
-      numberOfTimesRun: 1,
-      avgDurationMs: 0,
-    }])).toThrow('avgRowsRead')
+  it('uses one-day query groups when available and still fetches calendar-day totals', async () => {
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.operationName === 'getD1QueriesOverviewQuery') {
+        return graphqlResponse(queryPayload([
+          queryGroup({ query: 'SELECT * FROM routes WHERE city_code = ?', rowsRead: 1234 }),
+        ]))
+      }
+      if (body.operationName === 'getD1DailyTotals') return graphqlResponse(dailyPayload([dailyGroup]))
+      throw new Error('unexpected operation')
+    })
+
+    const raw = await fetchD1ReadAttribution({
+      accountId: 'account-id',
+      apiToken: 'secret-token',
+      databaseId: 'db-id',
+      fetchImpl,
+      now: () => new Date('2026-09-10T03:30:00.000Z'),
+    })
+
+    expect(raw.queryWindowUsed).toBe('1d')
+    expect(raw.queryGroups).toHaveLength(1)
+    expect(raw.dailyTotals).toHaveLength(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    for (const [url, init] of fetchImpl.mock.calls) {
+      expect(url).toBe('https://api.cloudflare.com/client/v4/graphql')
+      expect(init.headers.Authorization).toBe('Bearer secret-token')
+      expect(url).not.toContain('secret-token')
+    }
+  })
+
+  it('falls back from empty 1d groups to 7d without executing database SQL', async () => {
+    let queryCalls = 0
+    const queryWindows = []
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.operationName === 'getD1QueriesOverviewQuery') {
+        queryCalls += 1
+        const filter = body.variables.filter.AND[0]
+        queryWindows.push([filter.datetimeHour_geq, filter.datetimeHour_leq])
+        return graphqlResponse(queryPayload(queryCalls === 1
+          ? []
+          : [queryGroup({ query: 'SELECT stop_uid FROM stops WHERE version = ?', rowsRead: 77_000 })]))
+      }
+      if (body.operationName === 'getD1DailyTotals') return graphqlResponse(dailyPayload([dailyGroup]))
+      throw new Error('unexpected operation')
+    })
+
+    const raw = await fetchD1ReadAttribution({
+      accountId: 'account-id',
+      apiToken: 'secret-token',
+      databaseId: 'db-id',
+      fetchImpl,
+      now: () => new Date('2026-09-10T03:30:00.000Z'),
+    })
+
+    expect(raw.queryWindowUsed).toBe('7d')
+    expect(raw.queryGroups).toHaveLength(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(new Date(queryWindows[0][1]).getTime() - new Date(queryWindows[0][0]).getTime())
+      .toBe(24 * 60 * 60 * 1000)
+    expect(new Date(queryWindows[1][1]).getTime() - new Date(queryWindows[1][0]).getTime())
+      .toBe(7 * 24 * 60 * 60 * 1000)
+  })
+
+  it('fails closed on GraphQL errors and invalid metric payloads', async () => {
+    await expect(fetchD1ReadAttribution({
+      accountId: 'account-id',
+      apiToken: 'secret-token',
+      databaseId: 'db-id',
+      fetchImpl: async () => graphqlResponse({ data: {}, errors: [{ message: 'bad query' }] }),
+    })).rejects.toThrow('D1 GraphQL analytics request failed')
+
+    expect(() => buildD1ReadInsightsReport({
+      queryWindowUsed: '1d',
+      queryGroups: [queryGroup({ query: 'SELECT 1', rowsRead: -1 })],
+      dailyTotals: [],
+    })).toThrow('totalRowsRead')
+
+    expect(() => buildD1ReadInsightsReport({
+      queryWindowUsed: '1d',
+      queryGroups: [],
+      dailyTotals: [{ sum: { rowsRead: 1 }, dimensions: { date: 'not-a-date' } }],
+    })).toThrow('.date is invalid')
   })
 })
