@@ -4,10 +4,80 @@ import { pathToFileURL } from 'node:url'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { estimateScheduledD1WriteForCity } from './d1-write-budget.mjs'
 import { snapshotCitiesByTaipeiWeekday } from './snapshot-schedule.mjs'
+import { queryD1 } from './window-d1.mjs'
 
 export const WEEKLY_D1_BUDGET_REPORT_SCHEMA_VERSION = 1
 const DEFAULT_REPORT_PATH = join('.transit-snapshot', 'weekly-d1-write-budget.json')
 const WEEKDAY_NAMES = Object.freeze(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
+const SAFE_CITY = /^[A-Za-z][A-Za-z0-9]{0,63}$/
+const MAX_CLEANUP_CITY_ROWS = 256
+
+// The scheduled publisher keeps the currently-active version and deletes every
+// other low-cardinality D1 version for the city. The old proof asked this same
+// question once per enabled city. With indexes led by `version`, each
+// `city_code = ? AND version <> active` predicate can scan the whole covering
+// index, multiplying one database-wide scan by the number of cities. Aggregate
+// all three publisher-owned tables in one query instead: each table is scanned
+// at most once and the existing per-city estimator still receives the exact
+// cleanup row count it used before.
+export const WEEKLY_CLEANUP_ROWS_SQL = `
+SELECT city_code, SUM(cleanup_rows) AS cleanup_rows
+FROM (
+  SELECT r.city_code AS city_code, COUNT(*) AS cleanup_rows
+  FROM routes r
+  LEFT JOIN dataset_versions d ON d.city_code = r.city_code
+  WHERE r.version <> COALESCE(d.active_version, '')
+  GROUP BY r.city_code
+
+  UNION ALL
+
+  SELECT p.city_code AS city_code, COUNT(*) AS cleanup_rows
+  FROM patterns p
+  LEFT JOIN dataset_versions d ON d.city_code = p.city_code
+  WHERE p.version <> COALESCE(d.active_version, '')
+  GROUP BY p.city_code
+
+  UNION ALL
+
+  SELECT s.city_code AS city_code, COUNT(*) AS cleanup_rows
+  FROM stop_places s
+  LEFT JOIN dataset_versions d ON d.city_code = s.city_code
+  WHERE s.version <> COALESCE(d.active_version, '')
+  GROUP BY s.city_code
+) AS inactive
+GROUP BY city_code
+ORDER BY city_code
+`
+
+export async function readWeeklyCleanupRowsByCity({ env = process.env, query } = {}) {
+  const execute = query ?? ((sql, params) => queryD1({
+    accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
+    apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
+    databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
+    fetchImpl: fetch,
+    sql,
+    params,
+  }))
+  if (typeof execute !== 'function') throw new Error('Weekly D1 cleanup query is invalid')
+
+  const rows = await execute(WEEKLY_CLEANUP_ROWS_SQL, [])
+  if (!Array.isArray(rows) || rows.length > MAX_CLEANUP_CITY_ROWS) {
+    throw new Error('Weekly D1 cleanup rows are invalid')
+  }
+
+  const result = new Map()
+  for (const row of rows) {
+    const city = typeof row?.city_code === 'string' && SAFE_CITY.test(row.city_code)
+      ? row.city_code
+      : null
+    const cleanupRows = Number(row?.cleanup_rows)
+    if (!city || !Number.isSafeInteger(cleanupRows) || cleanupRows < 0 || result.has(city)) {
+      throw new Error('Weekly D1 cleanup rows are invalid')
+    }
+    result.set(city, cleanupRows)
+  }
+  return result
+}
 
 export async function buildWeeklyD1WriteBudgetReport({
   plan = loadOperationsPlan(),
@@ -112,6 +182,11 @@ function positiveNumber(value, name) {
   return number
 }
 
+function required(value, name) {
+  if (!value) throw new Error(`${name} is required for weekly D1 cleanup proof`)
+  return value
+}
+
 async function writeReport(report, env) {
   const path = env.SNAPSHOT_WEEKLY_D1_BUDGET_REPORT || DEFAULT_REPORT_PATH
   await mkdir(dirname(path), { recursive: true })
@@ -134,7 +209,17 @@ async function writeReport(report, env) {
 }
 
 async function main(env = process.env) {
-  const report = await buildWeeklyD1WriteBudgetReport({ env })
+  const plan = loadOperationsPlan()
+  const cleanupRowsByCity = await readWeeklyCleanupRowsByCity({ env })
+  const report = await buildWeeklyD1WriteBudgetReport({
+    plan,
+    env,
+    estimateCity: (city) => estimateScheduledD1WriteForCity({
+      city,
+      env,
+      readCleanupRows: async () => cleanupRowsByCity.get(city) ?? 0,
+    }),
+  })
   const reportPath = await writeReport(report, env)
   console.log(JSON.stringify({
     event: 'snapshot_weekly_d1_budget_proof',
