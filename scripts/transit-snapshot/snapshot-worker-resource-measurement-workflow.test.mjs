@@ -23,6 +23,17 @@ describe('snapshot Worker resource measurement workflow', () => {
     expect(workflow).toContain('assert-operation-city.mjs Taichung')
   })
 
+  it('fails before build or deployment when the dedicated Analytics token is missing', () => {
+    const validate = workflow.indexOf('name: Validate manual measurement scope')
+    const build = workflow.indexOf('name: Build production bundle')
+    const measure = workflow.indexOf('name: Measure direct and transfer Worker resources')
+    expect(validate).toBeGreaterThan(0)
+    expect(build).toBeGreaterThan(validate)
+    expect(measure).toBeGreaterThan(build)
+    expect(workflow.slice(validate, build)).toContain('CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}')
+    expect(workflow.slice(validate, build)).toContain('test -n "${CLOUDFLARE_ANALYTICS_API_TOKEN}"')
+  })
+
   it('builds the production bundle and uses production D1/R2 resources without TDX credentials', () => {
     expect(workflow).toContain('npm run build:map')
     expect(workflow).toContain('TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}')
