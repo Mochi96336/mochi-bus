@@ -10,6 +10,7 @@ const DEFAULT_REPORT_PATH = '.transit-snapshot/d1-read-insights.json'
 const GRAPHQL_ENDPOINT = 'https://api.cloudflare.com/client/v4/graphql'
 const QUERY_LIMIT = 25
 const MAX_GRAPHQL_RESPONSE_BYTES = 512 * 1024
+const MAX_GRAPHQL_ERROR_DETAIL = 360
 
 const QUERY_GROUPS_DOCUMENT = `
 query getD1QueriesOverviewQuery($accountTag: string, $filter: AccountD1QueriesAdaptiveGroupsFilter_InputObject) {
@@ -174,9 +175,43 @@ async function fetchGraphql({ apiToken, fetchImpl, body }) {
     throw new Error('D1 GraphQL analytics returned invalid JSON')
   }
   if (!response.ok || !payload?.data || (Array.isArray(payload?.errors) && payload.errors.length > 0)) {
-    throw new Error('D1 GraphQL analytics request failed')
+    const detail = graphqlErrorDetail(payload?.errors, [apiToken, ...stringValues(body?.variables)])
+    throw new Error(`D1 GraphQL analytics request failed (HTTP ${response.status})${detail ? `: ${detail}` : ''}`)
   }
   return payload
+}
+
+function graphqlErrorDetail(errors, sensitiveValues = []) {
+  if (!Array.isArray(errors) || errors.length === 0) return ''
+  const redactions = [...new Set(sensitiveValues.filter((value) => typeof value === 'string' && value.length > 0))]
+    .sort((a, b) => b.length - a.length)
+  const pieces = errors.slice(0, 3).map((error) => {
+    const code = error?.extensions?.code
+    const prefix = typeof code === 'string' || typeof code === 'number' ? `[${String(code)}] ` : ''
+    let message = typeof error?.message === 'string' ? error.message : 'GraphQL error'
+    for (const value of redactions) message = message.split(value).join('<redacted>')
+    message = message.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim()
+    return `${prefix}${message}`
+  })
+  const detail = pieces.join(' | ')
+  return detail.length > MAX_GRAPHQL_ERROR_DETAIL
+    ? `${detail.slice(0, MAX_GRAPHQL_ERROR_DETAIL - 1)}…`
+    : detail
+}
+
+function stringValues(value, result = []) {
+  if (typeof value === 'string') {
+    result.push(value)
+    return result
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) stringValues(item, result)
+    return result
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) stringValues(item, result)
+  }
+  return result
 }
 
 export function buildD1ReadInsightsReport(raw, {

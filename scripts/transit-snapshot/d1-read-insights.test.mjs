@@ -185,6 +185,29 @@ describe('D1 read attribution', () => {
       .toBe(7 * 24 * 60 * 60 * 1000)
   })
 
+  it('surfaces bounded GraphQL error detail while redacting request variables and credentials', async () => {
+    const error = await fetchD1ReadAttribution({
+      accountId: 'account-sensitive',
+      apiToken: 'token-sensitive',
+      databaseId: 'database-sensitive',
+      fetchImpl: async () => graphqlResponse({
+        data: null,
+        errors: [{
+          message: 'Cannot query field rowsRead for account-sensitive / database-sensitive / token-sensitive',
+          extensions: { code: 'GRAPHQL_VALIDATION_FAILED' },
+        }],
+      }, 400),
+    }).catch((value) => value)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain('HTTP 400')
+    expect(error.message).toContain('GRAPHQL_VALIDATION_FAILED')
+    expect(error.message).toContain('Cannot query field rowsRead')
+    expect(error.message).not.toContain('account-sensitive')
+    expect(error.message).not.toContain('database-sensitive')
+    expect(error.message).not.toContain('token-sensitive')
+  })
+
   it('fails closed on GraphQL errors and invalid metric payloads', async () => {
     await expect(fetchD1ReadAttribution({
       accountId: 'account-id',
