@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeeklyD1WriteBudgetReport,
+  queryD1RowsWithMeta,
   readWeeklyCleanupRowsByCity,
+  readWeeklyCleanupRowsEvidence,
   WEEKLY_CLEANUP_ROWS_SQL,
 } from './weekly-d1-write-budget.mjs'
 
@@ -46,6 +48,54 @@ describe('weekly D1 write budget proof', () => {
     expect(query).toHaveBeenCalledWith(WEEKLY_CLEANUP_ROWS_SQL, [])
   })
 
+  it('preserves rows_read metadata from the same aggregate query', async () => {
+    const query = vi.fn(async () => ({
+      rows: [
+        { city_code: 'Chiayi', cleanup_rows: 12 },
+        { city_code: 'Taipei', cleanup_rows: 345 },
+      ],
+      rowsRead: 112_345,
+    }))
+    const evidence = await readWeeklyCleanupRowsEvidence({ query })
+
+    expect([...evidence.rowsByCity.entries()]).toEqual([
+      ['Chiayi', 12],
+      ['Taipei', 345],
+    ])
+    expect(evidence.rowsRead).toBe(112_345)
+    expect(query).toHaveBeenCalledOnce()
+  })
+
+  it('reads Cloudflare rows_read without issuing a second D1 request', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      result: [{
+        success: true,
+        results: [{ city_code: 'Taipei', cleanup_rows: 345 }],
+        meta: { rows_read: 112_345, rows_written: 0 },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    const result = await queryD1RowsWithMeta({
+      accountId: 'account-id',
+      apiToken: 'secret-token',
+      databaseId: 'database-id',
+      fetchImpl,
+      sql: WEEKLY_CLEANUP_ROWS_SQL,
+      params: [],
+    })
+
+    expect(result).toEqual({
+      rows: [{ city_code: 'Taipei', cleanup_rows: 345 }],
+      rowsRead: 112_345,
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).not.toContain('secret-token')
+    expect(init.headers.Authorization).toBe('Bearer secret-token')
+    expect(JSON.parse(init.body)).toEqual({ sql: WEEKLY_CLEANUP_ROWS_SQL, params: [] })
+  })
+
   it('fails closed on malformed or duplicate aggregated cleanup rows', async () => {
     await expect(readWeeklyCleanupRowsByCity({
       query: async () => [{ city_code: 'Taipei', cleanup_rows: -1 }],
@@ -57,6 +107,10 @@ describe('weekly D1 write budget proof', () => {
         { city_code: 'Taipei', cleanup_rows: 2 },
       ],
     })).rejects.toThrow('Weekly D1 cleanup rows are invalid')
+
+    await expect(readWeeklyCleanupRowsEvidence({
+      query: async () => ({ rows: [], rowsRead: -1 }),
+    })).rejects.toThrow('Weekly D1 cleanup rows_read is invalid')
   })
 
   it('covers every enabled weekly-sharded city exactly once and reports worst-case headroom', async () => {
