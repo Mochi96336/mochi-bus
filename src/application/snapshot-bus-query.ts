@@ -5,6 +5,7 @@ import {
 } from '../infrastructure/transit/snapshot-place-routing-repository'
 import {
   getStopPlaceByStopUid,
+  type StopLookupFallbackObserver,
   type StopLookupPlace,
 } from '../infrastructure/transit/snapshot-stop-lookup-repository'
 import type { TransitBindings } from '../infrastructure/transit/snapshot-repository'
@@ -18,6 +19,7 @@ type SnapshotBusQueryDependencies = {
     env: TransitBindings,
     city: string,
     stopUid: string,
+    observeFallback?: StopLookupFallbackObserver,
   ) => Promise<StopLookupPlace | null>
   getStopPlaceRoutes: (
     env: TransitBindings,
@@ -26,6 +28,7 @@ type SnapshotBusQueryDependencies = {
   ) => Promise<StopPlaceRoute[]>
   resolveBusQuery: typeof resolveBusQuery
   reportSnapshotFailure: (error: unknown) => void
+  reportStopLookupFallback: StopLookupFallbackObserver
 }
 
 const defaultDependencies: SnapshotBusQueryDependencies = {
@@ -33,6 +36,7 @@ const defaultDependencies: SnapshotBusQueryDependencies = {
   getStopPlaceRoutes,
   resolveBusQuery,
   reportSnapshotFailure: (error) => console.error('bus_query_snapshot_failed', error),
+  reportStopLookupFallback: () => {},
 }
 
 /**
@@ -50,7 +54,12 @@ export async function resolveBusQueryWithSnapshotFallback(
   if (!query.stopUid || !query.routeUid) return deps.resolveBusQuery(tdx, query)
 
   try {
-    const place = await deps.getStopPlaceByStopUid(snapshot, query.city, query.stopUid)
+    const place = await deps.getStopPlaceByStopUid(
+      snapshot,
+      query.city,
+      query.stopUid,
+      deps.reportStopLookupFallback,
+    )
     if (!place) return deps.resolveBusQuery(tdx, query)
 
     const candidates = dedupeCandidates((await deps.getStopPlaceRoutes(snapshot, query.city, place.placeId))
