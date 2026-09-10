@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   captureRollbackAuthorityEvidence,
+  parseRollbackStatePointers,
   summarizeAuthorityWindow,
 } from './capture-rollback-authority-evidence.mjs'
 
@@ -35,6 +36,25 @@ describe('rollback authority evidence', () => {
     })).toMatchObject({
       rollbackTargetAuthorityMode: 'legacy-backfill',
       rootBoundRollbackWindow: false,
+    })
+  })
+
+  it('reads the canonical R2 state version field and rejects the obsolete activeVersion shape', () => {
+    expect(parseRollbackStatePointers({
+      version: 'active-v2',
+      previousVersion: 'previous-v1',
+      activeVersion: 'wrong-field',
+    })).toEqual({
+      activeVersion: 'active-v2',
+      previousVersion: 'previous-v1',
+    })
+
+    expect(parseRollbackStatePointers({
+      activeVersion: 'active-v2',
+      previousVersion: 'previous-v1',
+    })).toEqual({
+      activeVersion: null,
+      previousVersion: 'previous-v1',
     })
   })
 
@@ -78,6 +98,8 @@ describe('rollback authority evidence', () => {
     expect(source).toContain('readRollbackRoutingAuthority')
     expect(source).toContain('bindRollbackRoutingAuthority')
     expect(source).toContain('readManifestJson')
+    expect(source).toContain('safeId(state?.version)')
+    expect(source).not.toContain('safeId(state?.activeVersion)')
     expect(source).not.toMatch(/(?:INSERT\s+INTO|DELETE\s+FROM|UPDATE)\s+(?:stops|pattern_stops)\b/i)
     expect(source).not.toContain('sync-transit-snapshot')
     expect(source).not.toContain('run-snapshot-window')
