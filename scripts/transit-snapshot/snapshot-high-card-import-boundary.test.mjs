@@ -26,6 +26,10 @@ const expectedWrapperImports = [
   'infrastructure/transit/snapshot-transfer-routing-repository.ts:getOneTransferRoutes',
 ].sort()
 
+const legacyHighCardRepository = 'infrastructure/transit/snapshot-repository.ts'
+const highCardReadPattern = /\b(?:FROM|JOIN)\s+(?:stops|pattern_stops)\b/i
+const highCardMutationPattern = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:stops|pattern_stops)\b/i
+
 function productionSourceFiles(directory) {
   return readdirSync(directory, { withFileTypes: true })
     .flatMap((entry) => {
@@ -46,7 +50,26 @@ function sourcePath(file) {
   return relative(srcRoot, file).replaceAll('\\', '/')
 }
 
-describe('snapshot high-cardinality D1 import boundary', () => {
+function sourceFileFor(file, source) {
+  return ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+}
+
+function stringLikeText(node, sourceFile) {
+  if (ts.isStringLiteral(node)
+    || ts.isNoSubstitutionTemplateLiteral(node)
+    || ts.isTemplateExpression(node)) {
+    return node.getText(sourceFile)
+  }
+  return null
+}
+
+describe('snapshot high-cardinality D1 architecture boundary', () => {
   it('keeps legacy high-cardinality exports reachable only from their R2-first wrappers', () => {
     const wrapperImports = []
     const bypasses = []
@@ -54,13 +77,7 @@ describe('snapshot high-cardinality D1 import boundary', () => {
     for (const file of productionSourceFiles(srcRoot)) {
       const path = sourcePath(file)
       const source = readFileSync(file, 'utf8')
-      const sourceFile = ts.createSourceFile(
-        file,
-        source,
-        ts.ScriptTarget.Latest,
-        true,
-        file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-      )
+      const sourceFile = sourceFileFor(file, source)
 
       for (const statement of sourceFile.statements) {
         if (ts.isImportDeclaration(statement)
@@ -117,5 +134,29 @@ describe('snapshot high-cardinality D1 import boundary', () => {
 
     expect(bypasses).toEqual([])
     expect(wrapperImports.sort()).toEqual(expectedWrapperImports)
+  })
+
+  it('keeps high-cardinality D1 SQL read-only and confined to the legacy repository', () => {
+    const readFiles = new Set()
+    const mutations = []
+
+    for (const file of productionSourceFiles(srcRoot)) {
+      const path = sourcePath(file)
+      const source = readFileSync(file, 'utf8')
+      const sourceFile = sourceFileFor(file, source)
+
+      const visit = (node) => {
+        const text = stringLikeText(node, sourceFile)
+        if (text) {
+          if (highCardReadPattern.test(text)) readFiles.add(path)
+          if (highCardMutationPattern.test(text)) mutations.push(path)
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(sourceFile)
+    }
+
+    expect([...readFiles].sort()).toEqual([legacyHighCardRepository])
+    expect(mutations).toEqual([])
   })
 })
