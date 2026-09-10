@@ -5,6 +5,7 @@ const workflow = readFileSync(
   new URL('../../.github/workflows/snapshot-worker-resource-measurement.yml', import.meta.url),
   'utf8',
 )
+const runner = readFileSync(new URL('./measure-worker-resources.mjs', import.meta.url), 'utf8')
 
 describe('snapshot Worker resource measurement workflow', () => {
   it('is manual-only, main-only, and requires explicit confirmation', () => {
@@ -32,6 +33,11 @@ describe('snapshot Worker resource measurement workflow', () => {
     expect(measure).toBeGreaterThan(build)
     expect(workflow.slice(validate, build)).toContain('CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}')
     expect(workflow.slice(validate, build)).toContain('test -n "${CLOUDFLARE_ANALYTICS_API_TOKEN}"')
+  })
+
+  it('requires the dedicated Analytics token inside the runner and never falls back to the operational token', () => {
+    expect(runner).toContain("const analyticsToken = required(env.CLOUDFLARE_ANALYTICS_API_TOKEN, 'CLOUDFLARE_ANALYTICS_API_TOKEN')")
+    expect(runner).not.toContain('env.CLOUDFLARE_ANALYTICS_API_TOKEN?.trim() || apiToken')
   })
 
   it('builds the production bundle and uses production D1/R2 resources without TDX credentials', () => {

@@ -388,7 +388,7 @@ export async function measureWorkerResources({
   const accountId = required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID')
   const apiToken = required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN')
   const deployToken = required(env.CLOUDFLARE_DEPLOY_API_TOKEN, 'CLOUDFLARE_DEPLOY_API_TOKEN')
-  const analyticsToken = env.CLOUDFLARE_ANALYTICS_API_TOKEN?.trim() || apiToken
+  const analyticsToken = required(env.CLOUDFLARE_ANALYTICS_API_TOKEN, 'CLOUDFLARE_ANALYTICS_API_TOKEN')
   const databaseId = required(env.TRANSIT_DATABASE_ID ?? resources.d1DatabaseId, 'TRANSIT_DATABASE_ID')
   const bucket = required(env.TRANSIT_R2_BUCKET_NAME ?? resources.r2BucketName, 'TRANSIT_R2_BUCKET_NAME')
   const accessKeyId = required(env.R2_ACCESS_KEY_ID, 'R2_ACCESS_KEY_ID')
