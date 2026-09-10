@@ -4,21 +4,25 @@ import { pathToFileURL } from 'node:url'
 import { AwsClient } from 'aws4fetch'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { readBoundedResponseJson } from './active-probe.mjs'
-import { summarizeAuthorityWindow } from './capture-rollback-authority-evidence.mjs'
 import { readManifestJson } from './manifest-read-limit.mjs'
 import { parseContentLength } from './r2-metadata.mjs'
+import {
+  routingCompletionManifestKeys,
+} from './routing-authority-contract.mjs'
 import {
   bindRollbackRoutingAuthority,
   readRollbackRoutingAuthority,
 } from './rollback-routing-authority.mjs'
 import { queryD1 } from './window-d1.mjs'
 
-export const HIGH_CARD_RETIREMENT_REPORT_SCHEMA_VERSION = 1
+export const HIGH_CARD_RETIREMENT_REPORT_SCHEMA_VERSION = 2
 const DEFAULT_REPORT_PATH = join('.transit-snapshot', 'high-card-retirement-readiness.json')
 const STATE_MAX_BYTES = 64 * 1024
 const SAFE_CITY = /^[A-Za-z][A-Za-z0-9]{0,63}$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MAX_PUBLISHED_CITIES = 256
+const COMPLETE_ROUTING_MANIFEST_COUNT = 4
+const AUTHORITY_MODES = new Set(['legacy-d1', 'legacy-partial', 'legacy-backfill', 'root-bound'])
 
 export async function collectHighCardRetirementReadiness({
   env = process.env,
@@ -33,12 +37,11 @@ export async function collectHighCardRetirementReadiness({
   // sensitive request path, and bounded sequential R2 reads avoid creating a
   // burst across every retained city merely to decide whether cleanup is safe.
   for (const item of published) {
-    const observed = await readWindow(item)
-    const summary = summarizeAuthorityWindow(observed)
-    if (summary.activeVersion !== item.activeVersion) {
+    const observed = summarizeRetainedAuthorityWindow(await readWindow(item))
+    if (observed.activeVersion !== item.activeVersion) {
       throw new Error(`Retirement readiness active pointer changed for ${item.city}`)
     }
-    cities.push(Object.freeze({ city: item.city, ...summary }))
+    cities.push(Object.freeze({ city: item.city, ...observed }))
   }
 
   const blockingCities = cities
@@ -49,6 +52,8 @@ export async function collectHighCardRetirementReadiness({
       previousVersion: city.previousVersion,
       activeAuthorityMode: city.activeAuthorityMode,
       previousAuthorityMode: city.previousAuthorityMode,
+      activeRoutingManifestCount: city.activeRoutingManifestCount,
+      previousRoutingManifestCount: city.previousRoutingManifestCount,
       nativeRootBoundPublicationsRequired: city.nativeRootBoundPublicationsRequired,
     }))
 
@@ -65,6 +70,60 @@ export async function collectHighCardRetirementReadiness({
     blockingCities: Object.freeze(blockingCities),
     cities: Object.freeze(cities),
   })
+}
+
+export function summarizeRetainedAuthorityWindow({
+  activeVersion,
+  previousVersion,
+  activeAuthority,
+  previousAuthority,
+} = {}) {
+  const active = normalizeAuthorityAssessment(activeAuthority, 'active')
+  const previous = normalizeAuthorityAssessment(previousAuthority, 'previous')
+  if (!safeId(activeVersion) || !safeId(previousVersion) || activeVersion === previousVersion) {
+    throw new Error('Retirement readiness requires a distinct safe retained window')
+  }
+  const rootBoundRollbackWindow = active.mode === 'root-bound' && previous.mode === 'root-bound'
+  const nativeRootBoundPublicationsRequired = active.mode === 'root-bound'
+    ? (previous.mode === 'root-bound' ? 0 : 1)
+    : 2
+  return Object.freeze({
+    activeVersion,
+    previousVersion,
+    activeAuthorityMode: active.mode,
+    previousAuthorityMode: previous.mode,
+    rollbackTargetAuthorityMode: previous.mode,
+    activeRoutingManifestCount: active.routingManifestCount,
+    previousRoutingManifestCount: previous.routingManifestCount,
+    rootBoundRollbackWindow,
+    nativeRootBoundPublicationsRequired,
+  })
+}
+
+export function classifyRoutingAuthorityPresence({ keys, heads, manifestArtifacts } = {}) {
+  if (!Array.isArray(keys) || keys.length !== COMPLETE_ROUTING_MANIFEST_COUNT
+    || !Array.isArray(heads) || heads.length !== keys.length) {
+    throw new Error('Retirement readiness routing authority observation is invalid')
+  }
+  const presentCount = heads.filter(Boolean).length
+  const rootArtifacts = new Set(Array.isArray(manifestArtifacts)
+    ? manifestArtifacts.map((entry) => entry?.key).filter((key) => typeof key === 'string')
+    : [])
+  const rootBindingCount = keys.filter((key) => rootArtifacts.has(key)).length
+
+  if (rootBindingCount !== 0 && rootBindingCount !== keys.length) {
+    throw new Error('Retirement readiness root manifest has a partial routing authority binding')
+  }
+  if (rootBindingCount === keys.length && presentCount !== keys.length) {
+    throw new Error('Retirement readiness root-bound routing authority is missing')
+  }
+  if (presentCount === 0) {
+    return Object.freeze({ mode: 'legacy-d1', routingManifestCount: 0 })
+  }
+  if (presentCount < keys.length) {
+    return Object.freeze({ mode: 'legacy-partial', routingManifestCount: presentCount })
+  }
+  return null
 }
 
 export function normalizePublishedVersions(rows) {
@@ -111,19 +170,49 @@ async function readAuthorityWindow({ city, activeVersion, env }) {
     throw new Error(`Retirement readiness found an invalid or mismatched retained window for ${city}`)
   }
 
-  const [activeMode, previousMode] = await Promise.all([
-    readVersionAuthorityMode({ city, version: stateActive, r2 }),
-    readVersionAuthorityMode({ city, version: previousVersion, r2 }),
+  const [activeAuthority, previousAuthority] = await Promise.all([
+    readVersionAuthorityAssessment({ city, version: stateActive, r2 }),
+    readVersionAuthorityAssessment({ city, version: previousVersion, r2 }),
   ])
-  return { activeVersion: stateActive, previousVersion, activeMode, previousMode }
+  return { activeVersion: stateActive, previousVersion, activeAuthority, previousAuthority }
 }
 
-async function readVersionAuthorityMode({ city, version, r2 }) {
-  const authority = await readRollbackRoutingAuthority({ city, version, r2 })
+async function readVersionAuthorityAssessment({ city, version, r2 }) {
+  const keys = routingCompletionManifestKeys(version, city)
   const prefix = `snapshots/${version}/cities/${city}/`
-  const manifest = await r2.getManifest(`${prefix}manifest.json`)
+  const [heads, manifest] = await Promise.all([
+    Promise.all(keys.map((key) => r2.head(key))),
+    r2.getManifest(`${prefix}manifest.json`),
+  ])
   if (!manifest) throw new Error(`Retirement readiness snapshot manifest is unavailable for ${city}`)
-  return bindRollbackRoutingAuthority(manifest.artifacts, authority)
+
+  const preclassified = classifyRoutingAuthorityPresence({
+    keys,
+    heads,
+    manifestArtifacts: manifest.artifacts,
+  })
+  if (preclassified) return preclassified
+
+  // A complete set must still pass the production rollback authority parser,
+  // sample fingerprint check, and root-binding check before it can be called
+  // legacy-backfill or root-bound. Presence alone never upgrades authority.
+  const authority = await readRollbackRoutingAuthority({ city, version, r2 })
+  const mode = bindRollbackRoutingAuthority(manifest.artifacts, authority)
+  return Object.freeze({ mode, routingManifestCount: COMPLETE_ROUTING_MANIFEST_COUNT })
+}
+
+function normalizeAuthorityAssessment(value, role) {
+  const mode = value?.mode
+  const count = value?.routingManifestCount
+  if (!AUTHORITY_MODES.has(mode) || !Number.isSafeInteger(count) || count < 0 || count > COMPLETE_ROUTING_MANIFEST_COUNT) {
+    throw new Error(`Retirement readiness ${role} authority assessment is invalid`)
+  }
+  if ((mode === 'legacy-d1' && count !== 0)
+    || (mode === 'legacy-partial' && (count === 0 || count === COMPLETE_ROUTING_MANIFEST_COUNT))
+    || ((mode === 'legacy-backfill' || mode === 'root-bound') && count !== COMPLETE_ROUTING_MANIFEST_COUNT)) {
+    throw new Error(`Retirement readiness ${role} authority assessment is inconsistent`)
+  }
+  return Object.freeze({ mode, routingManifestCount: count })
 }
 
 function createR2Adapter({ accountId, bucket, accessKeyId, secretAccessKey }) {
@@ -208,7 +297,7 @@ async function writeReport(report, env) {
   await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })
   if (env.GITHUB_STEP_SUMMARY) {
     const blockerRows = report.blockingCities.length
-      ? report.blockingCities.map((city) => `| ${city.city} | ${city.activeAuthorityMode} | ${city.previousAuthorityMode} | ${city.nativeRootBoundPublicationsRequired} |`)
+      ? report.blockingCities.map((city) => `| ${city.city} | ${city.activeAuthorityMode} (${city.activeRoutingManifestCount}/4) | ${city.previousAuthorityMode} (${city.previousRoutingManifestCount}/4) | ${city.nativeRootBoundPublicationsRequired} |`)
       : ['| — | — | — | 0 |']
     await appendFile(env.GITHUB_STEP_SUMMARY, [
       '## Legacy high-card D1 retirement authority readiness',
@@ -239,6 +328,8 @@ async function main(env = process.env) {
       city: city.city,
       activeAuthorityMode: city.activeAuthorityMode,
       previousAuthorityMode: city.previousAuthorityMode,
+      activeRoutingManifestCount: city.activeRoutingManifestCount,
+      previousRoutingManifestCount: city.previousRoutingManifestCount,
       nativeRootBoundPublicationsRequired: city.nativeRootBoundPublicationsRequired,
     })),
   }))
