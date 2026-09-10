@@ -5,11 +5,14 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   captureRollbackAuthorityEvidence,
+  nativeRootBoundPublicationsRequired,
   summarizeAuthorityWindow,
 } from './capture-rollback-authority-evidence.mjs'
 
 const workflow = readFileSync('.github/workflows/snapshot-rollback-drill.yml', 'utf8')
 const source = readFileSync('scripts/transit-snapshot/capture-rollback-authority-evidence.mjs', 'utf8')
+const publisher = readFileSync('scripts/sync-transit-snapshot-core.mjs', 'utf8')
+const patternBackfill = readFileSync('scripts/transit-snapshot/export-pattern-stops.mjs', 'utf8')
 
 describe('rollback authority evidence', () => {
   it('marks the rollback window root-bound only when both active and previous are root-bound', () => {
@@ -25,6 +28,7 @@ describe('rollback authority evidence', () => {
       previousAuthorityMode: 'root-bound',
       rollbackTargetAuthorityMode: 'root-bound',
       rootBoundRollbackWindow: true,
+      nativeRootBoundPublicationsRequired: 0,
     })
 
     expect(summarizeAuthorityWindow({
@@ -35,13 +39,23 @@ describe('rollback authority evidence', () => {
     })).toMatchObject({
       rollbackTargetAuthorityMode: 'legacy-backfill',
       rootBoundRollbackWindow: false,
+      nativeRootBoundPublicationsRequired: 1,
     })
+  })
+
+  it('reports the minimum native publications required to fill a root-bound retained window', () => {
+    expect(nativeRootBoundPublicationsRequired('root-bound', 'root-bound')).toBe(0)
+    expect(nativeRootBoundPublicationsRequired('root-bound', 'legacy-backfill')).toBe(1)
+    expect(nativeRootBoundPublicationsRequired('root-bound', 'legacy-d1')).toBe(1)
+    expect(nativeRootBoundPublicationsRequired('legacy-backfill', 'legacy-d1')).toBe(2)
+    expect(nativeRootBoundPublicationsRequired('legacy-d1', 'root-bound')).toBe(2)
   })
 
   it('rejects unknown modes and invalid rollback pairs', () => {
     expect(() => summarizeAuthorityWindow({
       activeVersion: 'v2', previousVersion: 'v1', activeMode: 'r2', previousMode: 'root-bound',
     })).toThrow(/unknown authority mode/)
+    expect(() => nativeRootBoundPublicationsRequired('root-bound', 'r2')).toThrow(/unknown authority mode/)
     expect(() => summarizeAuthorityWindow({
       activeVersion: 'v1', previousVersion: 'v1', activeMode: 'root-bound', previousMode: 'root-bound',
     })).toThrow(/distinct safe active and previous/)
@@ -66,12 +80,23 @@ describe('rollback authority evidence', () => {
         kind: 'snapshot-rollback-authority-window',
         rollbackTargetAuthorityMode: 'legacy-d1',
         rootBoundRollbackWindow: false,
+        nativeRootBoundPublicationsRequired: 1,
         sourceCommit: 'abc123',
       })
       await expect(readFile(reportPath, 'utf8')).resolves.toContain('"previousAuthorityMode": "legacy-d1"')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  })
+
+  it('derives readiness from native publisher semantics rather than pretending a legacy backfill rewrites the root', () => {
+    const routingTasks = publisher.indexOf('...routingTasks,')
+    const rootManifest = publisher.indexOf('createArtifactManifest(artifactTasks')
+    expect(routingTasks).toBeGreaterThan(-1)
+    expect(rootManifest).toBeGreaterThan(routingTasks)
+    expect(patternBackfill).toContain('patternStopExportManifestKey(version, city)')
+    expect(patternBackfill).not.toContain('createArtifactManifest(')
+    expect(patternBackfill).not.toContain('/manifest.json')
   })
 
   it('reads the canonical schema-v2 R2 state active pointer from version', () => {

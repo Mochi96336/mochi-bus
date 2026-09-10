@@ -16,6 +16,14 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const STATE_MAX_BYTES = 64 * 1024
 const AUTHORITY_MODES = new Set(['legacy-d1', 'legacy-backfill', 'root-bound'])
 
+export function nativeRootBoundPublicationsRequired(activeMode, previousMode) {
+  if (!AUTHORITY_MODES.has(activeMode) || !AUTHORITY_MODES.has(previousMode)) {
+    throw new Error('Rollback authority evidence returned an unknown authority mode')
+  }
+  if (activeMode !== 'root-bound') return 2
+  return previousMode === 'root-bound' ? 0 : 1
+}
+
 export function summarizeAuthorityWindow({ activeVersion, previousVersion, activeMode, previousMode }) {
   if (!safeId(activeVersion) || !safeId(previousVersion) || activeVersion === previousVersion) {
     throw new Error('Rollback authority evidence requires distinct safe active and previous versions')
@@ -30,6 +38,7 @@ export function summarizeAuthorityWindow({ activeVersion, previousVersion, activ
     previousAuthorityMode: previousMode,
     rollbackTargetAuthorityMode: previousMode,
     rootBoundRollbackWindow: activeMode === 'root-bound' && previousMode === 'root-bound',
+    nativeRootBoundPublicationsRequired: nativeRootBoundPublicationsRequired(activeMode, previousMode),
   })
 }
 
@@ -208,6 +217,7 @@ async function main() {
       previousVersion: report.previousVersion,
       rollbackTargetAuthorityMode: report.rollbackTargetAuthorityMode,
       rootBoundRollbackWindow: report.rootBoundRollbackWindow,
+      nativeRootBoundPublicationsRequired: report.nativeRootBoundPublicationsRequired,
     }))
   } catch (error) {
     console.error(JSON.stringify({
