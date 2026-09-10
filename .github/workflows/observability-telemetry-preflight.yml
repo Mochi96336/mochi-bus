@@ -1,0 +1,43 @@
+name: Observability telemetry preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/observability-telemetry-preflight.yml'
+      - 'scripts/transit-snapshot/observability-telemetry-preflight.mjs'
+
+concurrency:
+  group: observability-telemetry-preflight
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Probe Workers Observability telemetry access
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OBSERVABILITY_TELEMETRY_PREFLIGHT_REPORT: .transit-snapshot/observability-telemetry-preflight.json
+        run: node scripts/transit-snapshot/observability-telemetry-preflight.mjs
+      - name: Upload bounded telemetry preflight evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-telemetry-preflight
+          path: .transit-snapshot/observability-telemetry-preflight.json
+          if-no-files-found: warn
+          retention-days: 7
