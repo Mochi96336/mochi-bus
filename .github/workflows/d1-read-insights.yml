@@ -36,30 +36,14 @@ jobs:
       - name: Resolve snapshot operation scope
         id: operation
         run: node scripts/instance/operation-scope.mjs snapshot
-      - name: Collect and sanitize D1 read insights
+      - name: Collect and sanitize D1 read attribution
         if: steps.operation.outputs.enabled == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          D1_DATABASE_NAME: ${{ steps.operation.outputs.d1_database_name }}
-          D1_INSIGHTS_TIME_PERIOD: 1d
+          D1_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           D1_INSIGHTS_REPORT_PATH: .transit-snapshot/d1-read-insights.json
-        run: |
-          set -euo pipefail
-          raw="$(mktemp)"
-          trap 'rm -f "$raw"' EXIT
-          npx wrangler d1 insights "$D1_DATABASE_NAME" \
-            --config .generated/instance/wrangler.instance.jsonc \
-            --time-period "$D1_INSIGHTS_TIME_PERIOD" \
-            --sort-type sum \
-            --sort-by reads \
-            --sort-direction DESC \
-            --limit 25 \
-            --json \
-            --experimental-provision=false \
-            --experimental-auto-create=false \
-            > "$raw"
-          D1_INSIGHTS_RAW_PATH="$raw" node scripts/transit-snapshot/d1-read-insights.mjs
+        run: node scripts/transit-snapshot/d1-read-insights.mjs
       - name: Upload sanitized D1 read evidence
         if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
         uses: actions/upload-artifact@v4
