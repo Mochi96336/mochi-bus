@@ -42,10 +42,12 @@ describe('weekly D1 budget proof workflow', () => {
     expect(report).not.toContain('settleScheduledD1Budget')
   })
 
-  it('aggregates cleanup rows once before feeding the unchanged per-city estimator', () => {
-    expect(report).toContain('const cleanupRowsByCity = await readWeeklyCleanupRowsByCity({ env })')
+  it('aggregates cleanup rows once, preserves rows_read, and feeds the unchanged per-city estimator', () => {
+    expect(report).toContain('const cleanupEvidence = await readWeeklyCleanupRowsEvidence({ env })')
+    expect(report).toContain('const cleanupRowsByCity = cleanupEvidence.rowsByCity')
     expect(report).toContain('readCleanupRows: async () => cleanupRowsByCity.get(city) ?? 0')
+    expect(report).toContain('cleanupQueryRowsRead: cleanupEvidence.rowsRead')
     expect(report).toContain('WEEKLY_CLEANUP_ROWS_SQL')
-    expect((report.match(/await readWeeklyCleanupRowsByCity\(\{ env \}\)/g) ?? [])).toHaveLength(1)
+    expect((report.match(/await readWeeklyCleanupRowsEvidence\(\{ env \}\)/g) ?? [])).toHaveLength(1)
   })
 })
