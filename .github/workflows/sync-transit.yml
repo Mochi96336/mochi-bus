@@ -61,6 +61,10 @@ on:
       expected_previous:
         description: Exact legacy previous snapshot version expected before repair
         required: false
+      confirmation:
+        description: Type SYNC_<City>, FORCE_<City>, or REPAIR_<City> to match the selected manual operation
+        required: true
+        type: string
 
 concurrency:
   group: transit-snapshot
@@ -73,6 +77,25 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Validate manual production snapshot intent
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_CITY: ${{ inputs.city }}
+          INPUT_FORCE_PUBLISH: ${{ inputs.force_publish }}
+          INPUT_REPAIR_LEGACY_PREVIOUS: ${{ inputs.repair_legacy_previous }}
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          if [ "$INPUT_REPAIR_LEGACY_PREVIOUS" = "true" ]; then
+            test "$INPUT_FORCE_PUBLISH" = "true"
+            expected="REPAIR_${INPUT_CITY}"
+          elif [ "$INPUT_FORCE_PUBLISH" = "true" ]; then
+            expected="FORCE_${INPUT_CITY}"
+          else
+            expected="SYNC_${INPUT_CITY}"
+          fi
+          test "$INPUT_CONFIRMATION" = "$expected"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
