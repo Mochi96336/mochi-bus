@@ -22,6 +22,7 @@ import {
   type TDXEnv,
 } from '../lib/tdx'
 import type { TDXResolutionOptions } from '../lib/tdx/resolution-cache'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 
 const STOP_ROUTE_ETA_CACHE_SECONDS = 15
 const MAX_SUGGESTIONS = 40
@@ -101,6 +102,11 @@ export async function getSnapshotStopRouteSuggestions(
   dependencies: Partial<StopRouteSuggestionDependencies> = {},
 ): Promise<StopRouteSuggestionResult | null> {
   const deps = { ...defaultDependencies, ...dependencies }
+  const reportStopLookupFallback = dependencies.reportStopLookupFallback
+    ?? createSnapshotFallbackReporter({
+      operation: 'bus_stop_routes',
+      versionMetadata: env.CF_VERSION_METADATA,
+    })
 
   let place: StopLookupPlace | null
   let routes: StopPlaceRoute[]
@@ -109,7 +115,7 @@ export async function getSnapshotStopRouteSuggestions(
       env,
       city,
       stopUid,
-      deps.reportStopLookupFallback,
+      reportStopLookupFallback,
     )
     if (!place) return null
     routes = await deps.getStopPlaceRoutes(env, city, place.placeId)
