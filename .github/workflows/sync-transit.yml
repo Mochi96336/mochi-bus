@@ -210,10 +210,14 @@ jobs:
             fi
             cities="$(node scripts/transit-snapshot/scheduled-cities.mjs)"
             if [ -n "$cities" ]; then
-              if node scripts/transit-snapshot/high-card-retirement-readiness.mjs; then
-                retirement_report="$SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT"
+              if [ "${GITHUB_RUN_ATTEMPT:-}" = "1" ]; then
+                if node scripts/transit-snapshot/high-card-retirement-readiness.mjs; then
+                  retirement_report="$SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT"
+                else
+                  echo '{"event":"scheduled_native_authority_refresh_unavailable","action":"continue_without_force_publish"}' >&2
+                fi
               else
-                echo '{"event":"scheduled_native_authority_refresh_unavailable","action":"continue_without_force_publish"}' >&2
+                echo '{"event":"scheduled_native_authority_refresh_skipped","reason":"workflow_rerun_or_unknown_attempt","action":"continue_without_force_publish"}' >&2
               fi
             fi
           fi

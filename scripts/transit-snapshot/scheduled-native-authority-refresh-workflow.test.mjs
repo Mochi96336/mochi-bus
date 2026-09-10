@@ -20,6 +20,20 @@ describe('scheduled native authority refresh workflow', () => {
     expect(workflow).toContain('unset SNAPSHOT_FORCE')
   })
 
+  it('limits automatic same-content authority refresh to the first workflow attempt', () => {
+    const scheduledCities = workflow.indexOf('cities="$(node scripts/transit-snapshot/scheduled-cities.mjs)"')
+    const attemptGuard = workflow.indexOf('if [ "${GITHUB_RUN_ATTEMPT:-}" = "1" ]; then')
+    const readiness = workflow.indexOf('node scripts/transit-snapshot/high-card-retirement-readiness.mjs')
+    const publisher = workflow.indexOf('npm run snapshot:window -- "$city"')
+
+    expect(attemptGuard).toBeGreaterThan(scheduledCities)
+    expect(readiness).toBeGreaterThan(attemptGuard)
+    expect(publisher).toBeGreaterThan(readiness)
+    expect(workflow).toContain('scheduled_native_authority_refresh_skipped')
+    expect(workflow).toContain('workflow_rerun_or_unknown_attempt')
+    expect(workflow).toContain('continue_without_force_publish')
+  })
+
   it('keeps automatic readiness collection fail-open without turning an unknown report into force publish', () => {
     expect(workflow).toContain('if node scripts/transit-snapshot/high-card-retirement-readiness.mjs; then')
     expect(workflow).toContain('scheduled_native_authority_refresh_unavailable')
