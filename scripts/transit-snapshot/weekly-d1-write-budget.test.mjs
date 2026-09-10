@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildWeeklyD1WriteBudgetReport } from './weekly-d1-write-budget.mjs'
+import {
+  buildWeeklyD1WriteBudgetReport,
+  readWeeklyCleanupRowsByCity,
+  WEEKLY_CLEANUP_ROWS_SQL,
+} from './weekly-d1-write-budget.mjs'
 
 const plan = Object.freeze({
   snapshotSchedule: 'taipei-weekly-sharded',
@@ -21,6 +25,40 @@ function cityEstimate(city, estimatedRows, cleanupRows = 10) {
 }
 
 describe('weekly D1 write budget proof', () => {
+  it('aggregates inactive low-cardinality rows in one read-only D1 query', async () => {
+    expect(WEEKLY_CLEANUP_ROWS_SQL.trim().toUpperCase().startsWith('SELECT')).toBe(true)
+    expect(WEEKLY_CLEANUP_ROWS_SQL).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|PRAGMA)\b/i)
+    expect(WEEKLY_CLEANUP_ROWS_SQL.match(/FROM routes r/g)).toHaveLength(1)
+    expect(WEEKLY_CLEANUP_ROWS_SQL.match(/FROM patterns p/g)).toHaveLength(1)
+    expect(WEEKLY_CLEANUP_ROWS_SQL.match(/FROM stop_places s/g)).toHaveLength(1)
+
+    const query = vi.fn(async () => [
+      { city_code: 'Chiayi', cleanup_rows: 12 },
+      { city_code: 'Taipei', cleanup_rows: 345 },
+    ])
+    const rows = await readWeeklyCleanupRowsByCity({ query })
+
+    expect([...rows.entries()]).toEqual([
+      ['Chiayi', 12],
+      ['Taipei', 345],
+    ])
+    expect(query).toHaveBeenCalledOnce()
+    expect(query).toHaveBeenCalledWith(WEEKLY_CLEANUP_ROWS_SQL, [])
+  })
+
+  it('fails closed on malformed or duplicate aggregated cleanup rows', async () => {
+    await expect(readWeeklyCleanupRowsByCity({
+      query: async () => [{ city_code: 'Taipei', cleanup_rows: -1 }],
+    })).rejects.toThrow('Weekly D1 cleanup rows are invalid')
+
+    await expect(readWeeklyCleanupRowsByCity({
+      query: async () => [
+        { city_code: 'Taipei', cleanup_rows: 1 },
+        { city_code: 'Taipei', cleanup_rows: 2 },
+      ],
+    })).rejects.toThrow('Weekly D1 cleanup rows are invalid')
+  })
+
   it('covers every enabled weekly-sharded city exactly once and reports worst-case headroom', async () => {
     const estimates = new Map([
       ['Taoyuan', cityEstimate('Taoyuan', 12_000)],
