@@ -74,6 +74,11 @@ describe('rollback authority evidence', () => {
     }
   })
 
+  it('reads the canonical schema-v2 R2 state active pointer from version', () => {
+    expect(source).toContain('const activeVersion = safeId(state?.version)')
+    expect(source).not.toContain('const activeVersion = safeId(state?.activeVersion)')
+  })
+
   it('reuses the production rollback authority contract and stays observation-only', () => {
     expect(source).toContain('readRollbackRoutingAuthority')
     expect(source).toContain('bindRollbackRoutingAuthority')
