@@ -4,13 +4,13 @@ import { pathToFileURL } from 'node:url'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
 import { estimateScheduledD1WriteForCity } from './d1-write-budget.mjs'
 import { snapshotCitiesByTaipeiWeekday } from './snapshot-schedule.mjs'
+import { queryD1 } from './window-d1.mjs'
 
 export const WEEKLY_D1_BUDGET_REPORT_SCHEMA_VERSION = 1
 const DEFAULT_REPORT_PATH = join('.transit-snapshot', 'weekly-d1-write-budget.json')
 const WEEKDAY_NAMES = Object.freeze(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
 const SAFE_CITY = /^[A-Za-z][A-Za-z0-9]{0,63}$/
 const MAX_CLEANUP_CITY_ROWS = 256
-const MAX_D1_RESPONSE_BYTES = 128 * 1024
 
 // The scheduled publisher keeps the currently-active version and deletes every
 // other low-cardinality D1 version for the city. The old proof asked this same
@@ -49,57 +49,43 @@ GROUP BY city_code
 ORDER BY city_code
 `
 
-export async function queryD1RowsWithMeta({ accountId, apiToken, databaseId, fetchImpl = fetch, sql, params }) {
-  if (!accountId || !apiToken || !databaseId || !sql || !Array.isArray(params)) {
-    throw new Error('Weekly D1 cleanup query configuration is invalid')
-  }
-  const response = await fetchImpl(
-    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/d1/database/${encodeURIComponent(databaseId)}/query`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ sql, params }),
-      signal: AbortSignal.timeout(15_000),
-    },
-  )
-  const text = await response.text()
-  if (new TextEncoder().encode(text).byteLength > MAX_D1_RESPONSE_BYTES) {
-    throw new Error('Weekly D1 cleanup query response is too large')
-  }
-  let payload
-  try {
-    payload = JSON.parse(text)
-  } catch {
-    throw new Error('Weekly D1 cleanup query returned invalid JSON')
-  }
+export function extractD1RowsRead(payload) {
   const item = Array.isArray(payload?.result) && payload.result.length === 1
     ? payload.result[0]
     : null
-  if (!response.ok || payload?.success !== true || item?.success !== true || !Array.isArray(item.results)) {
-    throw new Error('Weekly D1 cleanup query failed')
-  }
-  const rowsRead = Number(item.meta?.rows_read)
-  return Object.freeze({
-    rows: item.results,
-    rowsRead: Number.isSafeInteger(rowsRead) && rowsRead >= 0 ? rowsRead : null,
-  })
+  const value = item?.meta?.rows_read
+  if (value === undefined || value === null) return null
+  const rowsRead = Number(value)
+  return Number.isSafeInteger(rowsRead) && rowsRead >= 0 ? rowsRead : null
 }
 
-export async function readWeeklyCleanupRowsEvidence({ env = process.env, query } = {}) {
-  const execute = query ?? ((sql, params) => queryD1RowsWithMeta({
-    accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
-    apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
-    databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
-    fetchImpl: fetch,
-    sql,
-    params,
-  }))
-  if (typeof execute !== 'function') throw new Error('Weekly D1 cleanup query is invalid')
+export async function readWeeklyCleanupRowsEvidence({ env = process.env, query, fetchImpl = fetch } = {}) {
+  let raw
+  if (query !== undefined) {
+    if (typeof query !== 'function') throw new Error('Weekly D1 cleanup query is invalid')
+    raw = await query(WEEKLY_CLEANUP_ROWS_SQL, [])
+  } else {
+    let rowsRead = null
+    const evidenceFetch = async (...args) => {
+      const response = await fetchImpl(...args)
+      try {
+        rowsRead = extractD1RowsRead(await response.clone().json())
+      } catch {
+        rowsRead = null
+      }
+      return response
+    }
+    const rows = await queryD1({
+      accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
+      apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
+      databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
+      fetchImpl: evidenceFetch,
+      sql: WEEKLY_CLEANUP_ROWS_SQL,
+      params: [],
+    })
+    raw = { rows, rowsRead }
+  }
 
-  const raw = await execute(WEEKLY_CLEANUP_ROWS_SQL, [])
   const rows = Array.isArray(raw) ? raw : raw?.rows
   const rowsRead = Array.isArray(raw) ? null : normalizeRowsRead(raw?.rowsRead)
   if (!Array.isArray(rows) || rows.length > MAX_CLEANUP_CITY_ROWS) {
@@ -224,8 +210,7 @@ function nonNegativeInteger(value, name) {
 function normalizeRowsRead(value) {
   if (value === undefined || value === null) return null
   const number = Number(value)
-  if (!Number.isSafeInteger(number) || number < 0) throw new Error('Weekly D1 cleanup rows_read is invalid')
-  return number
+  return Number.isSafeInteger(number) && number >= 0 ? number : null
 }
 
 function positiveNumber(value, name) {
