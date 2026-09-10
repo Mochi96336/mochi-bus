@@ -33,6 +33,13 @@ export function summarizeAuthorityWindow({ activeVersion, previousVersion, activ
   })
 }
 
+export function parseRollbackStatePointers(state) {
+  return Object.freeze({
+    activeVersion: safeId(state?.version),
+    previousVersion: safeId(state?.previousVersion),
+  })
+}
+
 export async function captureRollbackAuthorityEvidence({
   city = 'Taichung',
   env = process.env,
@@ -79,8 +86,7 @@ function createWindowReader({ city, env }) {
       r2.getJson(`snapshots/state/${city}.json`, STATE_MAX_BYTES),
     ])
     const d1Active = safeId(authorityRows[0]?.active_version)
-    const activeVersion = safeId(state?.activeVersion)
-    const previousVersion = safeId(state?.previousVersion)
+    const { activeVersion, previousVersion } = parseRollbackStatePointers(state)
     if (!d1Active || !activeVersion || !previousVersion || d1Active !== activeVersion) {
       throw new Error('Rollback authority evidence found an invalid or mismatched active pointer')
     }
