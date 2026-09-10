@@ -13,8 +13,10 @@ describe('pattern-stop R2 backfill workflow', () => {
     expect(workflow).toContain('group: pattern-stop-backfill-${{ inputs.city }}')
   })
 
-  it('runs only the read-only exporter with the provisioned D1 and R2 resources', () => {
-    expect(workflow).toContain('node scripts/transit-snapshot/export-pattern-stops.mjs "$CITY" "$TARGET"')
+  it('runs the pattern-stop exporter only through the guarded process runner', () => {
+    expect(workflow).toContain('SNAPSHOT_R2_BACKFILL_CONFIRMATION: ${{ inputs.confirmation }}')
+    expect(workflow).toContain('node scripts/transit-snapshot/run-r2-backfill.mjs pattern-stops "$CITY" "$TARGET"')
+    expect(workflow).not.toContain('node scripts/transit-snapshot/export-pattern-stops.mjs "$CITY" "$TARGET"')
     expect(workflow).toContain('TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}')
     expect(workflow).toContain('TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}')
     expect(workflow).toContain('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}')
