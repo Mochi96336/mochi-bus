@@ -258,7 +258,7 @@ async function readR2State(client, baseUrl, city) {
   }
   let value
   try { value = JSON.parse(text) } catch { throw new Error('Rollback drill R2 state returned invalid JSON') }
-  const activeVersion = safeId(value?.activeVersion) ? value.activeVersion : null
+  const activeVersion = safeId(value?.version) ? value.version : null
   const previousVersion = safeId(value?.previousVersion) ? value.previousVersion : null
   if (!activeVersion || !previousVersion) throw new Error('Rollback drill R2 state is incomplete')
   return Object.freeze({ activeVersion, previousVersion })
