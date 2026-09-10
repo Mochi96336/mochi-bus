@@ -49,34 +49,65 @@ GROUP BY city_code
 ORDER BY city_code
 `
 
-export async function readWeeklyCleanupRowsByCity({ env = process.env, query } = {}) {
-  const execute = query ?? ((sql, params) => queryD1({
-    accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
-    apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
-    databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
-    fetchImpl: fetch,
-    sql,
-    params,
-  }))
-  if (typeof execute !== 'function') throw new Error('Weekly D1 cleanup query is invalid')
+export function extractD1RowsRead(payload) {
+  const item = Array.isArray(payload?.result) && payload.result.length === 1
+    ? payload.result[0]
+    : null
+  const value = item?.meta?.rows_read
+  if (value === undefined || value === null) return null
+  const rowsRead = Number(value)
+  return Number.isSafeInteger(rowsRead) && rowsRead >= 0 ? rowsRead : null
+}
 
-  const rows = await execute(WEEKLY_CLEANUP_ROWS_SQL, [])
+export async function readWeeklyCleanupRowsEvidence({ env = process.env, query, fetchImpl = fetch } = {}) {
+  let raw
+  if (query !== undefined) {
+    if (typeof query !== 'function') throw new Error('Weekly D1 cleanup query is invalid')
+    raw = await query(WEEKLY_CLEANUP_ROWS_SQL, [])
+  } else {
+    let rowsRead = null
+    const evidenceFetch = async (...args) => {
+      const response = await fetchImpl(...args)
+      try {
+        rowsRead = extractD1RowsRead(await response.clone().json())
+      } catch {
+        rowsRead = null
+      }
+      return response
+    }
+    const rows = await queryD1({
+      accountId: required(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'),
+      apiToken: required(env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN'),
+      databaseId: required(env.TRANSIT_DATABASE_ID, 'TRANSIT_DATABASE_ID'),
+      fetchImpl: evidenceFetch,
+      sql: WEEKLY_CLEANUP_ROWS_SQL,
+      params: [],
+    })
+    raw = { rows, rowsRead }
+  }
+
+  const rows = Array.isArray(raw) ? raw : raw?.rows
+  const rowsRead = Array.isArray(raw) ? null : normalizeRowsRead(raw?.rowsRead)
   if (!Array.isArray(rows) || rows.length > MAX_CLEANUP_CITY_ROWS) {
     throw new Error('Weekly D1 cleanup rows are invalid')
   }
 
-  const result = new Map()
+  const rowsByCity = new Map()
   for (const row of rows) {
     const city = typeof row?.city_code === 'string' && SAFE_CITY.test(row.city_code)
       ? row.city_code
       : null
     const cleanupRows = Number(row?.cleanup_rows)
-    if (!city || !Number.isSafeInteger(cleanupRows) || cleanupRows < 0 || result.has(city)) {
+    if (!city || !Number.isSafeInteger(cleanupRows) || cleanupRows < 0 || rowsByCity.has(city)) {
       throw new Error('Weekly D1 cleanup rows are invalid')
     }
-    result.set(city, cleanupRows)
+    rowsByCity.set(city, cleanupRows)
   }
-  return result
+  return Object.freeze({ rowsByCity, rowsRead })
+}
+
+export async function readWeeklyCleanupRowsByCity(options = {}) {
+  return (await readWeeklyCleanupRowsEvidence(options)).rowsByCity
 }
 
 export async function buildWeeklyD1WriteBudgetReport({
@@ -176,6 +207,12 @@ function nonNegativeInteger(value, name) {
   return number
 }
 
+function normalizeRowsRead(value) {
+  if (value === undefined || value === null) return null
+  const number = Number(value)
+  return Number.isSafeInteger(number) && number >= 0 ? number : null
+}
+
 function positiveNumber(value, name) {
   const number = Number(value)
   if (!Number.isFinite(number) || number < 1) throw new Error(`${name} must be >= 1`)
@@ -187,7 +224,7 @@ function required(value, name) {
   return value
 }
 
-async function writeReport(report, env) {
+async function writeReport(report, env, readEvidence = {}) {
   const path = env.SNAPSHOT_WEEKLY_D1_BUDGET_REPORT || DEFAULT_REPORT_PATH
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(report, null, 2)}\n`)
@@ -198,6 +235,7 @@ async function writeReport(report, env) {
       '## Weekly D1 snapshot write budget',
       '',
       `Budget: ${report.budgetRows} rows/day; cities: ${report.enabledCityCount}; all days allowed: ${report.allDaysAllowed}.`,
+      `Cleanup aggregate rows_read: ${readEvidence.cleanupQueryRowsRead ?? 'unavailable'}.`,
       '',
       '| Day | Cities | Projected rows_written | Headroom | Allowed |',
       '| --- | --- | ---: | ---: | --- |',
@@ -210,7 +248,8 @@ async function writeReport(report, env) {
 
 async function main(env = process.env) {
   const plan = loadOperationsPlan()
-  const cleanupRowsByCity = await readWeeklyCleanupRowsByCity({ env })
+  const cleanupEvidence = await readWeeklyCleanupRowsEvidence({ env })
+  const cleanupRowsByCity = cleanupEvidence.rowsByCity
   const report = await buildWeeklyD1WriteBudgetReport({
     plan,
     env,
@@ -220,13 +259,15 @@ async function main(env = process.env) {
       readCleanupRows: async () => cleanupRowsByCity.get(city) ?? 0,
     }),
   })
-  const reportPath = await writeReport(report, env)
+  const readEvidence = Object.freeze({ cleanupQueryRowsRead: cleanupEvidence.rowsRead })
+  const reportPath = await writeReport(report, env, readEvidence)
   console.log(JSON.stringify({
     event: 'snapshot_weekly_d1_budget_proof',
     reportPath,
     budgetRows: report.budgetRows,
     enabledCityCount: report.enabledCityCount,
     weeklyProjectedRows: report.weeklyProjectedRows,
+    cleanupQueryRowsRead: readEvidence.cleanupQueryRowsRead,
     maxProjectedDay: report.maxProjectedDay,
     allDaysAllowed: report.allDaysAllowed,
     days: report.days.map(({ weekdayName, projectedRows, headroomRows, allowed }) => ({
