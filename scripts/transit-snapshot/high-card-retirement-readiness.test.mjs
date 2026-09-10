@@ -1,12 +1,18 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  classifyRoutingAuthorityPresence,
   collectHighCardRetirementReadiness,
   normalizePublishedVersions,
+  summarizeRetainedAuthorityWindow,
 } from './high-card-retirement-readiness.mjs'
 
 const source = readFileSync('scripts/transit-snapshot/high-card-retirement-readiness.mjs', 'utf8')
 const workflow = readFileSync('.github/workflows/snapshot-high-card-retirement-readiness.yml', 'utf8')
+
+function authority(mode, routingManifestCount) {
+  return { mode, routingManifestCount }
+}
 
 describe('legacy high-card D1 retirement authority readiness', () => {
   it('is authority-ready only when every retained active/previous window is root-bound', async () => {
@@ -20,12 +26,13 @@ describe('legacy high-card D1 retirement authority readiness', () => {
       readWindow: async ({ city, activeVersion }) => ({
         activeVersion,
         previousVersion: city === 'Taichung' ? 'tc-v1' : 'tp-v1',
-        activeMode: 'root-bound',
-        previousMode: 'root-bound',
+        activeAuthority: authority('root-bound', 4),
+        previousAuthority: authority('root-bound', 4),
       }),
     })
 
     expect(report).toMatchObject({
+      schemaVersion: 2,
       kind: 'snapshot-high-card-d1-retirement-readiness',
       sourceCommit: 'abc123',
       cityCount: 2,
@@ -36,7 +43,7 @@ describe('legacy high-card D1 retirement authority readiness', () => {
     expect(report.cities.map((city) => city.city)).toEqual(['Taichung', 'Taipei'])
   })
 
-  it('reports legacy retained windows as blockers without treating normal migration state as an evidence failure', async () => {
+  it('reports legacy and historical partial backfill windows as blockers', async () => {
     const report = await collectHighCardRetirementReadiness({
       listPublishedVersions: async () => [
         { city_code: 'Taipei', active_version: 'tp-v2' },
@@ -46,14 +53,14 @@ describe('legacy high-card D1 retirement authority readiness', () => {
         ? {
             activeVersion,
             previousVersion: 'tp-v1',
-            activeMode: 'root-bound',
-            previousMode: 'root-bound',
+            activeAuthority: authority('root-bound', 4),
+            previousAuthority: authority('root-bound', 4),
           }
         : {
             activeVersion,
             previousVersion: 'tc-old',
-            activeMode: 'legacy-backfill',
-            previousMode: 'legacy-d1',
+            activeAuthority: authority('legacy-partial', 2),
+            previousAuthority: authority('legacy-d1', 0),
           },
     })
 
@@ -63,13 +70,71 @@ describe('legacy high-card D1 retirement authority readiness', () => {
       city: 'Taichung',
       activeVersion: 'tc-v0',
       previousVersion: 'tc-old',
-      activeAuthorityMode: 'legacy-backfill',
+      activeAuthorityMode: 'legacy-partial',
       previousAuthorityMode: 'legacy-d1',
+      activeRoutingManifestCount: 2,
+      previousRoutingManifestCount: 0,
       nativeRootBoundPublicationsRequired: 2,
     }])
   })
 
-  it('fails closed on empty, duplicate, unsafe, or mismatched published authority', async () => {
+  it('classifies unbound partial completion manifests as historical legacy state', () => {
+    const keys = ['pattern', 'place', 'transfer', 'stop']
+    expect(classifyRoutingAuthorityPresence({
+      keys,
+      heads: [{}, {}, null, null],
+      manifestArtifacts: [{ key: 'unrelated' }],
+    })).toEqual({ mode: 'legacy-partial', routingManifestCount: 2 })
+    expect(classifyRoutingAuthorityPresence({
+      keys,
+      heads: [null, null, null, null],
+      manifestArtifacts: [],
+    })).toEqual({ mode: 'legacy-d1', routingManifestCount: 0 })
+    expect(classifyRoutingAuthorityPresence({
+      keys,
+      heads: [{}, {}, {}, {}],
+      manifestArtifacts: [],
+    })).toBeNull()
+  })
+
+  it('still fails closed when root claims routing authority but the retained objects are partial', () => {
+    const keys = ['pattern', 'place', 'transfer', 'stop']
+    expect(() => classifyRoutingAuthorityPresence({
+      keys,
+      heads: [{}, {}, null, null],
+      manifestArtifacts: keys.map((key) => ({ key })),
+    })).toThrow(/root-bound routing authority is missing/)
+    expect(() => classifyRoutingAuthorityPresence({
+      keys,
+      heads: [{}, {}, {}, {}],
+      manifestArtifacts: [{ key: 'pattern' }],
+    })).toThrow(/partial routing authority binding/)
+  })
+
+  it('preserves native-publication readiness semantics across partial legacy modes', () => {
+    expect(summarizeRetainedAuthorityWindow({
+      activeVersion: 'v2',
+      previousVersion: 'v1',
+      activeAuthority: authority('root-bound', 4),
+      previousAuthority: authority('legacy-partial', 3),
+    })).toMatchObject({
+      rootBoundRollbackWindow: false,
+      nativeRootBoundPublicationsRequired: 1,
+      previousAuthorityMode: 'legacy-partial',
+      previousRoutingManifestCount: 3,
+    })
+    expect(summarizeRetainedAuthorityWindow({
+      activeVersion: 'v2',
+      previousVersion: 'v1',
+      activeAuthority: authority('legacy-partial', 1),
+      previousAuthority: authority('root-bound', 4),
+    })).toMatchObject({
+      rootBoundRollbackWindow: false,
+      nativeRootBoundPublicationsRequired: 2,
+    })
+  })
+
+  it('fails closed on empty, duplicate, unsafe, mismatched, or inconsistent authority evidence', async () => {
     expect(() => normalizePublishedVersions([])).toThrow(/bounded non-empty/)
     expect(() => normalizePublishedVersions([
       { city_code: 'Taipei', active_version: 'v1' },
@@ -78,14 +143,20 @@ describe('legacy high-card D1 retirement authority readiness', () => {
     expect(() => normalizePublishedVersions([
       { city_code: '../Taipei', active_version: 'v1' },
     ])).toThrow(/published city set is invalid/)
+    expect(() => summarizeRetainedAuthorityWindow({
+      activeVersion: 'v2',
+      previousVersion: 'v1',
+      activeAuthority: authority('legacy-partial', 4),
+      previousAuthority: authority('root-bound', 4),
+    })).toThrow(/assessment is inconsistent/)
 
     await expect(collectHighCardRetirementReadiness({
       listPublishedVersions: async () => [{ city_code: 'Taipei', active_version: 'v2' }],
       readWindow: async () => ({
         activeVersion: 'v3',
         previousVersion: 'v1',
-        activeMode: 'root-bound',
-        previousMode: 'root-bound',
+        activeAuthority: authority('root-bound', 4),
+        previousAuthority: authority('root-bound', 4),
       }),
     })).rejects.toThrow(/active pointer changed/)
   })
