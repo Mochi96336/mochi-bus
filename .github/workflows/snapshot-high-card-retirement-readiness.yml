@@ -1,0 +1,56 @@
+name: Snapshot high-card retirement readiness
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      # A merge that changes this proof should immediately capture the current
+      # production boundary once. There is intentionally no recurring schedule.
+      - '.github/workflows/snapshot-high-card-retirement-readiness.yml'
+      - 'scripts/transit-snapshot/high-card-retirement-readiness.mjs'
+      - 'scripts/transit-snapshot/high-card-retirement-readiness.test.mjs'
+
+concurrency:
+  group: snapshot-high-card-retirement-readiness
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Resolve snapshot operation scope
+        id: operation
+        run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Read legacy high-card retirement readiness
+        if: steps.operation.outputs.enabled == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
+          TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+          SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT: .transit-snapshot/high-card-retirement-readiness.json
+        run: node scripts/transit-snapshot/high-card-retirement-readiness.mjs
+      - name: Upload retirement readiness evidence
+        if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-high-card-retirement-readiness
+          path: .transit-snapshot/high-card-retirement-readiness.json
+          if-no-files-found: warn
+          retention-days: 14
