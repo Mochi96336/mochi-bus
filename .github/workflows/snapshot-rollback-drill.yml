@@ -64,6 +64,10 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           ROLLBACK_AUTHORITY_EVIDENCE_REPORT: ${{ runner.temp }}/snapshot-rollback-drill/authority-window.json
+      - name: Require root-bound rollback drill window
+        run: node scripts/transit-snapshot/assert-root-bound-rollback-window.mjs "${ROLLBACK_AUTHORITY_EVIDENCE_REPORT}"
+        env:
+          ROLLBACK_AUTHORITY_EVIDENCE_REPORT: ${{ runner.temp }}/snapshot-rollback-drill/authority-window.json
       - name: Execute reversible Taichung rollback drill
         id: rollback_drill
         run: node scripts/transit-snapshot/run-rollback-drill.mjs Taichung
