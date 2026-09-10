@@ -165,9 +165,10 @@ jobs:
           SNAPSHOT_INTERCITY_SCHEDULE_REFRESH_DAYS: ${{ steps.operation.outputs.static_intercity_schedule_refresh_days }}
           SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: ${{ steps.operation.outputs.static_intercity_shape_refresh_days }}
           SNAPSHOT_STATIC_SOURCE_BYPASS_FLOOR: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT: .transit-snapshot/scheduled-retirement-readiness.json
           # Free D1 is 100k rows_written/account/day. Scheduled publishers share
-          # 75k and reserve only after their exact source hash is known to have
-          # changed; unchanged cities still run the normal health probe. Keep
+          # 75k and reserve whenever the source comparison leads to publication:
+          # either changed content or a bounded native-authority refresh. Keep
           # 25k outside this publisher for window records and estimator drift.
           SNAPSHOT_D1_WRITE_BUDGET: ${{ github.event_name == 'schedule' && '75000' || '' }}
           SNAPSHOT_D1_WRITE_BUDGET_FILE: .transit-snapshot/d1-write-budget.json
@@ -175,6 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           repair_mode="${INPUT_REPAIR_LEGACY_PREVIOUS:-false}"
+          retirement_report=""
 
           if [ -n "$INPUT_CITY" ]; then
             cities="$INPUT_CITY"
@@ -207,6 +209,13 @@ jobs:
               exit 1
             fi
             cities="$(node scripts/transit-snapshot/scheduled-cities.mjs)"
+            if [ -n "$cities" ]; then
+              if node scripts/transit-snapshot/high-card-retirement-readiness.mjs; then
+                retirement_report="$SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT"
+              else
+                echo '{"event":"scheduled_native_authority_refresh_unavailable","action":"continue_without_force_publish"}' >&2
+              fi
+            fi
           fi
           if [ -z "$cities" ]; then
             echo "今天沒有排程的城市"
@@ -214,6 +223,17 @@ jobs:
           fi
           failed=""
           for city in $cities; do
+            if [ -n "$retirement_report" ]; then
+              refresh_flag="$(node scripts/transit-snapshot/scheduled-native-authority-refresh.mjs "$retirement_report" "$city")"
+              if [ "$refresh_flag" = "1" ]; then
+                export SNAPSHOT_FORCE=1
+              elif [ "$refresh_flag" = "0" ]; then
+                unset SNAPSHOT_FORCE
+              else
+                echo "Invalid scheduled native authority refresh flag for $city" >&2
+                exit 1
+              fi
+            fi
             if ! npm run snapshot:window -- "$city"; then
               failed="$failed $city"
             fi
