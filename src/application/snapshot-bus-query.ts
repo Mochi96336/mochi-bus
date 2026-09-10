@@ -13,6 +13,7 @@ import {
   resolveBusQuery,
   type TDXEnv,
 } from '../lib/tdx'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 
 type SnapshotBusQueryDependencies = {
   getStopPlaceByStopUid: (
@@ -51,6 +52,14 @@ export async function resolveBusQueryWithSnapshotFallback(
   dependencies: Partial<SnapshotBusQueryDependencies> = {},
 ): Promise<ResolvedBusQuery> {
   const deps = { ...defaultDependencies, ...dependencies }
+  const versionMetadata = (snapshot as TransitBindings & {
+    CF_VERSION_METADATA?: CloudflareBindings['CF_VERSION_METADATA']
+  }).CF_VERSION_METADATA
+  const reportStopLookupFallback = dependencies.reportStopLookupFallback
+    ?? createSnapshotFallbackReporter({
+      operation: 'bus_stop_routes',
+      versionMetadata,
+    })
   if (!query.stopUid || !query.routeUid) return deps.resolveBusQuery(tdx, query)
 
   try {
@@ -58,7 +67,7 @@ export async function resolveBusQueryWithSnapshotFallback(
       snapshot,
       query.city,
       query.stopUid,
-      deps.reportStopLookupFallback,
+      reportStopLookupFallback,
     )
     if (!place) return deps.resolveBusQuery(tdx, query)
 
