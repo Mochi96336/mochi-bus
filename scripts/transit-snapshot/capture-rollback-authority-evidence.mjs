@@ -79,7 +79,7 @@ function createWindowReader({ city, env }) {
       r2.getJson(`snapshots/state/${city}.json`, STATE_MAX_BYTES),
     ])
     const d1Active = safeId(authorityRows[0]?.active_version)
-    const activeVersion = safeId(state?.activeVersion)
+    const activeVersion = safeId(state?.version)
     const previousVersion = safeId(state?.previousVersion)
     if (!d1Active || !activeVersion || !previousVersion || d1Active !== activeVersion) {
       throw new Error('Rollback authority evidence found an invalid or mismatched active pointer')
