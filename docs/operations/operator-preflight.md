@@ -10,10 +10,13 @@ Operational workflows run `npm run instance:preflight -- <operation>` before the
 | Snapshot publication | `CLOUDFLARE_API_TOKEN` | D1 migration/publication access plus D1 database and R2 bucket read access |
 | Public probe | `CLOUDFLARE_API_TOKEN` | D1 migration/query access and D1 database read access |
 | Snapshot watchdog | `CLOUDFLARE_API_TOKEN` | D1 migration/query access and D1 database read access |
+| D1 read insights | `CLOUDFLARE_ANALYTICS_API_TOKEN` | Cloudflare Account → Account Analytics → Read only |
 
-All workflows also require `CLOUDFLARE_ACCOUNT_ID`. Snapshot publication additionally requires TDX credentials plus both R2 S3 credential fields (`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) for every profile. Snapshot routing artifacts are R2-authoritative, so publication no longer has a supported Wrangler object-upload fallback when direct R2 credentials are absent.
+Cloudflare-backed workflows also use `CLOUDFLARE_ACCOUNT_ID` when they execute. Snapshot publication additionally requires TDX credentials plus both R2 S3 credential fields (`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) for every profile. Snapshot routing artifacts are R2-authoritative, so publication no longer has a supported Wrangler object-upload fallback when direct R2 credentials are absent.
 
-Keep deployment and recurring operational tokens separate when possible. The deploy token needs read access only for the D1/R2 identity checks in addition to its existing Worker deployment permissions; snapshot and monitoring workflows retain their own migration/query permissions.
+D1 read insights is optional observability. If `CLOUDFLARE_ANALYTICS_API_TOKEN` is not configured, the workflow records a skipped summary and exits successfully without calling Cloudflare GraphQL. Once the dedicated token is configured, authentication, authorization, query, transport or payload failures remain hard failures.
+
+Keep deployment, recurring operational and analytics tokens separate. Do not add Account Analytics access to the deploy or snapshot token merely to satisfy D1 read insights. The analytics token should remain read-only and limited to the account whose D1 telemetry is being queried.
 
 The preflight reports missing variable names, HTTP status classes and resource identity mismatches. It does not print secret values or Cloudflare response bodies.
 
