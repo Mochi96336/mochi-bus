@@ -9,11 +9,11 @@ import {
   parseStopArrivalBatchPayload,
   STOP_ARRIVAL_MAX_RESPONSE_BYTES,
 } from '../infrastructure/tdx/stop-arrivals'
+import { getStopPlaceRoutes } from '../infrastructure/transit/snapshot-place-routing-repository'
 import { getPinnedStopPlaceBundle } from '../infrastructure/transit/snapshot-probe-repository'
 import {
   getSnapshotSchedule,
   getStopPlaceBundle,
-  getStopPlaceRoutes,
 } from '../infrastructure/transit/snapshot-repository'
 import { cacheMatchFailOpen, cachePutFailOpen } from '../lib/edge-cache'
 import { ApiInputError, optionalQueryString, parseOptionalDirection, requiredQueryString } from '../lib/api-input'
