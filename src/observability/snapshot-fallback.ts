@@ -5,6 +5,7 @@ import {
   createTelemetryEnvelope,
   emitTelemetry,
   TELEMETRY_EVENT_SCHEMA,
+  type TelemetryCity,
   type TelemetryOperation,
   type TelemetrySink,
 } from './telemetry'
@@ -61,12 +62,13 @@ export function createSnapshotFallbackReporter(
     if (!supportedCityCodes.has(observation.city)) return false
     if (!failureClasses.has(observation.reason)) return false
     completed = true
+    const city = observation.city as TelemetryCity
 
     try {
       const event = createTelemetryEnvelope(identity, {
         eventSchema: TELEMETRY_EVENT_SCHEMA,
         event: 'snapshot_fallback_selected',
-        city: observation.city,
+        city,
         operation: options.operation,
         result: 'degraded',
         source: 'fallback',
