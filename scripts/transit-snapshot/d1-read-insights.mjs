@@ -13,7 +13,7 @@ const MAX_GRAPHQL_RESPONSE_BYTES = 512 * 1024
 const MAX_GRAPHQL_ERROR_DETAIL = 360
 
 const QUERY_GROUPS_DOCUMENT = `
-query getD1QueriesOverviewQuery($accountTag: string, $filter: ZoneWorkersRequestsFilter_InputObject) {
+query getD1QueriesOverviewQuery($accountTag: string, $filter: AccountD1QueriesAdaptiveGroupsFilter_InputObject) {
   viewer {
     accounts(filter: {accountTag: $accountTag}) {
       d1QueriesAdaptiveGroups(limit: 25, filter: $filter, orderBy: [sum_rowsRead_DESC]) {
