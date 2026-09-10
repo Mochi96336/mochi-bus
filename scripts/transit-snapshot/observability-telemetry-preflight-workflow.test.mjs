@@ -15,12 +15,16 @@ describe('Workers Observability telemetry preflight workflow', () => {
     expect(probe).toContain('MAX_TELEMETRY_KEYS = 512')
   })
 
-  it('uses only the existing Cloudflare credential and uploads bounded evidence', () => {
+  it('uses a dedicated optional observability credential and never falls back to an operational token', () => {
     expect(workflow).toContain('permissions:\n  contents: read')
-    expect(workflow).toContain('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}')
+    expect(workflow).toContain('CLOUDFLARE_OBSERVABILITY_API_TOKEN: ${{ secrets.CLOUDFLARE_OBSERVABILITY_API_TOKEN }}')
     expect(workflow).toContain('CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}')
+    expect(workflow).not.toContain('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}')
+    expect(workflow).not.toContain('CLOUDFLARE_DEPLOY_API_TOKEN')
     expect(workflow).not.toContain('CLOUDFLARE_ANALYTICS_API_TOKEN')
-    expect(workflow).not.toContain('CLOUDFLARE_OBSERVABILITY_API_TOKEN')
+    expect(probe).toContain('apiToken: env.CLOUDFLARE_OBSERVABILITY_API_TOKEN')
+    expect(probe).not.toContain('apiToken: env.CLOUDFLARE_API_TOKEN')
+    expect(probe).toContain("outcome: 'unconfigured'")
     expect(workflow).not.toContain('schedule:')
     expect(workflow).toContain('retention-days: 7')
     expect(workflow).toContain('path: .transit-snapshot/observability-telemetry-preflight.json')
