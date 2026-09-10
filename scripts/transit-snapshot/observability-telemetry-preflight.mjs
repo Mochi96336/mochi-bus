@@ -23,8 +23,10 @@ export async function probeObservabilityTelemetry({
   fetchImpl = fetch,
   generatedAt = new Date().toISOString(),
 } = {}) {
+  if (typeof apiToken !== 'string' || !apiToken) {
+    return buildUnavailableReport({ generatedAt, outcome: 'unconfigured' })
+  }
   requireSecret(accountId, 'CLOUDFLARE_ACCOUNT_ID')
-  requireSecret(apiToken, 'CLOUDFLARE_API_TOKEN')
 
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/observability/telemetry/keys`
   let response
@@ -155,7 +157,7 @@ export async function main(env = process.env) {
   const reportPath = env.OBSERVABILITY_TELEMETRY_PREFLIGHT_REPORT || DEFAULT_REPORT_PATH
   const report = await probeObservabilityTelemetry({
     accountId: env.CLOUDFLARE_ACCOUNT_ID,
-    apiToken: env.CLOUDFLARE_API_TOKEN,
+    apiToken: env.CLOUDFLARE_OBSERVABILITY_API_TOKEN,
   })
   await mkdir(dirname(reportPath), { recursive: true })
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)

@@ -12,6 +12,34 @@ function apiResponse(payload, status = 200) {
 }
 
 describe('Workers Observability telemetry preflight', () => {
+  it('does not issue a request when the optional observability token is unconfigured', async () => {
+    const fetchImpl = vi.fn()
+    const report = await probeObservabilityTelemetry({
+      accountId: 'account-id',
+      apiToken: '',
+      fetchImpl,
+      generatedAt: '2026-09-10T05:00:00.000Z',
+    })
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      generatedAt: '2026-09-10T05:00:00.000Z',
+      outcome: 'unconfigured',
+      authorized: false,
+      httpStatus: null,
+      keyCount: null,
+      d1TraceKeys: {
+        rowsRead: false,
+        rowsWritten: false,
+        sqlDurationMs: false,
+        queryText: false,
+        operationName: false,
+      },
+      errorDetail: null,
+    })
+  })
+
   it('uses the telemetry keys endpoint and reports D1 automatic trace fields without exposing key values', async () => {
     const fetchImpl = vi.fn(async () => apiResponse({
       success: true,

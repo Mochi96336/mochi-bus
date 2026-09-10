@@ -10,12 +10,13 @@ Operational workflows run `npm run instance:preflight -- <operation>` before the
 | Snapshot publication | `CLOUDFLARE_API_TOKEN` | D1 migration/publication access plus D1 database and R2 bucket read access |
 | Public probe | `CLOUDFLARE_API_TOKEN` | D1 migration/query access and D1 database read access |
 | Snapshot watchdog | `CLOUDFLARE_API_TOKEN` | D1 migration/query access and D1 database read access |
+| Workers Observability telemetry preflight | `CLOUDFLARE_OBSERVABILITY_API_TOKEN` (optional) | Account-level `Workers Observability Write`; absent token records `unconfigured` and does not call the telemetry API |
 
-All workflows also require `CLOUDFLARE_ACCOUNT_ID`. Snapshot publication additionally requires TDX credentials plus both R2 S3 credential fields (`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) for every profile. Snapshot routing artifacts are R2-authoritative, so publication no longer has a supported Wrangler object-upload fallback when direct R2 credentials are absent.
+The operational workflows above require `CLOUDFLARE_ACCOUNT_ID`. The optional Workers Observability telemetry preflight also uses the account ID when its dedicated token is configured. Snapshot publication additionally requires TDX credentials plus both R2 S3 credential fields (`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) for every profile. Snapshot routing artifacts are R2-authoritative, so publication no longer has a supported Wrangler object-upload fallback when direct R2 credentials are absent.
 
-Keep deployment and recurring operational tokens separate when possible. The deploy token needs read access only for the D1/R2 identity checks in addition to its existing Worker deployment permissions; snapshot and monitoring workflows retain their own migration/query permissions.
+Keep deployment, recurring operational and observability tokens separate. The deploy token needs read access only for the D1/R2 identity checks in addition to its existing Worker deployment permissions; snapshot and monitoring workflows retain their own migration/query permissions. The optional observability token must not fall back to either operational token merely to satisfy telemetry access.
 
-The preflight reports missing variable names, HTTP status classes and resource identity mismatches. It does not print secret values or Cloudflare response bodies.
+The preflight reports missing variable names, HTTP status classes and resource identity mismatches. It does not print secret values or Cloudflare response bodies. The Workers Observability telemetry preflight similarly emits only bounded authorization/key-presence evidence and never telemetry event values.
 
 ## Ordering guarantees
 

@@ -29,7 +29,7 @@ jobs:
           node-version-file: .nvmrc
       - name: Probe Workers Observability telemetry access
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_OBSERVABILITY_API_TOKEN: ${{ secrets.CLOUDFLARE_OBSERVABILITY_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           OBSERVABILITY_TELEMETRY_PREFLIGHT_REPORT: .transit-snapshot/observability-telemetry-preflight.json
         run: node scripts/transit-snapshot/observability-telemetry-preflight.mjs
