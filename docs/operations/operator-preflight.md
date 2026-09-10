@@ -11,12 +11,15 @@ Operational workflows run `npm run instance:preflight -- <operation>` before the
 | Public probe | `CLOUDFLARE_API_TOKEN` | D1 migration/query access and D1 database read access |
 | Snapshot watchdog | `CLOUDFLARE_API_TOKEN` | D1 migration/query access and D1 database read access |
 | Workers Observability telemetry preflight | `CLOUDFLARE_OBSERVABILITY_API_TOKEN` (optional) | Account-level `Workers Observability Write`; absent token records `unconfigured` and does not call the telemetry API |
+| D1 read insights | `CLOUDFLARE_ANALYTICS_API_TOKEN` (optional) | Cloudflare Account → Account Analytics → Read only; absent token records a skipped summary and does not call GraphQL |
 
-The operational workflows above require `CLOUDFLARE_ACCOUNT_ID`. The optional Workers Observability telemetry preflight also uses the account ID when its dedicated token is configured. Snapshot publication additionally requires TDX credentials plus both R2 S3 credential fields (`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) for every profile. Snapshot routing artifacts are R2-authoritative, so publication no longer has a supported Wrangler object-upload fallback when direct R2 credentials are absent.
+The operational workflows above require `CLOUDFLARE_ACCOUNT_ID`. The optional Workers Observability telemetry preflight and D1 read insights also use the account ID when their dedicated token is configured. Snapshot publication additionally requires TDX credentials plus both R2 S3 credential fields (`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) for every profile. Snapshot routing artifacts are R2-authoritative, so publication no longer has a supported Wrangler object-upload fallback when direct R2 credentials are absent.
 
-Keep deployment, recurring operational and observability tokens separate. The deploy token needs read access only for the D1/R2 identity checks in addition to its existing Worker deployment permissions; snapshot and monitoring workflows retain their own migration/query permissions. The optional observability token must not fall back to either operational token merely to satisfy telemetry access.
+D1 read insights is optional observability. If `CLOUDFLARE_ANALYTICS_API_TOKEN` is not configured, the workflow records a skipped summary and exits successfully without calling Cloudflare GraphQL. Once the dedicated token is configured, authentication, authorization, query, transport or payload failures remain hard failures.
 
-The preflight reports missing variable names, HTTP status classes and resource identity mismatches. It does not print secret values or Cloudflare response bodies. The Workers Observability telemetry preflight similarly emits only bounded authorization/key-presence evidence and never telemetry event values.
+Keep deployment, recurring operational, Workers Observability and Account Analytics tokens separate. The deploy token needs read access only for the D1/R2 identity checks in addition to its existing Worker deployment permissions; snapshot and monitoring workflows retain their own migration/query permissions. The optional observability token must not fall back to either operational token merely to satisfy telemetry access, and D1 read insights must not add Account Analytics access to the deploy, snapshot or observability token merely to satisfy attribution.
+
+The preflight reports missing variable names, HTTP status classes and resource identity mismatches. It does not print secret values or Cloudflare response bodies. The Workers Observability telemetry preflight similarly emits only bounded authorization/key-presence evidence and never telemetry event values. D1 read insights uploads only its bounded sanitized attribution report and never raw query analytics.
 
 ## Ordering guarantees
 
