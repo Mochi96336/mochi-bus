@@ -16,6 +16,11 @@ on:
       - '**/*.test.ts'
       - '**/*.test.mjs'
   workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_PRODUCTION to manually deploy the current main commit
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -30,6 +35,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Validate manual production deploy intent
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$INPUT_CONFIRMATION" = "DEPLOY_PRODUCTION"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
