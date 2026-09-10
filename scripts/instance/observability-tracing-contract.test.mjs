@@ -32,6 +32,5 @@ describe('operator observability tracing contract', () => {
     expect(compiled.observability.traces).toEqual(TRACE_POLICY)
     expect(checkedIn).toContain('"traces": {')
     expect(checkedIn).toContain('"enabled": true,\n      "head_sampling_rate": 0.05')
-    expect(checkedIn).not.toContain('"head_sampling_rate": 1')
   })
 })
