@@ -4,6 +4,8 @@ import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { AwsClient } from 'aws4fetch'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
+import { assertRootBoundRollbackWindow } from './assert-root-bound-rollback-window.mjs'
+import { captureRollbackAuthorityEvidence } from './capture-rollback-authority-evidence.mjs'
 import { queryD1 } from './window-d1.mjs'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -67,9 +69,11 @@ export async function runRollbackDrill({
   city = 'Taichung',
   env = process.env,
   now = () => new Date(),
+  reportPath = env.ROLLBACK_DRILL_REPORT ?? 'rollback-drill-report.json',
+  authorityReportPath = env.ROLLBACK_AUTHORITY_EVIDENCE_REPORT ?? `${reportPath}.authority.json`,
+  captureAuthorityWindow = () => captureRollbackAuthorityEvidence({ city, env, reportPath: authorityReportPath }),
   runRollback = (targetVersion) => runRollbackCli(city, targetVersion, env),
   readSnapshot = () => createSnapshotReader({ city, env })(),
-  reportPath = env.ROLLBACK_DRILL_REPORT ?? 'rollback-drill-report.json',
 } = {}) {
   if (city !== 'Taichung') throw new Error('Rollback drill is intentionally restricted to Taichung')
   const startedAt = now().toISOString()
@@ -83,6 +87,7 @@ export async function runRollbackDrill({
     startedAt,
     completedAt: null,
     outcome: 'error',
+    authorityWindow: null,
     before: null,
     firstRollback: null,
     afterRollback: null,
@@ -98,12 +103,20 @@ export async function runRollbackDrill({
   let originalActive = null
   let primaryError = null
   try {
+    // The workflow has its own pre-mutation gate, but the drill process must not
+    // rely on that wrapper for safety: direct invocation gets the same fresh,
+    // production-backed authority check immediately before any rollback call.
+    report.authorityWindow = assertRootBoundRollbackWindow(await captureAuthorityWindow())
     report.before = await readSnapshot()
     originalActive = report.before?.authority?.activeVersion ?? null
     const originalPrevious = report.before?.state?.previousVersion
     if (!safeId(originalActive) || !safeId(originalPrevious) || originalActive === originalPrevious
       || report.before?.state?.activeVersion !== originalActive) {
       throw codedError('invalid_initial_authority')
+    }
+    if (report.authorityWindow.activeVersion !== originalActive
+      || report.authorityWindow.previousVersion !== originalPrevious) {
+      throw codedError('authority_window_changed')
     }
 
     report.firstRollback = await runRollback(undefined)
