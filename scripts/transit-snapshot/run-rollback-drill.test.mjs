@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assertRollbackSequence,
   parseRollbackRecord,
+  readHighCardCounts,
   runRollbackDrill,
   sameHighCardCounts,
 } from './run-rollback-drill.mjs'
@@ -78,6 +79,59 @@ describe('snapshot rollback drill evidence helpers', () => {
       }),
     )).toBe(true)
     expect(sameHighCardCounts(highCard(), highCard({ globalPatternStops: 21 }))).toBe(false)
+  })
+
+  it('treats fully retired high-card tables as stable absence without querying them', async () => {
+    const queries = []
+    const retired = await readHighCardCounts(async (sql) => {
+      queries.push(sql)
+      return []
+    }, 'Taichung')
+
+    expect(queries).toHaveLength(1)
+    expect(queries[0]).toContain('sqlite_schema')
+    expect(retired).toEqual({
+      schemaState: 'retired',
+      globalStops: null,
+      globalPatternStops: null,
+      cityStops: null,
+      cityPatternStops: null,
+      stopVersions: [],
+      patternStopVersions: [],
+    })
+    expect(sameHighCardCounts(retired, retired)).toBe(true)
+    expect(sameHighCardCounts(retired, highCard())).toBe(false)
+  })
+
+  it('fails closed when only one legacy high-card table remains', async () => {
+    let queryCount = 0
+    await expect(readHighCardCounts(async () => {
+      queryCount += 1
+      return [{ name: 'stops' }]
+    }, 'Taichung')).rejects.toMatchObject({ code: 'partial_high_card_schema' })
+    expect(queryCount).toBe(1)
+  })
+
+  it('preserves legacy row-count evidence while both high-card tables exist', async () => {
+    const responses = [
+      [{ name: 'pattern_stops' }, { name: 'stops' }],
+      [{ count: 10 }],
+      [{ count: 20 }],
+      [{ count: 3 }],
+      [{ count: 6 }],
+      [{ version: 'v2', count: 2 }, { version: 'v1', count: 1 }],
+      [{ version: 'v2', count: 4 }, { version: 'v1', count: 2 }],
+    ]
+    const evidence = await readHighCardCounts(async () => responses.shift(), 'Taichung')
+    expect(evidence).toEqual({
+      schemaState: 'legacy-present',
+      ...highCard(),
+    })
+    expect(responses).toHaveLength(0)
+  })
+
+  it('records the schema-aware rollback report as v2 evidence', () => {
+    expect(source).toContain('schemaVersion: 2')
   })
 
   it('reads the canonical schema-v2 R2 state active pointer from version', () => {
