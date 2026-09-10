@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 const workflow = readFileSync('.github/workflows/snapshot-rollback-drill.yml', 'utf8')
 const rollbackSource = readFileSync('scripts/transit-snapshot/rollback.mjs', 'utf8')
 const drillSource = readFileSync('scripts/transit-snapshot/run-rollback-drill.mjs', 'utf8')
+const authorityGateSource = readFileSync('scripts/transit-snapshot/assert-root-bound-rollback-window.mjs', 'utf8')
 
 describe('snapshot rollback drill workflow', () => {
   it('is manual-only, main-only, Taichung-only, and explicitly confirmed', () => {
@@ -28,6 +29,19 @@ describe('snapshot rollback drill workflow', () => {
     expect(drillSource).not.toContain('run-snapshot-window')
     expect(drillSource).not.toContain('snapshot:city')
     expect(drillSource).not.toContain('snapshot:window')
+  })
+
+  it('fails closed unless the captured production window is fully root-bound before mutation', () => {
+    const capture = workflow.indexOf('capture-rollback-authority-evidence.mjs Taichung')
+    const gate = workflow.indexOf('assert-root-bound-rollback-window.mjs')
+    const rollback = workflow.indexOf('run-rollback-drill.mjs Taichung')
+    expect(capture).toBeGreaterThan(-1)
+    expect(gate).toBeGreaterThan(capture)
+    expect(rollback).toBeGreaterThan(gate)
+    expect(authorityGateSource).toContain('report.rootBoundRollbackWindow !== true')
+    expect(authorityGateSource).toContain("report.activeAuthorityMode !== 'root-bound'")
+    expect(authorityGateSource).toContain("report.previousAuthorityMode !== 'root-bound'")
+    expect(authorityGateSource).toContain("report.rollbackTargetAuthorityMode !== 'root-bound'")
   })
 
   it('uploads bounded evidence even when the drill fails', () => {
