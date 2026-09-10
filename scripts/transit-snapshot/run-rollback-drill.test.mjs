@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   assertRollbackSequence,
   parseRollbackRecord,
   sameHighCardCounts,
 } from './run-rollback-drill.mjs'
+
+const source = readFileSync('scripts/transit-snapshot/run-rollback-drill.mjs', 'utf8')
 
 function highCard(overrides = {}) {
   return {
@@ -48,6 +51,11 @@ describe('snapshot rollback drill evidence helpers', () => {
       }),
     )).toBe(true)
     expect(sameHighCardCounts(highCard(), highCard({ globalPatternStops: 21 }))).toBe(false)
+  })
+
+  it('reads the canonical schema-v2 R2 state active pointer from version', () => {
+    expect(source).toContain('const activeVersion = safeId(value?.version) ? value.version : null')
+    expect(source).not.toContain('const activeVersion = safeId(value?.activeVersion)')
   })
 
   it('requires a real active-to-previous swap and restoration to the original pair', () => {
