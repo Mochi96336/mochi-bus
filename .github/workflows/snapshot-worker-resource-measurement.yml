@@ -38,6 +38,7 @@ jobs:
           SNAPSHOT_ENABLED: ${{ steps.operation.outputs.enabled }}
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
+          CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}
         run: |
           set -euo pipefail
           test "${GITHUB_REF}" = 'refs/heads/main'
@@ -45,6 +46,7 @@ jobs:
           test "${SNAPSHOT_ENABLED}" = 'true'
           test -n "${TRANSIT_DATABASE_ID}"
           test -n "${TRANSIT_R2_BUCKET_NAME}"
+          test -n "${CLOUDFLARE_ANALYTICS_API_TOKEN}"
           node scripts/instance/assert-operation-city.mjs Taipei
           node scripts/instance/assert-operation-city.mjs NewTaipei
           node scripts/instance/assert-operation-city.mjs Taichung
