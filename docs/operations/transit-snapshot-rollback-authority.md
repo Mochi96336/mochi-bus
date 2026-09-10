@@ -63,7 +63,7 @@ Reconcile 只驗證並更新 R2 state，永遠不修改 D1 active pointer。相�
 
 ### D1 已切到 v2、public smoke 成功、R2 state PUT 失敗
 
-`v2` 保持 active，不盲目切回。publisher 回報 `state_write_failed_reconcile_required`，也不執行 cleanup，確保舊版本仍可供復原。後續以 D1 `v2` 為 current authority 執行 reconcile。
+`v2` 保持 active，不盲目切回。publisher 回報 `state_write_failed_reconcile_required`，也不執行 cleanup，確保舊版本仍可供復原。後續以 D1 `v2` 為 current authority執行 reconcile。
 
 這是 metadata finalization failure，不得描述為 snapshot staging／validation failure，也不得因 R2 state stale 就覆寫 D1 pointer。
 
@@ -78,8 +78,8 @@ Rollback／reconcile 寫入前，所有 target 先判定 routing authority，再
 - D1 routes、patterns、stop_places 非零。
 - pattern → route 無 dangling reference，catalogue route 都有 pattern。
 - root manifest schema/city/version合法。
-- network object 存在、size（若可得）與 manifest 一致，bounded prefix 的 schema／city／version正確。
-- deterministic route sample的 shape、route schedule、place bundle以 root manifest descriptor的 bytes 與 SHA-256完整驗證。
+- network object 存在、size（若可得）與 manifest 一致，bounded prefix 的 schema／city／version 正確。
+- deterministic route sample的 shape、route schedule、place bundle以 root manifest descriptor的 bytes 與 SHA-256 完整驗證。
 
 ### `legacy-d1` target
 
@@ -125,7 +125,7 @@ RETURNING active_version
 
 Reconcile 不寫 D1，但在完整驗證後、寫 R2 state 前會再次讀取 D1 active；若 authority 已改變，停止而不寫 stale metadata。
 
-GitHub Actions publisher共用 `transit-snapshot` concurrency group；本機 CLI 不依賴 workflow lock，因此 D1 optimistic guard 與寫入前 authority re-read 是必要的最後防線。
+GitHub Actions publisher 共用 `transit-snapshot` concurrency group；本機 CLI 不依賴 workflow lock，因此 D1 optimistic guard 與寫入前 authority re-read 是必要的最後防線。
 
 ## Failure semantics
 
