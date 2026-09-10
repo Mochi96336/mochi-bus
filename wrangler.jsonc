@@ -13,6 +13,10 @@
     "enabled": true,
     "logs": {
       "invocation_logs": false
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05
     }
   },
   "version_metadata": {
