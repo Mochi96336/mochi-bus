@@ -15,6 +15,15 @@ describe('D1 read insights workflow', () => {
     expect(reader).not.toMatch(/\/d1\/database\/[^\s]+\/query/)
   })
 
+  it('uses a dedicated optional read-only analytics secret without falling back to the operational token', () => {
+    expect(workflow).toContain('CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}')
+    expect(workflow).toContain("if: steps.analytics.outputs.available == 'true'")
+    expect(workflow).toContain("steps.analytics.outputs.available == 'true' && steps.operation.outputs.enabled == 'true'")
+    expect(workflow).toContain('Skipped: `CLOUDFLARE_ANALYTICS_API_TOKEN` is not configured.')
+    expect(workflow).toContain('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}')
+    expect(workflow).not.toContain('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}')
+  })
+
   it('uploads only the bounded sanitized report and never creates a raw analytics artifact', () => {
     expect(workflow).toContain('path: .transit-snapshot/d1-read-insights.json')
     expect(workflow).not.toMatch(/mktemp|D1_INSIGHTS_RAW_PATH|d1-read-insights\.raw/)
