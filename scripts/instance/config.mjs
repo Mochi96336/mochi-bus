@@ -288,6 +288,14 @@ export function compileInstanceConfig(config) {
     operationsProfile: validated.operations.profile,
   }
 
+  const observability = {
+    enabled: true,
+    logs: { invocation_logs: false },
+    ...(validated.operations.profile === 'operator'
+      ? { traces: { enabled: true, head_sampling_rate: 0.05 } }
+      : {}),
+  }
+
   const wrangler = {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: validated.cloudflare.workerName,
@@ -295,7 +303,7 @@ export function compileInstanceConfig(config) {
     compatibility_date: '2026-07-03',
     workers_dev: validated.cloudflare.workersDev,
     assets: { directory: 'public' },
-    observability: { enabled: true, logs: { invocation_logs: false } },
+    observability,
     version_metadata: { binding: 'CF_VERSION_METADATA' },
     ...(rateLimits.length > 0 ? { ratelimits: rateLimits } : {}),
     d1_databases: [d1Binding],
