@@ -122,6 +122,9 @@ export async function runRollbackDrill({
     report.firstRollback = await runRollback(undefined)
     if (report.firstRollback?.outcome !== 'rolled_back') throw codedError('first_rollback_failed')
     report.afterRollback = await readSnapshot()
+    if (!sameHighCardCounts(report.before.highCard, report.afterRollback.highCard)) {
+      throw codedError('high_card_rows_changed_after_rollback')
+    }
 
     report.restoreRollback = await runRollback(originalActive)
     if (report.restoreRollback?.outcome !== 'rolled_back') throw codedError('restore_rollback_failed')
