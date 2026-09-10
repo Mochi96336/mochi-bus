@@ -61,7 +61,7 @@ export async function collectHighCardRetirementReadiness({
     generatedAt: now().toISOString(),
     cityCount: cities.length,
     rootBoundCityCount: cities.length - blockingCities.length,
-    readyForLegacyHighCardRetirement: blockingCities.length === 0,
+    rootBoundAuthorityReady: blockingCities.length === 0,
     blockingCities: Object.freeze(blockingCities),
     cities: Object.freeze(cities),
   })
@@ -211,9 +211,11 @@ async function writeReport(report, env) {
       ? report.blockingCities.map((city) => `| ${city.city} | ${city.activeAuthorityMode} | ${city.previousAuthorityMode} | ${city.nativeRootBoundPublicationsRequired} |`)
       : ['| — | — | — | 0 |']
     await appendFile(env.GITHUB_STEP_SUMMARY, [
-      '## Legacy high-card D1 retirement readiness',
+      '## Legacy high-card D1 retirement authority readiness',
       '',
-      `Published cities: ${report.cityCount}; root-bound retained windows: ${report.rootBoundCityCount}; ready: ${report.readyForLegacyHighCardRetirement}.`,
+      `Published cities: ${report.cityCount}; root-bound retained windows: ${report.rootBoundCityCount}; authority ready: ${report.rootBoundAuthorityReady}.`,
+      '',
+      '> This proves only the retained rollback-authority prerequisite. Cleanup still requires the separate #249 acceptance evidence and explicit mutation authorization.',
       '',
       '| Blocking city | Active authority | Previous authority | Native publications still required |',
       '| --- | --- | --- | ---: |',
@@ -232,7 +234,7 @@ async function main(env = process.env) {
     reportPath,
     cityCount: report.cityCount,
     rootBoundCityCount: report.rootBoundCityCount,
-    readyForLegacyHighCardRetirement: report.readyForLegacyHighCardRetirement,
+    rootBoundAuthorityReady: report.rootBoundAuthorityReady,
     blockingCities: report.blockingCities.map((city) => ({
       city: city.city,
       activeAuthorityMode: city.activeAuthorityMode,
