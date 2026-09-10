@@ -1,0 +1,70 @@
+name: D1 read insights
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 07:45 Asia/Taipei / 23:45 UTC: capture nearly one complete D1 quota day
+    # before the 00:00 UTC reset. This reads analytics and does not execute SQL.
+    - cron: '45 23 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/d1-read-insights.yml'
+      - 'scripts/transit-snapshot/d1-read-insights.mjs'
+
+concurrency:
+  group: d1-read-insights
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  insights:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Resolve snapshot operation scope
+        id: operation
+        run: node scripts/instance/operation-scope.mjs snapshot
+      - name: Collect and sanitize D1 read insights
+        if: steps.operation.outputs.enabled == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_NAME: ${{ steps.operation.outputs.d1_database_name }}
+          D1_INSIGHTS_TIME_PERIOD: 1d
+          D1_INSIGHTS_REPORT_PATH: .transit-snapshot/d1-read-insights.json
+        run: |
+          set -euo pipefail
+          raw="$(mktemp)"
+          trap 'rm -f "$raw"' EXIT
+          npx wrangler d1 insights "$D1_DATABASE_NAME" \
+            --config .generated/instance/wrangler.instance.jsonc \
+            --time-period "$D1_INSIGHTS_TIME_PERIOD" \
+            --sort-type sum \
+            --sort-by reads \
+            --sort-direction DESC \
+            --limit 25 \
+            --json \
+            --experimental-provision=false \
+            --experimental-auto-create=false \
+            > "$raw"
+          D1_INSIGHTS_RAW_PATH="$raw" node scripts/transit-snapshot/d1-read-insights.mjs
+      - name: Upload sanitized D1 read evidence
+        if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-read-insights
+          path: .transit-snapshot/d1-read-insights.json
+          if-no-files-found: warn
+          retention-days: 7
