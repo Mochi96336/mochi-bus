@@ -78,7 +78,7 @@ export async function runRollbackDrill({
   if (city !== 'Taichung') throw new Error('Rollback drill is intentionally restricted to Taichung')
   const startedAt = now().toISOString()
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'snapshot-rollback-drill',
     city,
     sourceCommit: safeText(env.GITHUB_SHA),
@@ -206,7 +206,16 @@ function createSnapshotReader({ city, env }) {
   }
 }
 
-async function readHighCardCounts(query, city) {
+export async function readHighCardCounts(query, city) {
+  const tableRows = await query(`SELECT name FROM sqlite_schema
+    WHERE type = 'table' AND name IN ('stops', 'pattern_stops')
+    ORDER BY name`)
+  const tableNames = new Set(tableRows.map((row) => row?.name))
+  const stopsPresent = tableNames.has('stops')
+  const patternStopsPresent = tableNames.has('pattern_stops')
+  if (stopsPresent !== patternStopsPresent) throw codedError('partial_high_card_schema')
+  if (!stopsPresent) return normalizeHighCardCounts({ schemaState: 'retired' })
+
   const [globalStops, globalPatternStops, cityStops, cityPatternStops, stopVersions, patternStopVersions] = await Promise.all([
     query('SELECT COUNT(*) AS count FROM stops'),
     query('SELECT COUNT(*) AS count FROM pattern_stops'),
@@ -221,6 +230,7 @@ async function readHighCardCounts(query, city) {
       WHERE p.city_code = ? GROUP BY ps.version ORDER BY ps.version`, [city]),
   ])
   return normalizeHighCardCounts({
+    schemaState: 'legacy-present',
     globalStops: integerCount(globalStops[0]?.count),
     globalPatternStops: integerCount(globalPatternStops[0]?.count),
     cityStops: integerCount(cityStops[0]?.count),
@@ -231,7 +241,21 @@ async function readHighCardCounts(query, city) {
 }
 
 function normalizeHighCardCounts(value) {
+  const schemaState = value?.schemaState ?? 'legacy-present'
+  if (schemaState === 'retired') {
+    return Object.freeze({
+      schemaState,
+      globalStops: null,
+      globalPatternStops: null,
+      cityStops: null,
+      cityPatternStops: null,
+      stopVersions: Object.freeze([]),
+      patternStopVersions: Object.freeze([]),
+    })
+  }
+  if (schemaState !== 'legacy-present') throw new Error('Invalid high-card schema state evidence')
   return Object.freeze({
+    schemaState,
     globalStops: integerCount(value?.globalStops),
     globalPatternStops: integerCount(value?.globalPatternStops),
     cityStops: integerCount(value?.cityStops),
