@@ -10,6 +10,7 @@ import {
 } from '../infrastructure/transit/snapshot-place-routing-repository'
 import {
   getStopPlaceByStopUid,
+  type StopLookupFallbackObserver,
   type StopLookupPlace,
 } from '../infrastructure/transit/snapshot-stop-lookup-repository'
 import type { TransitBindings } from '../infrastructure/transit/snapshot-repository'
@@ -60,6 +61,7 @@ type StopRouteSuggestionDependencies = {
     env: TransitBindings,
     city: string,
     stopUid: string,
+    observeFallback?: StopLookupFallbackObserver,
   ) => Promise<StopLookupPlace | null>
   getStopPlaceRoutes: (
     env: TransitBindings,
@@ -69,6 +71,7 @@ type StopRouteSuggestionDependencies = {
   resolveRealtime: RealtimeResolver
   reportSnapshotFailure: (error: unknown) => void
   reportRealtimeFailure: (error: unknown) => void
+  reportStopLookupFallback: StopLookupFallbackObserver
 }
 
 const defaultDependencies: StopRouteSuggestionDependencies = {
@@ -79,6 +82,7 @@ const defaultDependencies: StopRouteSuggestionDependencies = {
   ).data,
   reportSnapshotFailure: (error) => console.error('stop_route_snapshot_fallback_failed', error),
   reportRealtimeFailure: (error) => console.error('stop_route_realtime_failed', error),
+  reportStopLookupFallback: () => {},
 }
 
 /**
@@ -101,7 +105,12 @@ export async function getSnapshotStopRouteSuggestions(
   let place: StopLookupPlace | null
   let routes: StopPlaceRoute[]
   try {
-    place = await deps.getStopPlaceByStopUid(env, city, stopUid)
+    place = await deps.getStopPlaceByStopUid(
+      env,
+      city,
+      stopUid,
+      deps.reportStopLookupFallback,
+    )
     if (!place) return null
     routes = await deps.getStopPlaceRoutes(env, city, place.placeId)
     if (!routes.length) return null
