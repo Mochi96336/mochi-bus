@@ -5,6 +5,7 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const srcRoot = fileURLToPath(new URL('../../src/', import.meta.url))
+const snapshotRepositoryPath = resolve(srcRoot, 'infrastructure/transit/snapshot-repository.ts')
 
 const legacyHighCardExports = new Set([
   'getSnapshotRouteVariants',
@@ -69,7 +70,72 @@ function stringLikeText(node, sourceFile) {
   return null
 }
 
+function isExportedFunction(statement) {
+  return ts.isFunctionDeclaration(statement)
+    && Boolean(statement.name)
+    && Boolean(statement.body)
+    && Boolean(statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))
+}
+
+function containsHighCardRead(node, sourceFile) {
+  let found = false
+  const visit = (candidate) => {
+    if (found) return
+    const text = stringLikeText(candidate, sourceFile)
+    if (text && highCardReadPattern.test(text)) {
+      found = true
+      return
+    }
+    ts.forEachChild(candidate, visit)
+  }
+  visit(node)
+  return found
+}
+
+function containsAuthorityGuard(node) {
+  let found = false
+  const visit = (candidate) => {
+    if (found) return
+    if (ts.isCallExpression(candidate)
+      && ts.isIdentifier(candidate.expression)
+      && candidate.expression.text === 'assertLegacyHighCardD1Allowed') {
+      found = true
+      return
+    }
+    ts.forEachChild(candidate, visit)
+  }
+  visit(node)
+  return found
+}
+
+function auditDirectHighCardExports() {
+  const source = readFileSync(snapshotRepositoryPath, 'utf8')
+  const sourceFile = sourceFileFor(snapshotRepositoryPath, source)
+  const exports = []
+  const unguarded = []
+
+  for (const statement of sourceFile.statements) {
+    if (!isExportedFunction(statement)) continue
+    if (!containsHighCardRead(statement.body, sourceFile)) continue
+    const name = statement.name.text
+    exports.push(name)
+    if (!containsAuthorityGuard(statement.body)) unguarded.push(name)
+  }
+
+  return {
+    exports: exports.sort(),
+    unguarded: unguarded.sort(),
+  }
+}
+
 describe('snapshot high-cardinality D1 architecture boundary', () => {
+  it('derives every direct high-card D1 export from repository SQL and requires its authority guard', () => {
+    const audit = auditDirectHighCardExports()
+
+    expect(audit.unguarded).toEqual([])
+    expect(audit.exports).toEqual([...legacyHighCardExports].sort())
+  })
+
   it('keeps legacy high-cardinality exports reachable only from their R2-first wrappers', () => {
     const wrapperImports = []
     const bypasses = []
