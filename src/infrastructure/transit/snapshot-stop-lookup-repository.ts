@@ -40,6 +40,21 @@ type StopLookupShard = {
   stops: StopLookupRecord[]
 }
 
+export type StopLookupFallbackReason =
+  | 'manifest_missing'
+  | 'manifest_read_failed'
+  | 'routing_authority_incomplete'
+  | 'routing_authority_invalid'
+  | 'r2'
+
+export type StopLookupFallbackObservation = Readonly<{
+  city: string
+  snapshotVersion: string
+  reason: StopLookupFallbackReason
+}>
+
+export type StopLookupFallbackObserver = (observation: StopLookupFallbackObservation) => void
+
 export type StopLookupPlace = {
   placeId: string
   name: string
@@ -66,26 +81,56 @@ function hasSnapshotBindings(env: TransitBindings): boolean {
     && typeof bindings.TRANSIT_SHAPES.get === 'function')
 }
 
+function createFallbackReporter(
+  observer: StopLookupFallbackObserver | undefined,
+  city: string,
+  version: string,
+): (reason: StopLookupFallbackReason) => void {
+  let reported = false
+  return (reason) => {
+    if (reported || !observer) return
+    reported = true
+    try {
+      observer({ city, snapshotVersion: version, reason })
+    } catch {
+      // Observability must never make the compatibility fallback unavailable.
+    }
+  }
+}
+
 async function readStopLookupManifest(
   env: TransitBindings,
   city: string,
   version: string,
+  reportFallback: (reason: StopLookupFallbackReason) => void,
 ): Promise<StopLookupManifest | null> {
   const memoryKey = `transit/stop-lookup-export/${city}/${version}`
   const cached = memoryCacheGet<StopLookupManifest | 'missing'>(memoryKey)
-  if (cached) return cached === 'missing' ? null : cached
+  if (cached) {
+    if (cached === 'missing') {
+      reportFallback('manifest_missing')
+      return null
+    }
+    return cached
+  }
 
   try {
     const object = await env.TRANSIT_SHAPES.get(stopLookupExportManifestKey(version, city))
     if (!object) {
       memoryCacheSet(memoryKey, 'missing', EXPORT_STATUS_TTL_SECONDS)
+      reportFallback('manifest_missing')
       return null
     }
     const parsed = parseStopLookupManifest(await object.json<unknown>(), city, version)
-    if (parsed) memoryCacheSet(memoryKey, parsed, EXPORT_STATUS_TTL_SECONDS)
+    if (!parsed) {
+      reportFallback('routing_authority_invalid')
+      return null
+    }
+    memoryCacheSet(memoryKey, parsed, EXPORT_STATUS_TTL_SECONDS)
     return parsed
   } catch {
     // Migration reads remain fail-soft. Do not cache transient R2 failures.
+    reportFallback('manifest_read_failed')
     return null
   }
 }
@@ -147,16 +192,29 @@ async function readStopLookupShard(
   version: string,
   manifest: StopLookupManifest,
   descriptor: StopLookupShardDescriptor,
+  reportFallback: (reason: StopLookupFallbackReason) => void,
 ): Promise<StopLookupShard | null> {
   try {
     const object = await env.TRANSIT_SHAPES.get(descriptor.key)
-    if (!object) return null
+    if (!object) {
+      reportFallback('routing_authority_incomplete')
+      return null
+    }
     const bytes = new Uint8Array(await object.arrayBuffer())
-    if (bytes.byteLength !== descriptor.bytes) return null
-    if (await sha256Hex(bytes) !== descriptor.sha256) return null
+    if (bytes.byteLength !== descriptor.bytes) {
+      reportFallback('routing_authority_invalid')
+      return null
+    }
+    if (await sha256Hex(bytes) !== descriptor.sha256) {
+      reportFallback('routing_authority_invalid')
+      return null
+    }
     const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown
-    return parseStopLookupShard(value, city, version, manifest, descriptor)
+    const parsed = parseStopLookupShard(value, city, version, manifest, descriptor)
+    if (!parsed) reportFallback('routing_authority_invalid')
+    return parsed
   } catch {
+    reportFallback('r2')
     return null
   }
 }
@@ -302,19 +360,24 @@ export async function getStopPlaceByStopUid(
   env: TransitBindings,
   city: string,
   stopUid: string,
+  observeFallback?: StopLookupFallbackObserver,
 ): Promise<StopLookupPlace | null> {
   if (!hasSnapshotBindings(env)) return getStopPlaceByStopUidFromD1(env, city, stopUid)
 
   const version = await getActiveSnapshotVersion(env, city)
   if (!version) return null
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
   const fallback = () => getStopPlaceByStopUidFromD1(env, city, stopUid)
-  const manifest = await readStopLookupManifest(env, city, version)
+  const manifest = await readStopLookupManifest(env, city, version, reportFallback)
   if (!manifest) return fallback()
 
   const shard = stopLookupShardForUid(stopUid, manifest.shardCount)
   const descriptor = manifest.shards.get(shard)
-  if (!descriptor) return fallback()
-  const artifact = await readStopLookupShard(env, city, version, manifest, descriptor)
+  if (!descriptor) {
+    reportFallback('routing_authority_incomplete')
+    return fallback()
+  }
+  const artifact = await readStopLookupShard(env, city, version, manifest, descriptor, reportFallback)
   if (!artifact) return fallback()
 
   const stop = artifact.stops.find((candidate) => candidate.stopUid === stopUid)
@@ -332,6 +395,7 @@ export async function searchStopPlaces(
   city: string,
   query: string,
   limit = 10,
+  observeFallback?: StopLookupFallbackObserver,
 ): Promise<StopLookupPlace[]> {
   if (!hasSnapshotBindings(env)) return searchStopPlacesFromD1(env, city, query, limit)
 
@@ -339,14 +403,15 @@ export async function searchStopPlaces(
   if (!version) return []
   const normalized = normalizeStopName(query)
   if (!normalized) return []
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
   const fallback = () => searchStopPlacesFromD1(env, city, query, limit)
 
-  const manifest = await readStopLookupManifest(env, city, version)
+  const manifest = await readStopLookupManifest(env, city, version, reportFallback)
   if (!manifest) return fallback()
   const descriptors = [...manifest.shards.values()]
     .sort((left, right) => left.shard - right.shard)
   const shards = await Promise.all(descriptors.map((descriptor) =>
-    readStopLookupShard(env, city, version, manifest, descriptor)))
+    readStopLookupShard(env, city, version, manifest, descriptor, reportFallback)))
   if (shards.some((shard) => shard === null)) return fallback()
 
   return collectSearchPlaces(shards as StopLookupShard[], normalized, limit)
