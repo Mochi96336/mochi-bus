@@ -3,9 +3,9 @@ name: D1 read insights
 on:
   workflow_dispatch:
   schedule:
-    # Daily read-only attribution after the UTC D1 quota reset has begun
-    # accumulating real traffic. This does not execute database SQL.
-    - cron: '15 0 * * *'
+    # 07:45 Asia/Taipei / 23:45 UTC: capture nearly one complete D1 quota day
+    # before the 00:00 UTC reset. This reads analytics and does not execute SQL.
+    - cron: '45 23 * * *'
   push:
     branches:
       - main
