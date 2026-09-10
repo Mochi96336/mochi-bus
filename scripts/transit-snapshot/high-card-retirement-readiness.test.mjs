@@ -8,8 +8,8 @@ import {
 const source = readFileSync('scripts/transit-snapshot/high-card-retirement-readiness.mjs', 'utf8')
 const workflow = readFileSync('.github/workflows/snapshot-high-card-retirement-readiness.yml', 'utf8')
 
-describe('legacy high-card D1 retirement readiness', () => {
-  it('is ready only when every retained active/previous window is root-bound', async () => {
+describe('legacy high-card D1 retirement authority readiness', () => {
+  it('is authority-ready only when every retained active/previous window is root-bound', async () => {
     const report = await collectHighCardRetirementReadiness({
       env: { GITHUB_SHA: 'abc123', GITHUB_RUN_ID: '42', GITHUB_RUN_ATTEMPT: '1' },
       now: () => new Date('2026-09-10T00:00:00.000Z'),
@@ -30,7 +30,7 @@ describe('legacy high-card D1 retirement readiness', () => {
       sourceCommit: 'abc123',
       cityCount: 2,
       rootBoundCityCount: 2,
-      readyForLegacyHighCardRetirement: true,
+      rootBoundAuthorityReady: true,
       blockingCities: [],
     })
     expect(report.cities.map((city) => city.city)).toEqual(['Taichung', 'Taipei'])
@@ -57,7 +57,7 @@ describe('legacy high-card D1 retirement readiness', () => {
           },
     })
 
-    expect(report.readyForLegacyHighCardRetirement).toBe(false)
+    expect(report.rootBoundAuthorityReady).toBe(false)
     expect(report.rootBoundCityCount).toBe(1)
     expect(report.blockingCities).toEqual([{
       city: 'Taichung',
@@ -113,5 +113,11 @@ describe('legacy high-card D1 retirement readiness', () => {
     expect(workflow).not.toContain('wrangler deploy')
     expect(workflow).not.toContain('snapshot:city')
     expect(workflow).not.toContain('snapshot:window')
+  })
+
+  it('does not present authority readiness as sufficient cleanup authorization', () => {
+    expect(source).toContain('rootBoundAuthorityReady')
+    expect(source).not.toContain('readyForLegacyHighCardRetirement')
+    expect(source).toContain('Cleanup still requires the separate #249 acceptance evidence and explicit mutation authorization.')
   })
 })
