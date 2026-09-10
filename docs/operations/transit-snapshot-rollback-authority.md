@@ -63,7 +63,7 @@ Reconcile 只驗證並更新 R2 state，永遠不修改 D1 active pointer。相�
 
 ### D1 已切到 v2、public smoke 成功、R2 state PUT 失敗
 
-`v2` 保持 active，不盲目切回。publisher 回報 `state_write_failed_reconcile_required`，也不執行 cleanup，確保舊版本仍可供復原。後續以 D1 `v2` 為 current authority執行 reconcile。
+`v2` 保持 active，不盲目切回。publisher 回報 `state_write_failed_reconcile_required`，也不執行 cleanup，確保舊版本仍可供復原。後續以 D1 `v2` 為 current authority 執行 reconcile。
 
 這是 metadata finalization failure，不得描述為 snapshot staging／validation failure，也不得因 R2 state stale 就覆寫 D1 pointer。
 
