@@ -33,7 +33,11 @@ export async function readTransferPlans(c: Context<MapEnv>) {
     const from = requiredQueryString(c.req.query('from'), '出發位置', 100)
     const to = requiredQueryString(c.req.query('to'), '目的地', 100)
     if (!city || !supportedCityCodes.has(city)) throw new QueryValidationError('請選擇縣市')
-    const plans = await getOneTransferRoutes(c.env, city, from, to)
+    const reportFallback = createSnapshotFallbackReporter({
+      operation: 'map_transfer',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
+    const plans = await getOneTransferRoutes(c.env, city, from, to, reportFallback)
     return c.json({ schemaVersion: 1, city, from, to, plans }, 200, {
       'Cache-Control': 'public, max-age=86400',
     })
