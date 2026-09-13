@@ -27,6 +27,7 @@ export type SnapshotFallbackOperation = Extract<
   | 'map_place_routes'
   | 'map_place_arrivals'
   | 'map_direct'
+  | 'map_transfer'
   | 'bus_stop_routes'
 >
 
