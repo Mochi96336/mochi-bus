@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
-import { runPublicProbe } from './run-public-probe.mjs'
+import { PublicApiError, runPublicProbe } from './run-public-probe.mjs'
 
 const probeDate = '2026-09-13'
 
@@ -124,6 +124,7 @@ describe('public probe route-sample detail', () => {
     const fetchDetail = await runFailure(failedFetch)
     expect(fetchDetail.routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
       stage: 'route_fetch_failed',
+      requestFailureReason: 'unknown',
     }))
 
     const malformed = api({ route: { schemaVersion: 7, source: 'snapshot', variants: [] } })
@@ -131,6 +132,28 @@ describe('public probe route-sample detail', () => {
     expect(malformedDetail.routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
       stage: 'route_response_invalid',
     }))
+  })
+
+  it('classifies route fetch failures with the shared bounded request reasons', async () => {
+    const timeout = new Error('private timeout detail')
+    timeout.name = 'TimeoutError'
+    const cases = [
+      [new PublicApiError(503), 'http_error'],
+      [timeout, 'timeout'],
+      [new TypeError('private network detail'), 'network_failure'],
+      [new SyntaxError('private json detail'), 'json_parse'],
+      [new Error('Bounded response is too large'), 'body_limit'],
+    ]
+
+    for (const [routeError, requestFailureReason] of cases) {
+      const { routeSampleDetailEmitter } = await runFailure(api({ routeError }))
+      expect(routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'route_fetch_failed',
+        requestFailureReason,
+      }))
+      const emitted = routeSampleDetailEmitter.mock.calls[0][0]
+      expect(JSON.stringify(emitted)).not.toContain(routeError.message)
+    }
   })
 
   it('distinguishes invalid route stops from an invalid stop-place response', async () => {
@@ -186,6 +209,7 @@ describe('public probe route-sample detail', () => {
     const stopPlaceDetail = await runFailure(stopPlaceFailure)
     expect(stopPlaceDetail.routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
       stage: 'stop_place_fetch_failed',
+      requestFailureReason: 'unknown',
     }))
 
     const missingSampleStore = store()
