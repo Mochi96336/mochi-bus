@@ -30,6 +30,19 @@ export const PUBLIC_PROBE_EXPENSIVE_INTERVAL_MS = 2_500
 const HEALTHY_STATUSES = new Set(['healthy', 'snapshot_healthy', 'realtime_degraded'])
 const EXPENSIVE_PATH = /^\/api\/v1\/map\/(?:network|journey-eta$|place\/[^/]+\/arrivals)/
 const DAY_MS = 24 * 60 * 60 * 1000
+const ROUTE_SAMPLE_DETAIL_STAGES = new Set([
+  'reference_sample_invalid',
+  'route_fetch_pending',
+  'route_fetch_failed',
+  'route_response_invalid',
+  'variant_missing',
+  'variant_stops_invalid',
+  'first_stop_invalid',
+  'stop_place_pending',
+  'stop_place_fetch_failed',
+  'stop_place_invalid',
+  'complete',
+])
 
 export async function runPublicProbe({
   env = process.env,
@@ -43,6 +56,7 @@ export async function runPublicProbe({
   realtimeSampleSize = cities.length,
   emitter = (event) => console.log(JSON.stringify(event)),
   realtimeDetailEmitter = () => undefined,
+  routeSampleDetailEmitter = () => undefined,
   summaryWriter = writePublicProbeSummary,
 }) {
   const evaluatedAt = now().toISOString()
@@ -67,15 +81,19 @@ export async function runPublicProbe({
     let result
     try {
       const reference = await readCityReference(store, city, probeDate)
+      const routeSampleObserver = createRouteSampleObserver({ publicApi, city, sample: reference.sample })
       result = await probePublicSurface({
         city,
         probeDate,
         reference,
-        publicApi,
+        publicApi: routeSampleObserver.publicApi,
         now,
         realtimeDetailEmitter,
         realtimeSampled: realtimeCities.has(city),
       })
+      if (result.failureClass === 'route_sample_failed') {
+        emitFailOpen(routeSampleObserver.detail(result.sampleCaseId), routeSampleDetailEmitter)
+      }
     } catch {
       result = publicProbeFailureResult({
         city, probeDate, evaluatedAt: now().toISOString(), failureClass: 'reference_unavailable',
@@ -155,6 +173,102 @@ async function readCityReference(store, city, probeDate) {
   const index = deterministicPublicCaseIndex(city, probeDate, PUBLIC_PROBE_CASE_VERSION, base.counts.sampleCount)
   const sample = await store.readSample(city, base.activeVersion, index)
   return Object.freeze({ ...base, sample })
+}
+
+// Observe the existing request/response chain without adding network reads or
+// changing probe health semantics. When the core probe returns the intentionally
+// broad route_sample_failed class, this records only a bounded phase label.
+export function createRouteSampleObserver({ publicApi, city, sample }) {
+  let expectedStopUid = null
+  let stage = validRouteSample(sample) ? 'route_fetch_pending' : 'reference_sample_invalid'
+
+  const observedApi = Object.freeze({
+    async getJson(path) {
+      if (path.startsWith('/api/v1/map/route?')) {
+        try {
+          const response = await publicApi.getJson(path)
+          const observed = classifyRouteSampleResponse(response, sample)
+          expectedStopUid = observed.expectedStopUid
+          stage = observed.stage
+          return response
+        } catch (error) {
+          stage = 'route_fetch_failed'
+          throw error
+        }
+      }
+      if (path.startsWith('/api/v1/map/stop-place?')) {
+        try {
+          const response = await publicApi.getJson(path)
+          stage = validObservedStopPlace(response, city, expectedStopUid)
+            ? 'complete'
+            : 'stop_place_invalid'
+          return response
+        } catch (error) {
+          stage = 'stop_place_fetch_failed'
+          throw error
+        }
+      }
+      return await publicApi.getJson(path)
+    },
+    async postJson(path, body) {
+      return await publicApi.postJson(path, body)
+    },
+    async readPrefix(path, maximumBytes) {
+      return await publicApi.readPrefix(path, maximumBytes)
+    },
+  })
+
+  return Object.freeze({
+    publicApi: observedApi,
+    detail(sampleCaseId) {
+      return Object.freeze({
+        message: 'public_probe_route_sample_detail',
+        city,
+        sampleCaseId,
+        stage: ROUTE_SAMPLE_DETAIL_STAGES.has(stage) ? stage : 'route_fetch_pending',
+      })
+    },
+  })
+}
+
+function classifyRouteSampleResponse(route, sample) {
+  if (route?.schemaVersion !== 1 || route?.source !== 'snapshot' || !Array.isArray(route?.variants)) {
+    return Object.freeze({ stage: 'route_response_invalid', expectedStopUid: null })
+  }
+  const variant = route.variants.find((candidate) =>
+    candidate?.variantKey === sample?.patternId && candidate?.routeUid === sample?.routeUid)
+  if (!variant) return Object.freeze({ stage: 'variant_missing', expectedStopUid: null })
+  if (!Array.isArray(variant.stops?.features) || variant.stops.features.length < 2) {
+    return Object.freeze({ stage: 'variant_stops_invalid', expectedStopUid: null })
+  }
+  const firstStop = variant.stops.features.find(validObservedStopFeature)
+  if (!firstStop) return Object.freeze({ stage: 'first_stop_invalid', expectedStopUid: null })
+  return Object.freeze({
+    stage: 'stop_place_pending',
+    expectedStopUid: firstStop.properties.stopUid,
+  })
+}
+
+function validRouteSample(value) {
+  return Boolean(value)
+    && ['patternId', 'routeUid', 'routeName']
+      .every((field) => typeof value[field] === 'string' && value[field].length > 0)
+}
+
+function validObservedStopFeature(value) {
+  return Boolean(value?.properties)
+    && typeof value.properties.stopUid === 'string'
+    && value.properties.stopUid.length > 0
+    && Number.isInteger(Number(value.properties.sequence))
+    && Number(value.properties.sequence) >= 0
+}
+
+function validObservedStopPlace(value, city, stopUid) {
+  return value?.schemaVersion === 1
+    && value?.city === city
+    && value?.stopUid === stopUid
+    && typeof value?.place?.placeId === 'string'
+    && value.place.placeId.length > 0
 }
 
 export function createPublicApiAdapter({
@@ -321,6 +435,7 @@ async function main() {
     }),
     realtimeSampleSize: PUBLIC_PROBE_REALTIME_SAMPLE_SIZE,
     realtimeDetailEmitter: (event) => console.log(JSON.stringify(event)),
+    routeSampleDetailEmitter: (event) => console.log(JSON.stringify(event)),
   })
   process.exitCode = result.ok ? 0 : 1
 }
