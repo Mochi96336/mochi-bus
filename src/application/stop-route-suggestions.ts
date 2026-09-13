@@ -68,6 +68,7 @@ type StopRouteSuggestionDependencies = {
     env: TransitBindings,
     city: string,
     placeId: string,
+    observeFallback?: StopLookupFallbackObserver,
   ) => Promise<StopPlaceRoute[]>
   resolveRealtime: RealtimeResolver
   reportSnapshotFailure: (error: unknown) => void
@@ -118,7 +119,12 @@ export async function getSnapshotStopRouteSuggestions(
       reportStopLookupFallback,
     )
     if (!place) return null
-    routes = await deps.getStopPlaceRoutes(env, city, place.placeId)
+    routes = await deps.getStopPlaceRoutes(
+      env,
+      city,
+      place.placeId,
+      reportStopLookupFallback,
+    )
     if (!routes.length) return null
   } catch (error) {
     deps.reportSnapshotFailure(error)

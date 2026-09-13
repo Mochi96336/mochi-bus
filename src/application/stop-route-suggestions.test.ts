@@ -40,10 +40,11 @@ const routes: StopPlaceRoute[] = [
 ]
 
 describe('snapshot-first setup stop route suggestions', () => {
-  it('uses snapshot route identity, passes the fallback observer, and only batches compact ETA upstream', async () => {
+  it('uses snapshot route identity, shares the fallback observer, and only batches compact ETA upstream', async () => {
     const seenUrls: URL[] = []
     const reportStopLookupFallback = vi.fn()
     const getStopPlaceByStopUid = vi.fn(async () => place)
+    const getStopPlaceRoutes = vi.fn().mockResolvedValue(routes)
     const resolveRealtime = vi.fn(async (_env, url: URL) => {
       seenUrls.push(url)
       if (url.pathname.endsWith('/City/Taipei')) {
@@ -68,7 +69,7 @@ describe('snapshot-first setup stop route suggestions', () => {
 
     const result = await getSnapshotStopRouteSuggestions(env, 'Taipei', 'TPE-STOP', {
       getStopPlaceByStopUid,
-      getStopPlaceRoutes: vi.fn().mockResolvedValue(routes),
+      getStopPlaceRoutes,
       resolveRealtime,
       reportSnapshotFailure: vi.fn(),
       reportRealtimeFailure: vi.fn(),
@@ -79,6 +80,12 @@ describe('snapshot-first setup stop route suggestions', () => {
       env,
       'Taipei',
       'TPE-STOP',
+      reportStopLookupFallback,
+    )
+    expect(getStopPlaceRoutes).toHaveBeenCalledWith(
+      env,
+      'Taipei',
+      'place-1',
       reportStopLookupFallback,
     )
     expect(result?.place).toEqual(place)
