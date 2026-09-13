@@ -22,12 +22,15 @@ export type SnapshotFallbackFailureClass = typeof snapshotFallbackFailureClasses
 
 export type SnapshotFallbackOperation = Extract<
   TelemetryOperation,
+  | 'map_route'
+  | 'map_timetable'
   | 'map_search'
   | 'map_stop_place'
   | 'map_place_routes'
   | 'map_place_arrivals'
   | 'map_direct'
   | 'map_transfer'
+  | 'map_journey_eta'
   | 'bus_stop_routes'
 >
 

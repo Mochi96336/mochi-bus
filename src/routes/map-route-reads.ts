@@ -8,7 +8,10 @@ import {
   getPinnedSnapshotRouteVariant,
   getPinnedSnapshotRouteVariants,
 } from '../infrastructure/transit/snapshot-probe-repository'
-import { getSnapshotRouteVariants } from '../infrastructure/transit/snapshot-pattern-stop-repository'
+import {
+  getSnapshotRouteVariants,
+  type PatternStopFallbackObserver,
+} from '../infrastructure/transit/snapshot-pattern-stop-repository'
 import { getSnapshotSchedule } from '../infrastructure/transit/snapshot-repository'
 import { getBusSchedule } from '../lib/tdx'
 import {
@@ -17,6 +20,7 @@ import {
   parseOptionalDirection,
 } from '../lib/api-input'
 import { logProductionError } from '../observability/production-log'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 import { mapJsonError, tdxEnv, type MapEnv } from './map-http-context'
 import {
   requestedProbeRouteIdentity,
@@ -45,6 +49,7 @@ async function loadRouteVariants(
   routeName: string,
   requestedVersion?: string,
   requestedIdentity?: RequestedProbeRouteIdentity,
+  observeFallback?: PatternStopFallbackObserver,
 ): Promise<LoadedRouteVariants> {
   if (requestedVersion) {
     if (requestedIdentity) {
@@ -65,7 +70,7 @@ async function loadRouteVariants(
       source: 'snapshot',
     }
   }
-  const snapshotVariants = await getSnapshotRouteVariants(c.env, city, routeName)
+  const snapshotVariants = await getSnapshotRouteVariants(c.env, city, routeName, observeFallback)
   if (snapshotVariants.length) return { variants: snapshotVariants, source: 'snapshot' }
   return {
     variants: await getRouteMapVariants(tdxEnv(c), city, routeName),
@@ -93,12 +98,17 @@ export async function readRouteMap(c: Context<MapEnv>) {
 
     const requestedVersion = await requestedProbeSnapshotVersion(c, city)
     const requestedIdentity = requestedProbeRouteIdentity(c, requestedVersion)
+    const observeFallback = createSnapshotFallbackReporter({
+      operation: 'map_route',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
     const { variants, source } = await loadRouteVariants(
       c,
       city,
       routeName,
       requestedVersion,
       requestedIdentity,
+      observeFallback,
     )
     if (!variants.length) {
       return c.json({ error: '這條路線目前沒有可用的地圖線型' }, 404, {
@@ -143,7 +153,11 @@ export async function readRouteTimetable(c: Context<MapEnv>) {
     if (!routeName || routeName.length > 40) throw new QueryValidationError('請選擇有效路線')
     if (direction === undefined) throw new QueryValidationError('請選擇行駛方向')
 
-    const { variants } = await loadRouteVariants(c, city, routeName)
+    const observeFallback = createSnapshotFallbackReporter({
+      operation: 'map_timetable',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
+    const { variants } = await loadRouteVariants(c, city, routeName, undefined, undefined, observeFallback)
     const variant = selectRouteVariant(variants, { direction, variantKey, routeUid, subRouteUid })
     if (!variant) return c.json({ error: '找不到這個方向的站序' }, 404)
 

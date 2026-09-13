@@ -30,6 +30,7 @@ import {
   readJsonBody,
 } from '../lib/api-input'
 import { journeyEtaOutcome } from '../observability/map-api-outcomes'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 import type { TelemetryCity } from '../observability/telemetry'
 import {
   beginMapOperation,
@@ -58,8 +59,12 @@ export async function readJourneyEta(c: Context<MapEnv>) {
     observedCity = telemetryCity(city)
     const env = tdxEnv(c)
     let warning: TDXWarning | undefined
+    const observeFallback = createSnapshotFallbackReporter({
+      operation: 'map_journey_eta',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
 
-    const refs = await getJourneyLegStopRefs(env, city, legs)
+    const refs = await getJourneyLegStopRefs(env, city, legs, observeFallback)
     const batches = buildStopArrivalBatches(city, refs.map((ref) => ({
       routeUid: ref.routeUid,
       routeName: ref.routeName,
