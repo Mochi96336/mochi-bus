@@ -49,6 +49,26 @@ type JourneyPatternRow = {
 
 type ShapeFeature = RouteMapVariant['shape']
 
+export type PatternStopFallbackReason =
+  | 'manifest_missing'
+  | 'manifest_read_failed'
+  | 'routing_authority_incomplete'
+  | 'routing_authority_invalid'
+  | 'r2'
+
+export type PatternStopFallbackObservation = Readonly<{
+  city: string
+  snapshotVersion: string
+  reason: PatternStopFallbackReason
+}>
+
+export type PatternStopFallbackObserver = (observation: PatternStopFallbackObservation) => void
+
+type PatternStopReadResult = Readonly<{
+  stops: PatternStop[] | null
+  reason: PatternStopFallbackReason | null
+}>
+
 function patternStopArtifactKey(version: string, city: string, patternId: string): string {
   return `snapshots/${version}/cities/${city}/patterns/${patternId}/stops.json`
 }
@@ -57,23 +77,61 @@ function patternStopExportManifestKey(version: string, city: string): string {
   return `snapshots/${version}/cities/${city}/pattern-stops-export.json`
 }
 
+function createFallbackReporter(
+  observer: PatternStopFallbackObserver | undefined,
+  city: string,
+  version: string,
+): (reason: PatternStopFallbackReason) => void {
+  let reported = false
+  return (reason) => {
+    if (reported || !observer) return
+    reported = true
+    try {
+      observer({ city, snapshotVersion: version, reason })
+    } catch {
+      // Observability must never make the compatibility fallback unavailable.
+    }
+  }
+}
+
+function preferredFallbackReason(
+  ...reasons: Array<PatternStopFallbackReason | null>
+): PatternStopFallbackReason | null {
+  for (const reason of [
+    'routing_authority_invalid',
+    'routing_authority_incomplete',
+    'r2',
+    'manifest_read_failed',
+    'manifest_missing',
+  ] as const) {
+    if (reasons.includes(reason)) return reason
+  }
+  return null
+}
+
 async function hasPatternStopExport(
   env: TransitBindings,
   city: string,
   version: string,
+  reportFallback: (reason: PatternStopFallbackReason) => void,
 ): Promise<boolean> {
   const memoryKey = `transit/pattern-stop-export/${city}/${version}`
   const cached = memoryCacheGet<'ready' | 'missing'>(memoryKey)
-  if (cached) return cached === 'ready'
+  if (cached) {
+    if (cached === 'missing') reportFallback('manifest_missing')
+    return cached === 'ready'
+  }
 
   try {
     const manifest = await env.TRANSIT_SHAPES.head(patternStopExportManifestKey(version, city))
     const state = manifest ? 'ready' : 'missing'
     memoryCacheSet(memoryKey, state, EXPORT_STATUS_TTL_SECONDS)
+    if (state === 'missing') reportFallback('manifest_missing')
     return state === 'ready'
   } catch {
     // R2 availability must never make the migration path less reliable than D1.
     // Do not cache transient errors; the next request may retry the R2 gate.
+    reportFallback('manifest_read_failed')
     return false
   }
 }
@@ -83,14 +141,15 @@ async function readPatternStops(
   city: string,
   version: string,
   patternId: string,
-): Promise<PatternStop[] | null> {
+): Promise<PatternStopReadResult> {
   try {
     const object = await env.TRANSIT_SHAPES.get(patternStopArtifactKey(version, city, patternId))
-    if (!object) return null
+    if (!object) return { stops: null, reason: 'routing_authority_incomplete' }
     const artifact = parsePatternStopArtifact(await object.json<unknown>(), city, version, patternId)
-    return artifact?.stops ?? null
+    if (!artifact) return { stops: null, reason: 'routing_authority_invalid' }
+    return { stops: artifact.stops, reason: null }
   } catch {
-    return null
+    return { stops: null, reason: 'r2' }
   }
 }
 
@@ -145,10 +204,12 @@ export async function getSnapshotRouteVariants(
   env: TransitBindings,
   city: string,
   routeName: string,
+  observeFallback?: PatternStopFallbackObserver,
 ): Promise<RouteMapVariant[]> {
   const version = await getActiveSnapshotVersion(env, city)
   if (!version) return []
-  if (!await hasPatternStopExport(env, city, version)) {
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
+  if (!await hasPatternStopExport(env, city, version, reportFallback)) {
     return getSnapshotRouteVariantsFromD1(env, city, routeName)
   }
 
@@ -162,11 +223,14 @@ export async function getSnapshotRouteVariants(
   `).bind(version, city, routeName).all<PatternRow>()
   if (!patterns.results.length) return []
 
-  const stopSets = await Promise.all(patterns.results.map((pattern) =>
+  const stopResults = await Promise.all(patterns.results.map((pattern) =>
     readPatternStops(env, city, version, pattern.pattern_id)))
-  if (stopSets.some((stops) => stops === null)) {
+  const fallbackReason = preferredFallbackReason(...stopResults.map((result) => result.reason))
+  if (fallbackReason) {
+    reportFallback(fallbackReason)
     return getSnapshotRouteVariantsFromD1(env, city, routeName)
   }
+  const stopSets = stopResults.map((result) => result.stops)
 
   const shapes = await Promise.all(patterns.results.map(async (pattern) => {
     const object = await env.TRANSIT_SHAPES.get(pattern.shape_key)
@@ -218,20 +282,25 @@ export async function getJourneyLegStopRefs(
   env: TransitBindings,
   city: string,
   legs: Array<{ key: string; patternId: string; sequence: number }>,
+  observeFallback?: PatternStopFallbackObserver,
 ) {
   if (!legs.length) return []
   const version = await getActiveSnapshotVersion(env, city)
   if (!version) return []
-  if (!await hasPatternStopExport(env, city, version)) {
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
+  if (!await hasPatternStopExport(env, city, version, reportFallback)) {
     return getJourneyLegStopRefsFromD1(env, city, legs)
   }
 
   const patternIds = [...new Set(legs.map((leg) => leg.patternId))]
-  const stopSets = await Promise.all(patternIds.map((patternId) =>
+  const stopResults = await Promise.all(patternIds.map((patternId) =>
     readPatternStops(env, city, version, patternId)))
-  if (stopSets.some((stops) => stops === null)) {
+  const fallbackReason = preferredFallbackReason(...stopResults.map((result) => result.reason))
+  if (fallbackReason) {
+    reportFallback(fallbackReason)
     return getJourneyLegStopRefsFromD1(env, city, legs)
   }
+  const stopSets = stopResults.map((result) => result.stops)
 
   const placeholders = patternIds.map(() => '?').join(', ')
   const metadata = await env.TRANSIT_DB.prepare(`
