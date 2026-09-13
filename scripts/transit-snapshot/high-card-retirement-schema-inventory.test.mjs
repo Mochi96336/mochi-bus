@@ -56,6 +56,24 @@ describe('legacy high-card D1 schema inventory', () => {
     ])
   })
 
+  it('does not trust an SQLite autoindex name when its owner table does not match', async () => {
+    const rows = expectedLegacyRows()
+    rows.push({
+      type: 'index',
+      name: 'sqlite_autoindex_pattern_stops_9',
+      tbl_name: 'stops',
+      sql: null,
+    })
+    const report = await reportFor(rows)
+
+    expect(report.unexpectedOwnedObjects).toContainEqual({
+      type: 'index',
+      name: 'sqlite_autoindex_pattern_stops_9',
+      table: 'stops',
+    })
+    expect(report.schemaMatchesExpectedLegacyShape).toBe(false)
+  })
+
   it('distinguishes fully retired and partial high-card schema states', async () => {
     const retired = await reportFor([])
     expect(retired).toMatchObject({
