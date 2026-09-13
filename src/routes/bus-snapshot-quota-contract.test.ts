@@ -10,6 +10,9 @@ const routeStops = vi.hoisted(() => ({
 const stopRoutes = vi.hoisted(() => ({
   getSnapshotStopRouteSuggestions: vi.fn(),
 }))
+const stopLookup = vi.hoisted(() => ({
+  getStopPlaceByStopUid: vi.fn(),
+}))
 const snapshotRepository = vi.hoisted(() => ({
   getSnapshotRouteCatalog: vi.fn(),
 }))
@@ -26,6 +29,10 @@ vi.mock('../application/snapshot-route-stop-groups', async (importOriginal) => (
 vi.mock('../application/stop-route-suggestions', async (importOriginal) => ({
   ...await importOriginal<typeof import('../application/stop-route-suggestions')>(),
   getSnapshotStopRouteSuggestions: stopRoutes.getSnapshotStopRouteSuggestions,
+}))
+vi.mock('../infrastructure/transit/snapshot-stop-lookup-repository', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../infrastructure/transit/snapshot-stop-lookup-repository')>(),
+  getStopPlaceByStopUid: stopLookup.getStopPlaceByStopUid,
 }))
 vi.mock('../infrastructure/transit/snapshot-repository', async (importOriginal) => ({
   ...await importOriginal<typeof import('../infrastructure/transit/snapshot-repository')>(),
@@ -117,6 +124,7 @@ describe('bus setup snapshot quota contract', () => {
   beforeEach(() => {
     Object.values(routeStops).forEach((mock) => mock.mockReset())
     Object.values(stopRoutes).forEach((mock) => mock.mockReset())
+    Object.values(stopLookup).forEach((mock) => mock.mockReset())
     Object.values(snapshotRepository).forEach((mock) => mock.mockReset())
     Object.values(tdx).forEach((mock) => mock.mockReset())
     vi.spyOn(Math, 'random').mockReturnValue(0)
@@ -174,11 +182,43 @@ describe('bus setup snapshot quota contract', () => {
       expect.objectContaining(bindings),
       'Taipei',
       'STOP-1',
+      { reportStopLookupFallback: expect.any(Function) },
     )
+    expect(stopLookup.getStopPlaceByStopUid).not.toHaveBeenCalled()
     expect(tdx.getStopRouteSuggestions).not.toHaveBeenCalled()
     expect(capturedEvent(log, 'bus_stop_routes')).toMatchObject({
       result: 'success',
       source: 'mixed',
+      city: 'Taipei',
+    })
+  })
+
+  it('shares one fallback reporter with the legacy place lookup after snapshot suggestions miss', async () => {
+    stopRoutes.getSnapshotStopRouteSuggestions.mockResolvedValue(null)
+    stopLookup.getStopPlaceByStopUid.mockResolvedValue(snapshotSuggestions.place)
+    tdx.getStopRouteSuggestions.mockResolvedValue([])
+
+    const response = await request('/api/v1/stop-routes?city=Taipei&stop=%E5%85%B1%E5%90%8C%E7%AB%99&stopUid=STOP-1')
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      place: snapshotSuggestions.place,
+      buses: [],
+    })
+
+    const snapshotCall = stopRoutes.getSnapshotStopRouteSuggestions.mock.calls[0]
+    const options = snapshotCall?.[3] as { reportStopLookupFallback?: unknown } | undefined
+    expect(options?.reportStopLookupFallback).toEqual(expect.any(Function))
+    expect(stopLookup.getStopPlaceByStopUid).toHaveBeenCalledWith(
+      bindings,
+      'Taipei',
+      'STOP-1',
+      options?.reportStopLookupFallback,
+    )
+    expect(tdx.getStopRouteSuggestions).toHaveBeenCalledTimes(1)
+    expect(capturedEvent(log, 'bus_stop_routes')).toMatchObject({
+      result: 'success',
+      source: 'tdx',
       city: 'Taipei',
     })
   })
