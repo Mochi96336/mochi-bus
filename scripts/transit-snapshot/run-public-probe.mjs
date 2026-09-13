@@ -43,6 +43,17 @@ const ROUTE_SAMPLE_DETAIL_STAGES = new Set([
   'stop_place_invalid',
   'complete',
 ])
+const ROUTE_FETCH_ERROR_KINDS = new Set([
+  'http_400',
+  'http_404',
+  'http_429',
+  'http_4xx',
+  'http_5xx',
+  'http_other',
+  'timeout',
+  'payload_error',
+  'network_error',
+])
 
 export async function runPublicProbe({
   env = process.env,
@@ -177,10 +188,11 @@ async function readCityReference(store, city, probeDate) {
 
 // Observe the existing request/response chain without adding network reads or
 // changing probe health semantics. When the core probe returns the intentionally
-// broad route_sample_failed class, this records only a bounded phase label.
+// broad route_sample_failed class, this records only bounded phase/error labels.
 export function createRouteSampleObserver({ publicApi, city, sample }) {
   let expectedStopUid = null
   let stage = validRouteSample(sample) ? 'route_fetch_pending' : 'reference_sample_invalid'
+  let routeFetchErrorKind = null
 
   const observedApi = Object.freeze({
     async getJson(path) {
@@ -190,9 +202,11 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
           const observed = classifyRouteSampleResponse(response, sample)
           expectedStopUid = observed.expectedStopUid
           stage = observed.stage
+          routeFetchErrorKind = null
           return response
         } catch (error) {
           stage = 'route_fetch_failed'
+          routeFetchErrorKind = classifyPublicApiFailure(error)
           throw error
         }
       }
@@ -221,14 +235,31 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
   return Object.freeze({
     publicApi: observedApi,
     detail(sampleCaseId) {
+      const boundedStage = ROUTE_SAMPLE_DETAIL_STAGES.has(stage) ? stage : 'route_fetch_pending'
+      const boundedErrorKind = ROUTE_FETCH_ERROR_KINDS.has(routeFetchErrorKind) ? routeFetchErrorKind : null
       return Object.freeze({
         message: 'public_probe_route_sample_detail',
         city,
         sampleCaseId,
-        stage: ROUTE_SAMPLE_DETAIL_STAGES.has(stage) ? stage : 'route_fetch_pending',
+        stage: boundedStage,
+        ...(boundedStage === 'route_fetch_failed' && boundedErrorKind ? { errorKind: boundedErrorKind } : {}),
       })
     },
   })
+}
+
+export function classifyPublicApiFailure(error) {
+  if (error instanceof PublicApiError) {
+    if (error.status === 400) return 'http_400'
+    if (error.status === 404) return 'http_404'
+    if (error.status === 429) return 'http_429'
+    if (error.status >= 400 && error.status < 500) return 'http_4xx'
+    if (error.status >= 500 && error.status < 600) return 'http_5xx'
+    return 'http_other'
+  }
+  if (error instanceof PublicApiPayloadError) return 'payload_error'
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'timeout'
+  return 'network_error'
 }
 
 function classifyRouteSampleResponse(route, sample) {
@@ -304,16 +335,25 @@ export function createPublicApiAdapter({
     return response
   }
 
+  async function readJson(path, init) {
+    const response = await request(path, init)
+    try {
+      return await readBoundedResponseJson(response, 2 * 1024 * 1024)
+    } catch {
+      throw new PublicApiPayloadError()
+    }
+  }
+
   return Object.freeze({
     async getJson(path) {
-      return await readBoundedResponseJson(await request(path), 2 * 1024 * 1024)
+      return await readJson(path)
     },
     async postJson(path, body) {
-      return await readBoundedResponseJson(await request(path, {
+      return await readJson(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      }), 2 * 1024 * 1024)
+      })
     },
     async readPrefix(path, maximumBytes) {
       const response = await request(path, { headers: { Range: `bytes=0-${maximumBytes - 1}` } })
@@ -352,6 +392,13 @@ export class PublicApiError extends Error {
   constructor(status) {
     super(`Public API responded ${status}`)
     this.status = status
+  }
+}
+
+export class PublicApiPayloadError extends Error {
+  constructor() {
+    super('Public API response payload invalid')
+    this.name = 'PublicApiPayloadError'
   }
 }
 
