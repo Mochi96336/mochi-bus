@@ -5,21 +5,25 @@ import {
   remainingHighCardRetirementGates,
 } from './high-card-retirement-plan.mjs'
 
+function legacyOwnedObjects() {
+  return [
+    { type: 'table', name: 'pattern_stops', table: 'pattern_stops' },
+    { type: 'index', name: 'sqlite_autoindex_pattern_stops_1', table: 'pattern_stops' },
+    { type: 'index', name: 'pattern_stops_place_idx', table: 'pattern_stops' },
+    { type: 'table', name: 'stops', table: 'stops' },
+    { type: 'index', name: 'sqlite_autoindex_stops_1', table: 'stops' },
+    { type: 'index', name: 'stops_name_idx', table: 'stops' },
+    { type: 'index', name: 'stops_place_idx', table: 'stops' },
+  ]
+}
+
 function schemaInventory(overrides = {}) {
   return {
     schemaVersion: 1,
     kind: 'snapshot-high-card-d1-schema-inventory',
     schemaState: 'legacy-present',
     tablesPresent: ['pattern_stops', 'stops'],
-    ownedObjects: [
-      { type: 'table', name: 'pattern_stops', table: 'pattern_stops' },
-      { type: 'index', name: 'sqlite_autoindex_pattern_stops_1', table: 'pattern_stops' },
-      { type: 'index', name: 'pattern_stops_place_idx', table: 'pattern_stops' },
-      { type: 'table', name: 'stops', table: 'stops' },
-      { type: 'index', name: 'sqlite_autoindex_stops_1', table: 'stops' },
-      { type: 'index', name: 'stops_name_idx', table: 'stops' },
-      { type: 'index', name: 'stops_place_idx', table: 'stops' },
-    ],
+    ownedObjects: legacyOwnedObjects(),
     missingExpectedObjects: [],
     unexpectedOwnedObjects: [],
     externalDependencies: [],
@@ -29,31 +33,71 @@ function schemaInventory(overrides = {}) {
   }
 }
 
+function authorityCount(mode) {
+  if (mode === 'legacy-d1') return 0
+  if (mode === 'legacy-partial') return 2
+  return 4
+}
+
+function authorityCity(city, {
+  activeMode = 'legacy-backfill',
+  previousMode = 'legacy-d1',
+} = {}) {
+  const rootBoundRollbackWindow = activeMode === 'root-bound' && previousMode === 'root-bound'
+  const nativeRootBoundPublicationsRequired = activeMode === 'root-bound'
+    ? (previousMode === 'root-bound' ? 0 : 1)
+    : 2
+  return {
+    city,
+    activeVersion: `${city}-active`,
+    previousVersion: `${city}-previous`,
+    activeAuthorityMode: activeMode,
+    previousAuthorityMode: previousMode,
+    rollbackTargetAuthorityMode: previousMode,
+    activeRoutingManifestCount: authorityCount(activeMode),
+    previousRoutingManifestCount: authorityCount(previousMode),
+    rootBoundRollbackWindow,
+    nativeRootBoundPublicationsRequired,
+  }
+}
+
+function blockingCity(city) {
+  return {
+    city: city.city,
+    activeVersion: city.activeVersion,
+    previousVersion: city.previousVersion,
+    activeAuthorityMode: city.activeAuthorityMode,
+    previousAuthorityMode: city.previousAuthorityMode,
+    activeRoutingManifestCount: city.activeRoutingManifestCount,
+    previousRoutingManifestCount: city.previousRoutingManifestCount,
+    nativeRootBoundPublicationsRequired: city.nativeRootBoundPublicationsRequired,
+  }
+}
+
 function authorityReadiness(overrides = {}) {
+  const cities = [authorityCity('Taichung'), authorityCity('Taipei')]
   return {
     schemaVersion: 2,
     kind: 'snapshot-high-card-d1-retirement-readiness',
-    cityCount: 2,
+    cityCount: cities.length,
     rootBoundCityCount: 0,
     rootBoundAuthorityReady: false,
-    blockingCities: [{ city: 'Taichung' }, { city: 'Taipei' }],
-    cities: [
-      { city: 'Taichung', rootBoundRollbackWindow: false },
-      { city: 'Taipei', rootBoundRollbackWindow: false },
-    ],
+    blockingCities: cities.map(blockingCity),
+    cities,
     ...overrides,
   }
 }
 
 function allRootBoundAuthority() {
+  const cities = [
+    authorityCity('Taichung', { activeMode: 'root-bound', previousMode: 'root-bound' }),
+    authorityCity('Taipei', { activeMode: 'root-bound', previousMode: 'root-bound' }),
+  ]
   return authorityReadiness({
-    rootBoundCityCount: 2,
+    rootBoundCityCount: cities.length,
     rootBoundAuthorityReady: true,
     blockingCities: [],
-    cities: [
-      { city: 'Taichung', rootBoundRollbackWindow: true },
-      { city: 'Taipei', rootBoundRollbackWindow: true },
-    ],
+    cities,
   })
 }
 
@@ -120,6 +164,7 @@ describe('high-card retirement plan gate', () => {
       schemaInventory: schemaInventory({
         schemaState: 'partial',
         tablesPresent: ['stops'],
+        ownedObjects: legacyOwnedObjects().filter((entry) => entry.table === 'stops'),
         schemaMatchesExpectedLegacyShape: false,
         dependencyClear: false,
         externalDependencies: [{ type: 'view', name: 'legacy_view', table: 'legacy_view' }],
@@ -136,6 +181,7 @@ describe('high-card retirement plan gate', () => {
   it('blocks schema drift even when dependencies and authority are otherwise clear', () => {
     const plan = buildHighCardRetirementPlan({
       schemaInventory: schemaInventory({
+        ownedObjects: legacyOwnedObjects().filter((entry) => entry.name !== 'stops_name_idx'),
         missingExpectedObjects: ['stops_name_idx'],
         schemaMatchesExpectedLegacyShape: false,
       }),
@@ -166,16 +212,112 @@ describe('high-card retirement plan gate', () => {
     expect(plan.destructiveExecutionAuthorized).toBe(false)
   })
 
+  it('rejects forged schema summaries instead of trusting table and object claims', () => {
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory({
+        ownedObjects: [
+          { type: 'table', name: 'pattern_stops', table: 'pattern_stops' },
+          { type: 'table', name: 'stops', table: 'stops' },
+        ],
+      }),
+      authorityReadiness: authorityReadiness(),
+    })).toThrow('missing schema objects do not match owned objects')
+
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory({
+        schemaState: 'retired',
+        tablesPresent: [],
+        ownedObjects: [{ type: 'index', name: 'stops_name_idx', table: 'stops' }],
+        schemaMatchesExpectedLegacyShape: false,
+      }),
+      authorityReadiness: authorityReadiness(),
+    })).toThrow('schema owned objects outlive their target table')
+  })
+
+  it('rejects unexpected-object summaries that do not match owned schema objects', () => {
+    const ownedObjects = [
+      ...legacyOwnedObjects(),
+      { type: 'index', name: 'unexpected_idx', table: 'stops' },
+    ]
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory({ ownedObjects }),
+      authorityReadiness: authorityReadiness(),
+    })).toThrow('unexpected schema objects do not match owned objects')
+
+    const plan = buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory({
+        ownedObjects,
+        unexpectedOwnedObjects: [{ type: 'index', name: 'unexpected_idx', table: 'stops' }],
+        schemaMatchesExpectedLegacyShape: false,
+      }),
+      authorityReadiness: allRootBoundAuthority(),
+    })
+    expect(plan.planningState).toBe('blocked')
+    expect(plan.blockers).toEqual(['schema_drift'])
+  })
+
   it('rejects inconsistent authority summaries instead of trusting a ready flag', () => {
     expect(() => buildHighCardRetirementPlan({
       schemaInventory: schemaInventory(),
       authorityReadiness: authorityReadiness({ rootBoundAuthorityReady: true }),
     })).toThrow('authority summary is inconsistent')
 
+    const taichung = authorityCity('Taichung')
     expect(() => buildHighCardRetirementPlan({
       schemaInventory: schemaInventory(),
-      authorityReadiness: authorityReadiness({ blockingCities: [{ city: 'Taichung' }] }),
+      authorityReadiness: authorityReadiness({ blockingCities: [blockingCity(taichung)] }),
     })).toThrow('blocking cities do not match authority windows')
+  })
+
+  it('rejects a forged root-bound window that disagrees with authority modes', () => {
+    const taichung = authorityCity('Taichung')
+    const taipei = authorityCity('Taipei')
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory(),
+      authorityReadiness: authorityReadiness({
+        cities: [{ ...taichung, rootBoundRollbackWindow: true }, taipei],
+      }),
+    })).toThrow('authority city evidence is inconsistent')
+  })
+
+  it('rejects inconsistent per-city authority mode, rollback, and publication evidence', () => {
+    const taichung = authorityCity('Taichung')
+    const taipei = authorityCity('Taipei')
+
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory(),
+      authorityReadiness: authorityReadiness({
+        cities: [{ ...taichung, activeRoutingManifestCount: 0 }, taipei],
+      }),
+    })).toThrow('authority city evidence is inconsistent')
+
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory(),
+      authorityReadiness: authorityReadiness({
+        cities: [{ ...taichung, rollbackTargetAuthorityMode: 'legacy-backfill' }, taipei],
+      }),
+    })).toThrow('authority city evidence is inconsistent')
+
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory(),
+      authorityReadiness: authorityReadiness({
+        cities: [{ ...taichung, nativeRootBoundPublicationsRequired: 1 }, taipei],
+      }),
+    })).toThrow('authority city evidence is inconsistent')
+  })
+
+  it('rejects stale blocking-city metadata even when the city set is correct', () => {
+    const report = authorityReadiness()
+    expect(() => buildHighCardRetirementPlan({
+      schemaInventory: schemaInventory(),
+      authorityReadiness: {
+        ...report,
+        blockingCities: [
+          { ...report.blockingCities[0], activeVersion: 'stale-version' },
+          report.blockingCities[1],
+        ],
+      },
+    })).toThrow('blocking city evidence does not match authority windows')
   })
 
   it('rejects inconsistent schema summaries instead of inferring around them', () => {
