@@ -54,6 +54,7 @@ import {
   busStopRoutesOutcome,
   completeBusApiError,
 } from '../observability/bus-api'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 
 type Env = { Bindings: TDXEnv & TransitBindings }
 const bus = new Hono<Env>()
@@ -216,12 +217,18 @@ bus.get('/api/v1/stop-routes', async (c) => {
     const stopName = requiredQueryString(c.req.query('stop'), '站牌名稱', 80)
     const stopUid = optionalQueryString(c.req.query('stopUid'), 'StopUID', 100)
     const env = tdxEnv(c)
+    const reportSnapshotFallback = createSnapshotFallbackReporter({
+      operation: 'bus_stop_routes',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
 
     // Setup already knows the selected StopUID. Resolve its physical place and
     // route identities from the active snapshot first; TDX then only supplies
     // compact ETA batches instead of repeating Stop/Route discovery requests.
     if (stopUid) {
-      const snapshot = await getSnapshotStopRouteSuggestions(env, city, stopUid)
+      const snapshot = await getSnapshotStopRouteSuggestions(env, city, stopUid, {
+        reportStopLookupFallback: reportSnapshotFallback,
+      })
       if (snapshot) {
         tracker.complete({
           ...busStopRoutesOutcome(true, snapshot.buses.length),
@@ -239,7 +246,9 @@ bus.get('/api/v1/stop-routes', async (c) => {
     // Legacy/no-snapshot fallback keeps setup usable for incomplete instances.
     const [buses, place] = await Promise.all([
       getStopRouteSuggestions(env, city, stopName, stopUid),
-      stopUid ? getStopPlaceByStopUid(c.env, city, stopUid).catch(() => null) : Promise.resolve(null),
+      stopUid
+        ? getStopPlaceByStopUid(c.env, city, stopUid, reportSnapshotFallback).catch(() => null)
+        : Promise.resolve(null),
     ])
     tracker.complete({
       ...busStopRoutesOutcome(false, buses.length),
