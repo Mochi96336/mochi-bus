@@ -198,19 +198,21 @@ beforeEach(() => {
 })
 
 describe('transfer routing fallback attribution', () => {
-  it('reports a cached missing completion manifest as manifest_missing', async () => {
+  it('reports a cached missing completion manifest once per request', async () => {
     const observe = observer()
     const bindings = env(bucket())
-
-    await getOneTransferRoutes(bindings, 'Taichung', 'from', 'to', observe)
-    await getOneTransferRoutes(bindings, 'Taichung', 'from', 'to', observe)
-
-    expect(observe).toHaveBeenCalledTimes(1)
-    expect(observe).toHaveBeenCalledWith({
+    const expected = {
       city: 'Taichung',
       snapshotVersion: 'v1',
       reason: 'manifest_missing',
-    })
+    }
+
+    await getOneTransferRoutes(bindings, 'Taichung', 'from', 'to', observe)
+    await getOneTransferRoutes(bindings, 'Taichung', 'from', 'to', observe)
+
+    expect(observe).toHaveBeenCalledTimes(2)
+    expect(observe).toHaveBeenNthCalledWith(1, expected)
+    expect(observe).toHaveBeenNthCalledWith(2, expected)
   })
 
   it('reports transfer manifest transport failures as manifest_read_failed', async () => {
