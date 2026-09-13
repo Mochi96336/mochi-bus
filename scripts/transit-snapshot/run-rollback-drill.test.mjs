@@ -198,6 +198,52 @@ describe('snapshot rollback drill evidence helpers', () => {
     }
   })
 
+  it('fails on transient high-card mutation immediately after the first rollback even if recovery restores final evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'rollback-drill-high-card-race-'))
+    const reportPath = join(directory, 'report.json')
+    const changedAfterRollback = {
+      ...snapshot('previous-v1', 'active-v2'),
+      highCard: highCard({ globalStops: 11 }),
+    }
+    const snapshots = [
+      snapshot(),
+      changedAfterRollback,
+      snapshot('previous-v1', 'active-v2'),
+      snapshot(),
+    ]
+    const rollbackTargets = []
+    try {
+      await expect(runRollbackDrill({
+        reportPath,
+        captureAuthorityWindow: async () => authorityWindow(),
+        readSnapshot: async () => snapshots.shift(),
+        runRollback: async (targetVersion) => {
+          rollbackTargets.push(targetVersion ?? null)
+          if (targetVersion === undefined) {
+            return { outcome: 'rolled_back', activeVersion: 'previous-v1', previousVersion: 'active-v2' }
+          }
+          return { outcome: 'rolled_back', activeVersion: 'active-v2', previousVersion: 'previous-v1' }
+        },
+      })).rejects.toMatchObject({ code: 'high_card_rows_changed_after_rollback' })
+
+      expect(rollbackTargets).toEqual([null, 'active-v2'])
+      expect(snapshots).toHaveLength(0)
+      const report = JSON.parse(await readFile(reportPath, 'utf8'))
+      expect(report.errorCode).toBe('high_card_rows_changed_after_rollback')
+      expect(report.restoreRollback).toBeNull()
+      expect(report.recoveryRollback).toMatchObject({
+        outcome: 'rolled_back',
+        activeVersion: 'active-v2',
+        previousVersion: 'previous-v1',
+      })
+      expect(report.finalSnapshot.authority.activeVersion).toBe('active-v2')
+      expect(report.highCardUnchanged).toBe(true)
+      expect(report.outcome).toBe('error')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('requires a real active-to-previous swap and restoration to the original pair', () => {
     const evidence = {
       before: {
