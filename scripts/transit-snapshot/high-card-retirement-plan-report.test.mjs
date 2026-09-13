@@ -45,19 +45,58 @@ function schemaInventory(overrides = {}) {
   }
 }
 
+function authorityCount(mode) {
+  if (mode === 'legacy-d1') return 0
+  if (mode === 'legacy-partial') return 2
+  return 4
+}
+
+function authorityCity(city, {
+  activeMode = 'legacy-backfill',
+  previousMode = 'legacy-d1',
+} = {}) {
+  const rootBoundRollbackWindow = activeMode === 'root-bound' && previousMode === 'root-bound'
+  const nativeRootBoundPublicationsRequired = activeMode === 'root-bound'
+    ? (previousMode === 'root-bound' ? 0 : 1)
+    : 2
+  return {
+    city,
+    activeVersion: `${city}-active`,
+    previousVersion: `${city}-previous`,
+    activeAuthorityMode: activeMode,
+    previousAuthorityMode: previousMode,
+    rollbackTargetAuthorityMode: previousMode,
+    activeRoutingManifestCount: authorityCount(activeMode),
+    previousRoutingManifestCount: authorityCount(previousMode),
+    rootBoundRollbackWindow,
+    nativeRootBoundPublicationsRequired,
+  }
+}
+
+function blockingCity(city) {
+  return {
+    city: city.city,
+    activeVersion: city.activeVersion,
+    previousVersion: city.previousVersion,
+    activeAuthorityMode: city.activeAuthorityMode,
+    previousAuthorityMode: city.previousAuthorityMode,
+    activeRoutingManifestCount: city.activeRoutingManifestCount,
+    previousRoutingManifestCount: city.previousRoutingManifestCount,
+    nativeRootBoundPublicationsRequired: city.nativeRootBoundPublicationsRequired,
+  }
+}
+
 function authorityReadiness(overrides = {}) {
+  const cities = [authorityCity('Taichung'), authorityCity('Taipei')]
   return {
     schemaVersion: 2,
     kind: 'snapshot-high-card-d1-retirement-readiness',
     ...provenance({ generatedAt: '2026-09-13T14:23:05.000Z' }),
-    cityCount: 2,
+    cityCount: cities.length,
     rootBoundCityCount: 0,
     rootBoundAuthorityReady: false,
-    blockingCities: [{ city: 'Taichung' }, { city: 'Taipei' }],
-    cities: [
-      { city: 'Taichung', rootBoundRollbackWindow: false },
-      { city: 'Taipei', rootBoundRollbackWindow: false },
-    ],
+    blockingCities: cities.map(blockingCity),
+    cities,
     ...overrides,
   }
 }
