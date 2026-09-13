@@ -7,12 +7,12 @@ import { queryD1 } from './window-d1.mjs'
 export const HIGH_CARD_SCHEMA_INVENTORY_VERSION = 1
 const DEFAULT_REPORT_PATH = join('.transit-snapshot', 'high-card-retirement-schema-inventory.json')
 const TARGET_TABLES = Object.freeze(['pattern_stops', 'stops'])
-const EXPECTED_EXPLICIT_OBJECTS = new Set([
-  'pattern_stops',
-  'pattern_stops_place_idx',
-  'stops',
-  'stops_name_idx',
-  'stops_place_idx',
+const EXPECTED_EXPLICIT_OBJECTS = new Map([
+  ['pattern_stops', Object.freeze({ type: 'table', table: 'pattern_stops' })],
+  ['pattern_stops_place_idx', Object.freeze({ type: 'index', table: 'pattern_stops' })],
+  ['stops', Object.freeze({ type: 'table', table: 'stops' })],
+  ['stops_name_idx', Object.freeze({ type: 'index', table: 'stops' })],
+  ['stops_place_idx', Object.freeze({ type: 'index', table: 'stops' })],
 ])
 const ALLOWED_TYPES = new Set(['index', 'table', 'trigger', 'view'])
 const MAX_SCHEMA_ROWS = 256
@@ -36,7 +36,8 @@ export async function collectHighCardSchemaInventory({
 } = {}) {
   const rows = normalizeSchemaRows(await readSchema())
   const relevant = rows.filter((row) => isOwnedByTarget(row) || referencedTargets(row.sql).length > 0)
-  const ownedObjects = relevant.filter(isOwnedByTarget).map(publicObject)
+  const ownedRows = relevant.filter(isOwnedByTarget)
+  const ownedObjects = ownedRows.map(publicObject)
   const externalDependencies = relevant
     .filter((row) => !isOwnedByTarget(row) && referencedTargets(row.sql).length > 0)
     .map((row) => Object.freeze({ ...publicObject(row), references: Object.freeze(referencedTargets(row.sql)) }))
@@ -47,11 +48,11 @@ export async function collectHighCardSchemaInventory({
     : tablesPresent.length === 0 ? 'retired' : 'partial'
 
   const missingExpectedObjects = schemaState === 'legacy-present'
-    ? [...EXPECTED_EXPLICIT_OBJECTS].filter((name) => !ownedNames.has(name)).sort()
+    ? [...EXPECTED_EXPLICIT_OBJECTS.keys()].filter((name) => !ownedNames.has(name)).sort()
     : []
-  const unexpectedOwnedObjects = ownedObjects
+  const unexpectedOwnedObjects = ownedRows
     .filter((row) => !isExpectedOwnedObject(row))
-    .map(({ type, name, table }) => Object.freeze({ type, name, table }))
+    .map(publicObject)
 
   return Object.freeze({
     schemaVersion: HIGH_CARD_SCHEMA_INVENTORY_VERSION,
@@ -103,10 +104,12 @@ function isOwnedByTarget(row) {
 }
 
 function isExpectedOwnedObject(row) {
-  if (EXPECTED_EXPLICIT_OBJECTS.has(row.name)) return true
+  const expected = EXPECTED_EXPLICIT_OBJECTS.get(row.name)
+  if (expected) return row.type === expected.type && row.table === expected.table
   return row.type === 'index'
     && row.sql === null
-    && TARGET_TABLES.some((table) => row.table === table && row.name.startsWith(`sqlite_autoindex_${table}_`))
+    && TARGET_TABLES.includes(row.table)
+    && new RegExp(`^sqlite_autoindex_${row.table}_[1-9][0-9]*$`).test(row.name)
 }
 
 function publicObject(row) {
