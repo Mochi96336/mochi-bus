@@ -86,6 +86,21 @@ type TransferRoutingShard = {
   patterns: TransferRoutingPattern[]
 }
 
+export type TransferRoutingFallbackReason =
+  | 'manifest_missing'
+  | 'manifest_read_failed'
+  | 'routing_authority_incomplete'
+  | 'routing_authority_invalid'
+  | 'r2'
+
+export type TransferRoutingFallbackObservation = Readonly<{
+  city: string
+  snapshotVersion: string
+  reason: TransferRoutingFallbackReason
+}>
+
+export type TransferRoutingFallbackObserver = (observation: TransferRoutingFallbackObservation) => void
+
 function placeRoutingArtifactKey(version: string, city: string, placeId: string): string {
   return `snapshots/${version}/cities/${city}/routing/places/${placeId}.json`
 }
@@ -108,28 +123,79 @@ function hasSnapshotBindings(env: TransitBindings): boolean {
     && typeof bindings.TRANSIT_SHAPES.get === 'function')
 }
 
+function createFallbackReporter(
+  observer: TransferRoutingFallbackObserver | undefined,
+  city: string,
+  version: string,
+): (reason: TransferRoutingFallbackReason) => void {
+  let reported = false
+  return (reason) => {
+    if (reported || !observer) return
+    reported = true
+    try {
+      observer({ city, snapshotVersion: version, reason })
+    } catch {
+      // Observability must never make the compatibility fallback unavailable.
+    }
+  }
+}
+
+function preferredFallbackReason(
+  ...reasons: Array<TransferRoutingFallbackReason | null>
+): TransferRoutingFallbackReason | null {
+  for (const reason of [
+    'routing_authority_invalid',
+    'routing_authority_incomplete',
+    'r2',
+    'manifest_read_failed',
+    'manifest_missing',
+  ] as const) {
+    if (reasons.includes(reason)) return reason
+  }
+  return null
+}
+
 async function readTransferRoutingManifest(
   env: TransitBindings,
   city: string,
   version: string,
+  reportFallback: (reason: TransferRoutingFallbackReason) => void,
 ): Promise<TransferRoutingManifest | null> {
   const memoryKey = `transit/transfer-routing-export/${city}/${version}`
   const cached = memoryCacheGet<TransferRoutingManifest | 'missing'>(memoryKey)
-  if (cached) return cached === 'missing' ? null : cached
+  if (cached) {
+    if (cached === 'missing') reportFallback('manifest_missing')
+    return cached === 'missing' ? null : cached
+  }
 
+  let object: R2ObjectBody | null
   try {
-    const object = await env.TRANSIT_SHAPES.get(transferRoutingExportManifestKey(version, city))
-    if (!object) {
-      memoryCacheSet(memoryKey, 'missing', EXPORT_STATUS_TTL_SECONDS)
-      return null
-    }
-    const parsed = parseTransferRoutingManifest(await object.json<unknown>(), city, version)
-    if (parsed) memoryCacheSet(memoryKey, parsed, EXPORT_STATUS_TTL_SECONDS)
-    return parsed
+    object = await env.TRANSIT_SHAPES.get(transferRoutingExportManifestKey(version, city))
   } catch {
     // Migration reads must remain fail-soft. Transient R2 failures are not cached.
+    reportFallback('manifest_read_failed')
     return null
   }
+  if (!object) {
+    memoryCacheSet(memoryKey, 'missing', EXPORT_STATUS_TTL_SECONDS)
+    reportFallback('manifest_missing')
+    return null
+  }
+
+  let value: unknown
+  try {
+    value = await object.json<unknown>()
+  } catch (error) {
+    reportFallback(error instanceof SyntaxError ? 'routing_authority_invalid' : 'manifest_read_failed')
+    return null
+  }
+  const parsed = parseTransferRoutingManifest(value, city, version)
+  if (!parsed) {
+    reportFallback('routing_authority_invalid')
+    return null
+  }
+  memoryCacheSet(memoryKey, parsed, EXPORT_STATUS_TTL_SECONDS)
+  return parsed
 }
 
 function parseTransferRoutingManifest(
@@ -215,14 +281,30 @@ async function readPlaceRoutingArtifact(
   city: string,
   version: string,
   placeId: string,
+  reportFallback: (reason: TransferRoutingFallbackReason) => void,
 ): Promise<PlaceRoutingArtifact | null> {
+  let object: R2ObjectBody | null
   try {
-    const object = await env.TRANSIT_SHAPES.get(placeRoutingArtifactKey(version, city, placeId))
-    if (!object) return null
-    return parsePlaceRoutingArtifact(await object.json<unknown>(), city, version, placeId)
+    object = await env.TRANSIT_SHAPES.get(placeRoutingArtifactKey(version, city, placeId))
   } catch {
+    reportFallback('r2')
     return null
   }
+  if (!object) {
+    reportFallback('routing_authority_incomplete')
+    return null
+  }
+
+  let value: unknown
+  try {
+    value = await object.json<unknown>()
+  } catch (error) {
+    reportFallback(error instanceof SyntaxError ? 'routing_authority_invalid' : 'r2')
+    return null
+  }
+  const parsed = parsePlaceRoutingArtifact(value, city, version, placeId)
+  if (!parsed) reportFallback('routing_authority_invalid')
+  return parsed
 }
 
 function parsePlaceRoutingArtifact(
@@ -326,18 +408,54 @@ async function readTransferRoutingShard(
   version: string,
   manifest: TransferRoutingManifest,
   descriptor: TransferShardDescriptor,
+  reportFallback: (reason: TransferRoutingFallbackReason) => void,
 ): Promise<TransferRoutingShard | null> {
+  let object: R2ObjectBody | null
   try {
-    const object = await env.TRANSIT_SHAPES.get(descriptor.key)
-    if (!object) return null
-    const bytes = new Uint8Array(await object.arrayBuffer())
-    if (bytes.byteLength !== descriptor.bytes) return null
-    if (await sha256Hex(bytes) !== descriptor.sha256) return null
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown
-    return parseTransferRoutingShard(value, city, version, manifest, descriptor)
+    object = await env.TRANSIT_SHAPES.get(descriptor.key)
   } catch {
+    reportFallback('r2')
     return null
   }
+  if (!object) {
+    reportFallback('routing_authority_incomplete')
+    return null
+  }
+
+  let bytes: Uint8Array
+  try {
+    bytes = new Uint8Array(await object.arrayBuffer())
+  } catch {
+    reportFallback('r2')
+    return null
+  }
+  if (bytes.byteLength !== descriptor.bytes) {
+    reportFallback('routing_authority_invalid')
+    return null
+  }
+
+  let digest: string
+  try {
+    digest = await sha256Hex(bytes)
+  } catch {
+    reportFallback('r2')
+    return null
+  }
+  if (digest !== descriptor.sha256) {
+    reportFallback('routing_authority_invalid')
+    return null
+  }
+
+  let value: unknown
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes)) as unknown
+  } catch {
+    reportFallback('routing_authority_invalid')
+    return null
+  }
+  const parsed = parseTransferRoutingShard(value, city, version, manifest, descriptor)
+  if (!parsed) reportFallback('routing_authority_invalid')
+  return parsed
 }
 
 function parseTransferRoutingShard(
@@ -564,21 +682,33 @@ export async function getOneTransferRoutes(
   city: string,
   fromPlaceId: string,
   toPlaceId: string,
+  observeFallback?: TransferRoutingFallbackObserver,
 ): Promise<TransferPlanResult[]> {
   if (!hasSnapshotBindings(env)) return getOneTransferRoutesFromD1(env, city, fromPlaceId, toPlaceId)
 
   const version = await getActiveSnapshotVersion(env, city)
   if (!version || fromPlaceId === toPlaceId) return []
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
   const fallback = () => getOneTransferRoutesFromD1(env, city, fromPlaceId, toPlaceId)
 
-  const manifest = await readTransferRoutingManifest(env, city, version)
+  const manifest = await readTransferRoutingManifest(env, city, version, reportFallback)
   if (!manifest) return fallback()
 
+  let fromFallbackReason: TransferRoutingFallbackReason | null = null
+  let toFallbackReason: TransferRoutingFallbackReason | null = null
   const [fromArtifact, toArtifact] = await Promise.all([
-    readPlaceRoutingArtifact(env, city, version, fromPlaceId),
-    readPlaceRoutingArtifact(env, city, version, toPlaceId),
+    readPlaceRoutingArtifact(env, city, version, fromPlaceId, (reason) => {
+      fromFallbackReason ??= reason
+    }),
+    readPlaceRoutingArtifact(env, city, version, toPlaceId, (reason) => {
+      toFallbackReason ??= reason
+    }),
   ])
-  if (!fromArtifact || !toArtifact) return fallback()
+  if (!fromArtifact || !toArtifact) {
+    const reason = preferredFallbackReason(fromFallbackReason, toFallbackReason)
+    if (reason) reportFallback(reason)
+    return fallback()
+  }
 
   const fromOccurrences = groupOccurrences(fromArtifact.occurrences)
   const toOccurrences = groupOccurrences(toArtifact.occurrences)
@@ -586,24 +716,39 @@ export async function getOneTransferRoutes(
   const requiredShardIds = new Set<number>()
   for (const patternId of requiredPatternIds) {
     const shard = manifest.patternShards.get(patternId)
-    if (shard === undefined) return fallback()
+    if (shard === undefined) {
+      reportFallback('routing_authority_invalid')
+      return fallback()
+    }
     requiredShardIds.add(shard)
   }
 
   const descriptors: TransferShardDescriptor[] = []
   for (const shard of [...requiredShardIds].sort((left, right) => left - right)) {
     const descriptor = manifest.shards.get(shard)
-    if (!descriptor) return fallback()
+    if (!descriptor) {
+      reportFallback('routing_authority_invalid')
+      return fallback()
+    }
     descriptors.push(descriptor)
   }
-  const shards = await Promise.all(descriptors.map((descriptor) =>
-    readTransferRoutingShard(env, city, version, manifest, descriptor)))
-  if (shards.some((shard) => shard === null)) return fallback()
+
+  const shardFallbackReasons: Array<TransferRoutingFallbackReason | null> = descriptors.map(() => null)
+  const shards = await Promise.all(descriptors.map((descriptor, index) =>
+    readTransferRoutingShard(env, city, version, manifest, descriptor, (reason) => {
+      shardFallbackReasons[index] ??= reason
+    })))
+  if (shards.some((shard) => shard === null)) {
+    const reason = preferredFallbackReason(...shardFallbackReasons)
+    if (reason) reportFallback(reason)
+    return fallback()
+  }
 
   const patterns = new Map<string, TransferRoutingPattern>()
   for (const shard of shards as TransferRoutingShard[]) {
     for (const pattern of shard.patterns) {
       if (manifest.patternShards.get(pattern.patternId) !== shard.shard || patterns.has(pattern.patternId)) {
+        reportFallback('routing_authority_invalid')
         return fallback()
       }
       patterns.set(pattern.patternId, pattern)
@@ -614,7 +759,10 @@ export async function getOneTransferRoutes(
   const toPatternById = new Map(toArtifact.patterns.map((pattern) => [pattern.patternId, pattern]))
   for (const patternId of requiredPatternIds) {
     const shardPattern = patterns.get(patternId)
-    if (!shardPattern) return fallback()
+    if (!shardPattern) {
+      reportFallback('routing_authority_invalid')
+      return fallback()
+    }
     const fromPattern = fromPatternById.get(patternId)
     const toPattern = toPatternById.get(patternId)
     const fromPatternOccurrences = fromOccurrences.get(patternId)
@@ -624,7 +772,10 @@ export async function getOneTransferRoutes(
       || !sameEndpointSequences(fromPlaceId, fromPatternOccurrences, shardPattern)))
       || (toPattern && (!samePatternMetadata(toPattern, shardPattern)
         || !toPatternOccurrences
-        || !sameEndpointSequences(toPlaceId, toPatternOccurrences, shardPattern)))) return fallback()
+        || !sameEndpointSequences(toPlaceId, toPatternOccurrences, shardPattern)))) {
+      reportFallback('routing_authority_invalid')
+      return fallback()
+    }
   }
 
   return pairTransferLegs(
