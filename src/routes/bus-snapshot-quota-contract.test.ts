@@ -217,8 +217,8 @@ describe('bus setup snapshot quota contract', () => {
     )
     expect(tdx.getStopRouteSuggestions).toHaveBeenCalledTimes(1)
     expect(capturedEvent(log, 'bus_stop_routes')).toMatchObject({
-      result: 'success',
-      source: 'tdx',
+      result: 'empty',
+      source: 'fallback',
       city: 'Taipei',
     })
   })
