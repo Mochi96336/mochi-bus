@@ -61,7 +61,7 @@ function database() {
       } as D1PreparedStatement
       return statement
     },
-  } as D1Database
+  } as unknown as D1Database
   return db
 }
 
