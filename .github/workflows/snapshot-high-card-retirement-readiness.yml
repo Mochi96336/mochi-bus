@@ -13,6 +13,10 @@ on:
       - 'scripts/transit-snapshot/high-card-retirement-readiness.test.mjs'
       - 'scripts/transit-snapshot/high-card-retirement-schema-inventory.mjs'
       - 'scripts/transit-snapshot/high-card-retirement-schema-inventory.test.mjs'
+      - 'scripts/transit-snapshot/high-card-retirement-plan.mjs'
+      - 'scripts/transit-snapshot/high-card-retirement-plan.test.mjs'
+      - 'scripts/transit-snapshot/high-card-retirement-plan-report.mjs'
+      - 'scripts/transit-snapshot/high-card-retirement-plan-report.test.mjs'
 
 concurrency:
   group: snapshot-high-card-retirement-readiness
@@ -56,6 +60,13 @@ jobs:
           TRANSIT_R2_BUCKET_NAME: ${{ steps.operation.outputs.r2_bucket_name }}
           SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT: .transit-snapshot/high-card-retirement-readiness.json
         run: node scripts/transit-snapshot/high-card-retirement-readiness.mjs
+      - name: Build same-run non-destructive retirement plan
+        if: steps.operation.outputs.enabled == 'true'
+        env:
+          SNAPSHOT_HIGH_CARD_SCHEMA_INVENTORY_REPORT: .transit-snapshot/high-card-retirement-schema-inventory.json
+          SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT: .transit-snapshot/high-card-retirement-readiness.json
+          SNAPSHOT_HIGH_CARD_RETIREMENT_PLAN_REPORT: .transit-snapshot/high-card-retirement-plan.json
+        run: node scripts/transit-snapshot/high-card-retirement-plan-report.mjs
       - name: Upload retirement readiness evidence
         if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
         uses: actions/upload-artifact@v4
@@ -64,5 +75,6 @@ jobs:
           path: |
             .transit-snapshot/high-card-retirement-readiness.json
             .transit-snapshot/high-card-retirement-schema-inventory.json
+            .transit-snapshot/high-card-retirement-plan.json
           if-no-files-found: warn
           retention-days: 14
