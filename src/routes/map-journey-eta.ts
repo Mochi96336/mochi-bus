@@ -175,6 +175,6 @@ function strongerTDXWarning(current: TDXWarning | undefined, next: TDXWarning | 
     'tdx-rate-limit': 2,
     'tdx-quota': 3,
   }
-  if (!next || (current && priority[current] >= priority[next]) return current
+  if (!next || (current && priority[current] >= priority[next])) return current
   return next
 }
