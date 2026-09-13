@@ -19,6 +19,15 @@ async function captureError(promise) {
   throw new Error('Expected promise to reject')
 }
 
+function streamedResponse(byteLength) {
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(byteLength))
+      controller.close()
+    },
+  }))
+}
+
 describe('public probe bounded response diagnostics', () => {
   it.each([
     [3 * MIB, 'gt_limit_to_2x'],
@@ -37,19 +46,30 @@ describe('public probe bounded response diagnostics', () => {
     expect(JSON.stringify(publicProbeBodyLimitDetail(error))).not.toContain(String(declaredLength))
   })
 
-  it('marks streamed overflow as unknown total instead of underestimating the body', async () => {
-    const body = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('12345'))
-        controller.close()
-      },
-    })
-    const error = await captureError(readPublicProbeJson(new Response(body), 4))
+  it.each([
+    [5, 'gt_limit_to_2x'],
+    [9, 'gt_2x_to_4x'],
+    [17, 'gt_4x'],
+  ])('buckets streamed response sizes without retaining bytes above the read limit (%s)', async (byteLength, responseSizeBucket) => {
+    const error = await captureError(readPublicProbeJson(streamedResponse(byteLength), 4))
 
+    expect(error.message).toBe('Bounded response is too large')
     expect(publicProbeBodyLimitDetail(error)).toEqual({
       responseSizeSource: 'stream',
-      responseSizeBucket: 'over_limit_unknown_total',
+      responseSizeBucket,
     })
+    expect(JSON.stringify(publicProbeBodyLimitDetail(error))).not.toContain(String(byteLength))
+  })
+
+  it('keeps successful streamed JSON reads unchanged while the diagnostic branch is consumed concurrently', async () => {
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"ok":true}'))
+        controller.close()
+      },
+    }))
+
+    await expect(readPublicProbeJson(response, 1024)).resolves.toEqual({ ok: true })
   })
 
   it('does not relabel non-body-limit failures', async () => {
