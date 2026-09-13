@@ -44,6 +44,21 @@ type PlaceRoutingArtifact = {
   occurrences: PlaceRoutingOccurrence[]
 }
 
+export type PlaceRoutingFallbackReason =
+  | 'manifest_missing'
+  | 'manifest_read_failed'
+  | 'routing_authority_incomplete'
+  | 'routing_authority_invalid'
+  | 'r2'
+
+export type PlaceRoutingFallbackObservation = Readonly<{
+  city: string
+  snapshotVersion: string
+  reason: PlaceRoutingFallbackReason
+}>
+
+export type PlaceRoutingFallbackObserver = (observation: PlaceRoutingFallbackObservation) => void
+
 export type StopPlaceRoute = {
   routeUid: string
   routeName: string
@@ -83,22 +98,58 @@ function hasSnapshotBindings(env: TransitBindings): boolean {
     && typeof bindings.TRANSIT_SHAPES.get === 'function')
 }
 
+function createFallbackReporter(
+  observer: PlaceRoutingFallbackObserver | undefined,
+  city: string,
+  version: string,
+): (reason: PlaceRoutingFallbackReason) => void {
+  let reported = false
+  return (reason) => {
+    if (reported || !observer) return
+    reported = true
+    try {
+      observer({ city, snapshotVersion: version, reason })
+    } catch {
+      // Observability must never make the compatibility fallback unavailable.
+    }
+  }
+}
+
+function preferredArtifactFallbackReason(
+  ...reasons: Array<PlaceRoutingFallbackReason | null>
+): PlaceRoutingFallbackReason | null {
+  for (const reason of [
+    'routing_authority_invalid',
+    'routing_authority_incomplete',
+    'r2',
+  ] as const) {
+    if (reasons.includes(reason)) return reason
+  }
+  return null
+}
+
 async function hasPlaceRoutingExport(
   env: TransitBindings,
   city: string,
   version: string,
+  reportFallback: (reason: PlaceRoutingFallbackReason) => void,
 ): Promise<boolean> {
   const memoryKey = `transit/place-routing-export/${city}/${version}`
   const cached = memoryCacheGet<'ready' | 'missing'>(memoryKey)
-  if (cached) return cached === 'ready'
+  if (cached) {
+    if (cached === 'missing') reportFallback('manifest_missing')
+    return cached === 'ready'
+  }
 
   try {
     const manifest = await env.TRANSIT_SHAPES.head(placeRoutingExportManifestKey(version, city))
     const state = manifest ? 'ready' : 'missing'
     memoryCacheSet(memoryKey, state, EXPORT_STATUS_TTL_SECONDS)
+    if (state === 'missing') reportFallback('manifest_missing')
     return state === 'ready'
   } catch {
     // Migration reads must remain fail-soft. Do not cache transient R2 errors.
+    reportFallback('manifest_read_failed')
     return false
   }
 }
@@ -108,14 +159,31 @@ async function readPlaceRoutingArtifact(
   city: string,
   version: string,
   placeId: string,
+  reportFallback: (reason: PlaceRoutingFallbackReason) => void,
 ): Promise<PlaceRoutingArtifact | null> {
+  let object: R2ObjectBody | null
   try {
-    const object = await env.TRANSIT_SHAPES.get(placeRoutingArtifactKey(version, city, placeId))
-    if (!object) return null
-    return parsePlaceRoutingArtifact(await object.json<unknown>(), city, version, placeId)
+    object = await env.TRANSIT_SHAPES.get(placeRoutingArtifactKey(version, city, placeId))
   } catch {
+    reportFallback('r2')
     return null
   }
+  if (!object) {
+    reportFallback('routing_authority_incomplete')
+    return null
+  }
+
+  let value: unknown
+  try {
+    value = await object.json<unknown>()
+  } catch (error) {
+    reportFallback(error instanceof SyntaxError ? 'routing_authority_invalid' : 'r2')
+    return null
+  }
+
+  const parsed = parsePlaceRoutingArtifact(value, city, version, placeId)
+  if (!parsed) reportFallback('routing_authority_invalid')
+  return parsed
 }
 
 function parsePlaceRoutingArtifact(
@@ -263,6 +331,7 @@ export async function getStopPlaceRoutes(
   env: TransitBindings,
   city: string,
   placeId: string,
+  observeFallback?: PlaceRoutingFallbackObserver,
 ): Promise<StopPlaceRoute[]> {
   // Route unit tests and non-snapshot callers can supply partial bindings. Keep
   // those paths on the existing implementation instead of making migration
@@ -271,12 +340,12 @@ export async function getStopPlaceRoutes(
 
   const version = await getActiveSnapshotVersion(env, city)
   if (!version) return []
-  if (!await hasPlaceRoutingExport(env, city, version)) {
-    return getStopPlaceRoutesFromD1(env, city, placeId)
-  }
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
+  const fallback = () => getStopPlaceRoutesFromD1(env, city, placeId)
+  if (!await hasPlaceRoutingExport(env, city, version, reportFallback)) return fallback()
 
-  const artifact = await readPlaceRoutingArtifact(env, city, version, placeId)
-  if (!artifact) return getStopPlaceRoutesFromD1(env, city, placeId)
+  const artifact = await readPlaceRoutingArtifact(env, city, version, placeId, reportFallback)
+  if (!artifact) return fallback()
 
   const patternById = new Map(artifact.patterns.map((pattern) => [pattern.patternId, pattern]))
   return artifact.occurrences.map((occurrence): StopPlaceRoute => {
@@ -308,21 +377,30 @@ export async function getDirectRoutes(
   city: string,
   fromPlaceId: string,
   toPlaceId: string,
+  observeFallback?: PlaceRoutingFallbackObserver,
 ): Promise<DirectRoute[]> {
   if (!hasSnapshotBindings(env)) return getDirectRoutesFromD1(env, city, fromPlaceId, toPlaceId)
 
   const version = await getActiveSnapshotVersion(env, city)
   if (!version || fromPlaceId === toPlaceId) return []
-  if (!await hasPlaceRoutingExport(env, city, version)) {
-    return getDirectRoutesFromD1(env, city, fromPlaceId, toPlaceId)
-  }
+  const reportFallback = createFallbackReporter(observeFallback, city, version)
+  const fallback = () => getDirectRoutesFromD1(env, city, fromPlaceId, toPlaceId)
+  if (!await hasPlaceRoutingExport(env, city, version, reportFallback)) return fallback()
 
+  let fromFallbackReason: PlaceRoutingFallbackReason | null = null
+  let toFallbackReason: PlaceRoutingFallbackReason | null = null
   const [fromArtifact, toArtifact] = await Promise.all([
-    readPlaceRoutingArtifact(env, city, version, fromPlaceId),
-    readPlaceRoutingArtifact(env, city, version, toPlaceId),
+    readPlaceRoutingArtifact(env, city, version, fromPlaceId, (reason) => {
+      fromFallbackReason ??= reason
+    }),
+    readPlaceRoutingArtifact(env, city, version, toPlaceId, (reason) => {
+      toFallbackReason ??= reason
+    }),
   ])
   if (!fromArtifact || !toArtifact) {
-    return getDirectRoutesFromD1(env, city, fromPlaceId, toPlaceId)
+    const reason = preferredArtifactFallbackReason(fromFallbackReason, toFallbackReason)
+    if (reason) reportFallback(reason)
+    return fallback()
   }
 
   const fromPatterns = new Map(fromArtifact.patterns.map((pattern) => [pattern.patternId, pattern]))
@@ -330,7 +408,8 @@ export async function getDirectRoutes(
   for (const [patternId, fromPattern] of fromPatterns) {
     const toPattern = toPatterns.get(patternId)
     if (toPattern && !samePatternMetadata(fromPattern, toPattern)) {
-      return getDirectRoutesFromD1(env, city, fromPlaceId, toPlaceId)
+      reportFallback('routing_authority_invalid')
+      return fallback()
     }
   }
 
