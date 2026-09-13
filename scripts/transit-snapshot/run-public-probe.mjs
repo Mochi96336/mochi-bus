@@ -2,8 +2,12 @@ import { appendFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
-import { classifyProbeRequestFailure, readBoundedResponseJson } from './active-probe.mjs'
+import { classifyProbeRequestFailure } from './active-probe.mjs'
 import { resolvePublicProbeBaseUrl } from './public-probe-origin.mjs'
+import {
+  publicProbeBodyLimitDetail,
+  readPublicProbeJson,
+} from './public-probe-response.mjs'
 import { enabledSnapshotCitiesInScheduleOrder, taipeiDate, validDateOnly } from './snapshot-schedule.mjs'
 import {
   createPublicProbeEvent,
@@ -181,7 +185,7 @@ async function readCityReference(store, city, probeDate) {
 export function createRouteSampleObserver({ publicApi, city, sample }) {
   let expectedStopUid = null
   let stage = validRouteSample(sample) ? 'route_fetch_pending' : 'reference_sample_invalid'
-  let requestFailureReason = null
+  let requestFailureDetail = null
 
   const observedApi = Object.freeze({
     async getJson(path) {
@@ -190,11 +194,11 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
           const response = await publicApi.getJson(path)
           const observed = classifyRouteSampleResponse(response, sample)
           expectedStopUid = observed.expectedStopUid
-          requestFailureReason = null
+          requestFailureDetail = null
           stage = observed.stage
           return response
         } catch (error) {
-          requestFailureReason = classifyPublicProbeRequestFailure(error)
+          requestFailureDetail = classifyPublicProbeRequestFailureDetail(error)
           stage = 'route_fetch_failed'
           throw error
         }
@@ -202,13 +206,13 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
       if (path.startsWith('/api/v1/map/stop-place?')) {
         try {
           const response = await publicApi.getJson(path)
-          requestFailureReason = null
+          requestFailureDetail = null
           stage = validObservedStopPlace(response, city, expectedStopUid)
             ? 'complete'
             : 'stop_place_invalid'
           return response
         } catch (error) {
-          requestFailureReason = classifyPublicProbeRequestFailure(error)
+          requestFailureDetail = classifyPublicProbeRequestFailureDetail(error)
           stage = 'stop_place_fetch_failed'
           throw error
         }
@@ -233,7 +237,7 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
         sampleCaseId,
         stage: observedStage,
         ...((observedStage === 'route_fetch_failed' || observedStage === 'stop_place_fetch_failed')
-          ? { requestFailureReason: requestFailureReason ?? 'unknown' }
+          ? (requestFailureDetail ?? { requestFailureReason: 'unknown' })
           : {}),
       })
     },
@@ -243,6 +247,17 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
 export function classifyPublicProbeRequestFailure(error) {
   if (error instanceof PublicApiError) return 'http_error'
   return classifyProbeRequestFailure(error)
+}
+
+export function classifyPublicProbeRequestFailureDetail(error) {
+  const requestFailureReason = classifyPublicProbeRequestFailure(error)
+  const responseSizeDetail = requestFailureReason === 'body_limit'
+    ? publicProbeBodyLimitDetail(error)
+    : null
+  return Object.freeze({
+    requestFailureReason,
+    ...(responseSizeDetail ?? {}),
+  })
 }
 
 function classifyRouteSampleResponse(route, sample) {
@@ -320,10 +335,10 @@ export function createPublicApiAdapter({
 
   return Object.freeze({
     async getJson(path) {
-      return await readBoundedResponseJson(await request(path), 2 * 1024 * 1024)
+      return await readPublicProbeJson(await request(path), 2 * 1024 * 1024)
     },
     async postJson(path, body) {
-      return await readBoundedResponseJson(await request(path, {
+      return await readPublicProbeJson(await request(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
