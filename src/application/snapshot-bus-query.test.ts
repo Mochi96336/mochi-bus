@@ -73,7 +73,12 @@ describe('snapshot bus query resolution', () => {
       'STOP-2',
       reportStopLookupFallback,
     )
-    expect(getStopPlaceRoutes).toHaveBeenCalledWith(snapshot, 'Taipei', 'PLACE-1')
+    expect(getStopPlaceRoutes).toHaveBeenCalledWith(
+      snapshot,
+      'Taipei',
+      'PLACE-1',
+      reportStopLookupFallback,
+    )
     expect(resolveBusQuery).not.toHaveBeenCalled()
   })
 
