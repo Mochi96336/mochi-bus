@@ -115,7 +115,12 @@ describe('Map Place lookup handlers', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=86400')
     await expect(response.json()).resolves.toEqual({ schemaVersion: 3, city: 'Taipei', routes })
-    expect(placeRoutingRepository.getStopPlaceRoutes).toHaveBeenCalledWith(bindings, 'Taipei', 'PLACE1')
+    expect(placeRoutingRepository.getStopPlaceRoutes).toHaveBeenCalledWith(
+      bindings,
+      'Taipei',
+      'PLACE1',
+      expect.any(Function),
+    )
   })
 
   it('preserves Place detail success and not-found responses on low-cardinality D1', async () => {

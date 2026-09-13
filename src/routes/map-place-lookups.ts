@@ -59,7 +59,11 @@ export async function readPlaceRoutes(c: Context<MapEnv>) {
     const city = c.req.query('city')?.trim()
     if (!city || !supportedCityCodes.has(city)) throw new QueryValidationError('請選擇城市')
     const placeId = requiredQueryString(c.req.param('placeId'), '站牌識別碼', 100)
-    const routes = await getStopPlaceRoutes(c.env, city, placeId)
+    const reportFallback = createSnapshotFallbackReporter({
+      operation: 'map_place_routes',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
+    const routes = await getStopPlaceRoutes(c.env, city, placeId, reportFallback)
     return c.json({ schemaVersion: 3, city, routes }, 200, {
       'Cache-Control': 'public, max-age=86400',
     })

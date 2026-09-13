@@ -30,6 +30,7 @@ import {
   type TDXWarning,
 } from '../lib/tdx'
 import { placeArrivalsOutcome } from '../observability/map-api-outcomes'
+import { createSnapshotFallbackReporter } from '../observability/snapshot-fallback'
 import {
   beginMapOperation,
   completeMapError,
@@ -132,6 +133,10 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
       ? await getPinnedStopPlaceBundle(env, city, placeId, requestedVersion)
       : await getStopPlaceBundle(env, city, placeId)
     const now = new Date()
+    const reportFallback = createSnapshotFallbackReporter({
+      operation: 'map_place_arrivals',
+      versionMetadata: c.env.CF_VERSION_METADATA,
+    })
     const scheduledRoutes = bundle ? bundle.routes.map(({ schedules, ...route }) => ({
       ...route,
       ...scheduleFields(schedules, {
@@ -140,7 +145,7 @@ export async function readPlaceArrivals(c: Context<MapEnv>) {
         subRouteUid: route.subRouteUid,
       }, now),
     })) : requestedVersion ? [] : await (async () => {
-      const routes = await getStopPlaceRoutes(env, city, placeId)
+      const routes = await getStopPlaceRoutes(env, city, placeId, reportFallback)
       const routeNames = [...new Set(routes.map((route) => route.routeName))]
       const schedulesByRoute = new Map((await Promise.all(routeNames.map(async (routeName) => [
         routeName,

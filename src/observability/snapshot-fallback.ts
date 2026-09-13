@@ -22,7 +22,12 @@ export type SnapshotFallbackFailureClass = typeof snapshotFallbackFailureClasses
 
 export type SnapshotFallbackOperation = Extract<
   TelemetryOperation,
-  'map_search' | 'map_stop_place' | 'bus_stop_routes'
+  | 'map_search'
+  | 'map_stop_place'
+  | 'map_place_routes'
+  | 'map_place_arrivals'
+  | 'map_direct'
+  | 'bus_stop_routes'
 >
 
 export type SnapshotFallbackObservation = Readonly<{
@@ -43,7 +48,7 @@ const failureClasses = new Set<string>(snapshotFallbackFailureClasses)
 /**
  * Request-scoped reporter for an internal snapshot -> compatibility fallback.
  *
- * A single request may try the same StopUID lookup more than once while moving
+ * A single request may try the same routing lookup more than once while moving
  * through snapshot-first and legacy compatibility paths. Emit at most one event
  * per reporter so telemetry measures affected requests rather than internal
  * retry/invocation count. Organic traffic uses the same 10% sampling boundary
