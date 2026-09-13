@@ -2,7 +2,7 @@ import { appendFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { loadOperationalResources } from '../instance/operational-resources.mjs'
 import { loadOperationsPlan } from '../instance/operations-plan.mjs'
-import { readBoundedResponseJson } from './active-probe.mjs'
+import { classifyProbeRequestFailure, readBoundedResponseJson } from './active-probe.mjs'
 import { resolvePublicProbeBaseUrl } from './public-probe-origin.mjs'
 import { enabledSnapshotCitiesInScheduleOrder, taipeiDate, validDateOnly } from './snapshot-schedule.mjs'
 import {
@@ -177,10 +177,11 @@ async function readCityReference(store, city, probeDate) {
 
 // Observe the existing request/response chain without adding network reads or
 // changing probe health semantics. When the core probe returns the intentionally
-// broad route_sample_failed class, this records only a bounded phase label.
+// broad route_sample_failed class, this records only bounded phase/failure labels.
 export function createRouteSampleObserver({ publicApi, city, sample }) {
   let expectedStopUid = null
   let stage = validRouteSample(sample) ? 'route_fetch_pending' : 'reference_sample_invalid'
+  let requestFailureReason = null
 
   const observedApi = Object.freeze({
     async getJson(path) {
@@ -189,9 +190,11 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
           const response = await publicApi.getJson(path)
           const observed = classifyRouteSampleResponse(response, sample)
           expectedStopUid = observed.expectedStopUid
+          requestFailureReason = null
           stage = observed.stage
           return response
         } catch (error) {
+          requestFailureReason = classifyPublicProbeRequestFailure(error)
           stage = 'route_fetch_failed'
           throw error
         }
@@ -199,11 +202,13 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
       if (path.startsWith('/api/v1/map/stop-place?')) {
         try {
           const response = await publicApi.getJson(path)
+          requestFailureReason = null
           stage = validObservedStopPlace(response, city, expectedStopUid)
             ? 'complete'
             : 'stop_place_invalid'
           return response
         } catch (error) {
+          requestFailureReason = classifyPublicProbeRequestFailure(error)
           stage = 'stop_place_fetch_failed'
           throw error
         }
@@ -221,14 +226,23 @@ export function createRouteSampleObserver({ publicApi, city, sample }) {
   return Object.freeze({
     publicApi: observedApi,
     detail(sampleCaseId) {
+      const observedStage = ROUTE_SAMPLE_DETAIL_STAGES.has(stage) ? stage : 'route_fetch_pending'
       return Object.freeze({
         message: 'public_probe_route_sample_detail',
         city,
         sampleCaseId,
-        stage: ROUTE_SAMPLE_DETAIL_STAGES.has(stage) ? stage : 'route_fetch_pending',
+        stage: observedStage,
+        ...((observedStage === 'route_fetch_failed' || observedStage === 'stop_place_fetch_failed')
+          ? { requestFailureReason: requestFailureReason ?? 'unknown' }
+          : {}),
       })
     },
   })
+}
+
+export function classifyPublicProbeRequestFailure(error) {
+  if (error instanceof PublicApiError) return 'http_error'
+  return classifyProbeRequestFailure(error)
 }
 
 function classifyRouteSampleResponse(route, sample) {
