@@ -259,6 +259,7 @@ jobs:
           fi
       - name: Build scheduled D1 write evidence
         if: always() && github.event_name == 'schedule' && steps.operation.outputs.enabled == 'true'
+        continue-on-error: true
         env:
           SNAPSHOT_D1_WRITE_BUDGET: '75000'
         run: >-
@@ -268,6 +269,7 @@ jobs:
           snapshot-scheduled-d1-write-evidence.json
       - name: Upload scheduled D1 write evidence
         if: always() && github.event_name == 'schedule' && steps.operation.outputs.enabled == 'true'
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: snapshot-scheduled-d1-write-${{ github.run_id }}-${{ github.run_attempt }}
