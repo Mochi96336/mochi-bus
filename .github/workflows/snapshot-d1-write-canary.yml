@@ -116,7 +116,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 9
-      - name: Enforce publisher result
+      - name: Enforce publisher and acceptance result
         if: always()
         shell: bash
         env:
@@ -125,6 +125,7 @@ jobs:
           set -euo pipefail
           test "${PUBLISHER_STATUS}" = '0'
           test -s snapshot-d1-write-evidence.json
+          node scripts/transit-snapshot/assert-d1-write-canary-acceptance.mjs snapshot-d1-write-evidence.json
       - name: Cleanup canary workspace
         if: always()
         run: rm -rf .transit-snapshot snapshot-d1-write-canary.log snapshot-d1-write-evidence.json snapshot-d1-write-telemetry.jsonl
