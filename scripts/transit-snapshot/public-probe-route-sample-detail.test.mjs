@@ -156,6 +156,27 @@ describe('public probe route-sample detail', () => {
     }
   })
 
+  it('adds only bounded status-class detail for public HTTP failures', async () => {
+    const cases = [
+      [new PublicApiError(503), '5xx', false],
+      [new PublicApiError(429), '4xx', true],
+      [new PublicApiError(404), '4xx', false],
+    ]
+
+    for (const [routeError, httpStatusClass, rateLimited] of cases) {
+      const { routeSampleDetailEmitter } = await runFailure(api({ routeError }))
+      expect(routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'route_fetch_failed',
+        requestFailureReason: 'http_error',
+        httpStatusClass,
+        rateLimited,
+      }))
+      const emitted = routeSampleDetailEmitter.mock.calls[0][0]
+      expect(emitted).not.toHaveProperty('status')
+      expect(JSON.stringify(emitted)).not.toContain(routeError.message)
+    }
+  })
+
   it('distinguishes invalid route stops from an invalid stop-place response', async () => {
     const invalidStops = api({
       route: {
