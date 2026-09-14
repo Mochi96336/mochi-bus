@@ -53,7 +53,7 @@
     "snapshot:city": "node --import ./scripts/transit-snapshot/install-publisher-r2-preflight.mjs --import ./scripts/transit-snapshot/install-snapshot-tdx-token-file.mjs scripts/sync-transit-snapshot.mjs",
     "snapshot:window": "node --import ./scripts/transit-snapshot/install-publisher-r2-preflight.mjs --import ./scripts/transit-snapshot/install-snapshot-tdx-token-file.mjs --import ./scripts/transit-snapshot/install-intercity-fetch-cache.mjs scripts/transit-snapshot/run-snapshot-window.mjs",
     "snapshot:watchdog": "node scripts/transit-snapshot/run-window-watchdog.mjs",
-    "snapshot:public-probe": "node scripts/transit-snapshot/run-public-probe.mjs",
+    "snapshot:public-probe": "node scripts/transit-snapshot/run-public-probe-route-window.mjs",
     "snapshot:repair-legacy-previous": "node scripts/transit-snapshot/repair-legacy-previous.mjs",
     "snapshot:rollback": "node scripts/transit-snapshot/rollback.mjs",
     "snapshot:reconcile": "node scripts/transit-snapshot/rollback.mjs reconcile",
