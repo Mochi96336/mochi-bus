@@ -8,6 +8,9 @@ import {
 } from './snapshot-repository'
 
 const EXPORT_STATUS_TTL_SECONDS = 60
+// Keep route-name fan-out below the Workers per-invocation outgoing connection
+// ceiling and leave headroom for other bindings used by the same request.
+const ROUTE_R2_READ_CONCURRENCY = 4
 
 type PatternRow = {
   pattern_id: string
@@ -107,6 +110,24 @@ function preferredFallbackReason(
     if (reasons.includes(reason)) return reason
   }
   return null
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, concurrency), values.length)
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await mapper(values[index], index)
+    }
+  }))
+  return results
 }
 
 async function hasPatternStopExport(
@@ -223,8 +244,11 @@ export async function getSnapshotRouteVariants(
   `).bind(version, city, routeName).all<PatternRow>()
   if (!patterns.results.length) return []
 
-  const stopResults = await Promise.all(patterns.results.map((pattern) =>
-    readPatternStops(env, city, version, pattern.pattern_id)))
+  const stopResults = await mapWithConcurrency(
+    patterns.results,
+    ROUTE_R2_READ_CONCURRENCY,
+    (pattern) => readPatternStops(env, city, version, pattern.pattern_id),
+  )
   const fallbackReason = preferredFallbackReason(...stopResults.map((result) => result.reason))
   if (fallbackReason) {
     reportFallback(fallbackReason)
@@ -232,10 +256,14 @@ export async function getSnapshotRouteVariants(
   }
   const stopSets = stopResults.map((result) => result.stops)
 
-  const shapes = await Promise.all(patterns.results.map(async (pattern) => {
-    const object = await env.TRANSIT_SHAPES.get(pattern.shape_key)
-    return object ? await object.json<ShapeFeature>() : null
-  }))
+  const shapes = await mapWithConcurrency(
+    patterns.results,
+    ROUTE_R2_READ_CONCURRENCY,
+    async (pattern) => {
+      const object = await env.TRANSIT_SHAPES.get(pattern.shape_key)
+      return object ? await object.json<ShapeFeature>() : null
+    },
+  )
 
   const variants: RouteMapVariant[] = []
   for (let index = 0; index < patterns.results.length; index += 1) {
