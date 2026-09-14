@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
-import { PublicApiError, runPublicProbe } from './run-public-probe.mjs'
+import {
+  classifyPublicProbeRequestFailureDetail,
+  PublicApiError,
+  runPublicProbe,
+} from './run-public-probe.mjs'
 
 const probeDate = '2026-09-13'
 
@@ -156,24 +160,22 @@ describe('public probe route-sample detail', () => {
     }
   })
 
-  it('adds only bounded status-class detail for public HTTP failures', async () => {
+  it('adds only bounded status-class detail for public HTTP failures', () => {
     const cases = [
       [new PublicApiError(503), '5xx', false],
       [new PublicApiError(429), '4xx', true],
       [new PublicApiError(404), '4xx', false],
     ]
 
-    for (const [routeError, httpStatusClass, rateLimited] of cases) {
-      const { routeSampleDetailEmitter } = await runFailure(api({ routeError }))
-      expect(routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
-        stage: 'route_fetch_failed',
+    for (const [error, httpStatusClass, rateLimited] of cases) {
+      const detail = classifyPublicProbeRequestFailureDetail(error)
+      expect(detail).toEqual({
         requestFailureReason: 'http_error',
         httpStatusClass,
         rateLimited,
-      }))
-      const emitted = routeSampleDetailEmitter.mock.calls[0][0]
-      expect(emitted).not.toHaveProperty('status')
-      expect(JSON.stringify(emitted)).not.toContain(routeError.message)
+      })
+      expect(detail).not.toHaveProperty('status')
+      expect(JSON.stringify(detail)).not.toContain(error.message)
     }
   })
 
