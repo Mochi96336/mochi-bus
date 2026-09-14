@@ -42,4 +42,8 @@ describe('public probe push release gate workflow', () => {
     expect(workflow).toContain("- 'src/infrastructure/transit/snapshot-pattern-stop-repository.ts'")
     expect(workflow).toContain("- 'src/infrastructure/transit/snapshot-repository.ts'")
   })
+
+  it('re-runs when the public route response handler changes', () => {
+    expect(workflow).toContain("- 'src/routes/map-route-reads.ts'")
+  })
 })

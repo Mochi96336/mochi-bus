@@ -2,6 +2,8 @@ import type { Context } from 'hono'
 import { supportedCityCodes } from '../config'
 import { QueryValidationError } from '../domain/bus-query'
 import type { RouteMapVariant } from '../domain/map/map-model'
+import type { LonLat } from '../domain/map/network-pick'
+import { simplifyLine } from '../domain/map/simplify'
 import { buildRouteTimetable } from '../domain/map/timetable'
 import { getRouteMapVariants } from '../infrastructure/tdx/map'
 import {
@@ -28,6 +30,8 @@ import {
   requestedProbeSnapshotVersion,
   type RequestedProbeRouteIdentity,
 } from './snapshot-probe-read'
+
+const ROUTE_DETAIL_LOD_TOLERANCE_METERS = 8
 
 type RouteVariantSource = 'snapshot' | 'tdx'
 
@@ -90,6 +94,24 @@ function selectRouteVariant(
     && (!selector.subRouteUid || candidate.subRouteUid === selector.subRouteUid))
 }
 
+function simplifyRouteMapVariants(variants: RouteMapVariant[]): RouteMapVariant[] {
+  return variants.map((variant) => {
+    const coordinates = variant.shape.geometry.coordinates as LonLat[]
+    const simplified = simplifyLine(coordinates, ROUTE_DETAIL_LOD_TOLERANCE_METERS)
+    if (simplified.length === coordinates.length) return variant
+    return {
+      ...variant,
+      shape: {
+        ...variant.shape,
+        geometry: {
+          ...variant.shape.geometry,
+          coordinates: simplified,
+        },
+      },
+    }
+  })
+}
+
 export async function readRouteMap(c: Context<MapEnv>) {
   let snapshotFallbackReason: PatternStopFallbackReason | null = null
   try {
@@ -127,7 +149,7 @@ export async function readRouteMap(c: Context<MapEnv>) {
       routeName,
       source,
       ...(requestedVersion ? { snapshotVersion: requestedVersion } : {}),
-      variants,
+      variants: simplifyRouteMapVariants(variants),
     }, 200, {
       'Cache-Control': requestedVersion
         ? 'no-store'
