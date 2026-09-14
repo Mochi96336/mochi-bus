@@ -12,6 +12,14 @@ import {
 } from './run-public-probe.mjs'
 
 const ROUTE_PATH = '/api/v1/map/route'
+const ROUTE_FALLBACK_HEADER = 'X-Mochi-Snapshot-Fallback-Reason'
+const ROUTE_FALLBACK_REASONS = new Set([
+  'manifest_missing',
+  'manifest_read_failed',
+  'routing_authority_incomplete',
+  'routing_authority_invalid',
+  'r2',
+])
 export const ROUTE_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 
 export function createRouteWindowPublicApi({
@@ -20,6 +28,7 @@ export function createRouteWindowPublicApi({
   expensiveIntervalMs,
   sleep,
   monotonic,
+  routeFailureEmitter = () => undefined,
 }) {
   const base = createPublicApiAdapter({
     baseUrl,
@@ -32,13 +41,21 @@ export function createRouteWindowPublicApi({
   return Object.freeze({
     ...base,
     async getJson(path) {
-      if (new URL(path, baseUrl).pathname !== ROUTE_PATH) return await base.getJson(path)
-      const response = await fetchImpl(new URL(path, baseUrl), {
+      const url = new URL(path, baseUrl)
+      if (url.pathname !== ROUTE_PATH) return await base.getJson(path)
+      const response = await fetchImpl(url, {
         signal: AbortSignal.timeout(20_000),
         cache: 'no-store',
       })
       if (!response.ok) {
         const responseKind = publicResponseKind(response.headers.get('Content-Type'))
+        emitFailOpen(routeFailureEmitter, Object.freeze({
+          message: 'public_probe_route_failure_response',
+          city: safeCity(url.searchParams.get('city')),
+          httpStatusClass: statusClass(response.status),
+          responseKind,
+          fallbackReason: safeFallbackReason(response.headers.get(ROUTE_FALLBACK_HEADER)),
+        }))
         await response.body?.cancel().catch(() => undefined)
         throw new PublicApiError(response.status, responseKind)
       }
@@ -53,6 +70,28 @@ function publicResponseKind(value) {
   if (mediaType === 'application/json' || mediaType.endsWith('+json')) return 'json'
   if (mediaType === 'text/html' || mediaType === 'application/xhtml+xml') return 'html'
   return 'other'
+}
+
+function statusClass(status) {
+  return Number.isInteger(status) && status >= 100 && status <= 599
+    ? `${Math.floor(status / 100)}xx`
+    : 'none'
+}
+
+function safeFallbackReason(value) {
+  return typeof value === 'string' && ROUTE_FALLBACK_REASONS.has(value) ? value : null
+}
+
+function safeCity(value) {
+  return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9]{0,31}$/.test(value) ? value : null
+}
+
+function emitFailOpen(emitter, event) {
+  try {
+    emitter(event)
+  } catch {
+    // Diagnostics must never change probe health or request semantics.
+  }
 }
 
 function storeFromEnvironment(env, resources) {
@@ -73,7 +112,10 @@ async function main() {
   const baseUrl = resolvePublicProbeBaseUrl({ env: process.env })
   const result = await runPublicProbe({
     store: storeFromEnvironment(process.env, resources),
-    publicApi: createRouteWindowPublicApi({ baseUrl }),
+    publicApi: createRouteWindowPublicApi({
+      baseUrl,
+      routeFailureEmitter: (event) => console.log(JSON.stringify(event)),
+    }),
     realtimeSampleSize: PUBLIC_PROBE_REALTIME_SAMPLE_SIZE,
     realtimeDetailEmitter: (event) => console.log(JSON.stringify(event)),
     routeSampleDetailEmitter: (event) => console.log(JSON.stringify(event)),
