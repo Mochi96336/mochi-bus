@@ -80,9 +80,12 @@ function bucket({
   missingArtifact = false,
   throwArtifact = false,
   throwHead = false,
+  delayReads = false,
 } = {}) {
   const heads: string[] = []
   const reads: string[] = []
+  let activeReads = 0
+  let maxActiveReads = 0
   const r2 = {
     async head(key: string) {
       heads.push(key)
@@ -91,18 +94,31 @@ function bucket({
     },
     async get(key: string) {
       reads.push(key)
-      if (key.endsWith('/patterns/P1/stops.json')) {
-        if (throwArtifact) throw new Error('temporary R2 failure')
-        if (missingArtifact) return null
-        return { json: async <T>() => artifact() as T } as unknown as R2ObjectBody
+      activeReads += 1
+      maxActiveReads = Math.max(maxActiveReads, activeReads)
+      try {
+        if (delayReads) await Promise.resolve()
+        const stopMatch = /\/patterns\/([^/]+)\/stops\.json$/.exec(key)
+        if (stopMatch) {
+          if (throwArtifact) throw new Error('temporary R2 failure')
+          if (missingArtifact) return null
+          return { json: async <T>() => artifact(stopMatch[1]) as T } as unknown as R2ObjectBody
+        }
+        if (/^shape\/[^/]+\.json$/.test(key)) {
+          return { json: async <T>() => shape as T } as unknown as R2ObjectBody
+        }
+        return null
+      } finally {
+        activeReads -= 1
       }
-      if (key === 'shape/P1.json') {
-        return { json: async <T>() => shape as T } as unknown as R2ObjectBody
-      }
-      return null
     },
   } as unknown as R2Bucket
-  return { r2, heads, reads }
+  return {
+    r2,
+    heads,
+    reads,
+    get maxActiveReads() { return maxActiveReads },
+  }
 }
 
 beforeEach(() => {
@@ -153,6 +169,32 @@ describe('R2-first snapshot route variants', () => {
         ],
       },
     })
+  })
+
+  it('bounds route-name R2 fan-out while preserving every variant', async () => {
+    const patterns = Array.from({ length: 9 }, (_, index) => ({
+      pattern_id: `P${index + 1}`,
+      route_uid: `R${index + 1}`,
+      subroute_uid: null,
+      route_name: '300',
+      subroute_name: '300',
+      direction: (index % 2) as 0 | 1,
+      departure_name: 'Alpha',
+      destination_name: 'Beta',
+      shape_key: `shape/P${index + 1}.json`,
+      updated_at: null,
+    }))
+    const db = databaseFor(() => patterns)
+    const r2 = bucket({ delayReads: true })
+    const env: TransitBindings = { TRANSIT_DB: db.database, TRANSIT_SHAPES: r2.r2 }
+
+    const variants = await getSnapshotRouteVariants(env, 'Taichung', '300')
+
+    expect(variants).toHaveLength(9)
+    expect(legacy.getSnapshotRouteVariants).not.toHaveBeenCalled()
+    expect(r2.reads).toHaveLength(18)
+    expect(r2.maxActiveReads).toBeGreaterThan(1)
+    expect(r2.maxActiveReads).toBeLessThanOrEqual(4)
   })
 
   it('keeps cities without a completed export entirely on the legacy D1 path', async () => {
