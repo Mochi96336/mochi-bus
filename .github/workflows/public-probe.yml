@@ -16,6 +16,7 @@ on:
       - 'scripts/transit-snapshot/public-probe.mjs'
       - 'scripts/transit-snapshot/public-probe-contract.mjs'
       - 'scripts/transit-snapshot/public-probe-d1.mjs'
+      - 'scripts/transit-snapshot/public-probe-response.mjs'
       - 'scripts/transit-snapshot/run-public-probe.mjs'
       - 'scripts/transit-snapshot/wait-public-release.mjs'
 
