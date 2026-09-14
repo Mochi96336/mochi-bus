@@ -22,7 +22,6 @@ on:
       - 'scripts/transit-snapshot/run-public-probe.mjs'
       - 'scripts/transit-snapshot/run-public-probe-route-window.mjs'
       - 'scripts/transit-snapshot/wait-public-release.mjs'
-      - 'scripts/transit-snapshot/diagnose-route-fallback.mjs'
       - 'src/infrastructure/transit/snapshot-pattern-stop-repository.ts'
       - 'src/infrastructure/transit/snapshot-repository.ts'
       - 'src/routes/map-route-reads.ts'
@@ -80,11 +79,3 @@ jobs:
           TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
           SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
         run: npm run snapshot:public-probe
-      - name: Attribute Hsinchu route fallback failures
-        if: always() && github.event_name == 'push' && steps.operation.outputs.enabled == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TRANSIT_DATABASE_ID: ${{ steps.operation.outputs.d1_database_id }}
-          SNAPSHOT_SMOKE_BASE_URL: ${{ steps.operation.outputs.public_origin || vars.SNAPSHOT_SMOKE_BASE_URL }}
-        run: node scripts/transit-snapshot/diagnose-route-fallback.mjs
