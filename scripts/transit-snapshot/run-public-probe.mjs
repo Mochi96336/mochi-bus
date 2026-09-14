@@ -34,6 +34,7 @@ export const PUBLIC_PROBE_EXPENSIVE_INTERVAL_MS = 2_500
 const HEALTHY_STATUSES = new Set(['healthy', 'snapshot_healthy', 'realtime_degraded'])
 const EXPENSIVE_PATH = /^\/api\/v1\/map\/(?:network|journey-eta$|place\/[^/]+\/arrivals)/
 const DAY_MS = 24 * 60 * 60 * 1000
+const HTTP_RESPONSE_KINDS = new Set(['json', 'html', 'other', 'missing'])
 const ROUTE_SAMPLE_DETAIL_STAGES = new Set([
   'reference_sample_invalid',
   'route_fetch_pending',
@@ -255,7 +256,10 @@ export function classifyPublicProbeRequestFailureDetail(error) {
     ? publicProbeBodyLimitDetail(error)
     : null
   const httpStatusDetail = requestFailureReason === 'http_error' && error instanceof PublicApiError
-    ? { requestHttpStatusClass: publicProbeHttpStatusClass(error.status) }
+    ? {
+        requestHttpStatusClass: publicProbeHttpStatusClass(error.status),
+        requestHttpResponseKind: error.responseKind,
+      }
     : null
   return Object.freeze({
     requestFailureReason,
@@ -267,6 +271,14 @@ export function classifyPublicProbeRequestFailureDetail(error) {
 function publicProbeHttpStatusClass(status) {
   if (!Number.isInteger(status) || status < 200 || status > 599) return 'none'
   return `${Math.floor(status / 100)}xx`
+}
+
+function publicProbeHttpResponseKind(value) {
+  if (typeof value !== 'string' || value.trim() === '') return 'missing'
+  const mediaType = value.split(';', 1)[0].trim().toLowerCase()
+  if (mediaType === 'application/json' || mediaType.endsWith('+json')) return 'json'
+  if (mediaType === 'text/html' || mediaType === 'application/xhtml+xml') return 'html'
+  return 'other'
 }
 
 function classifyRouteSampleResponse(route, sample) {
@@ -336,8 +348,9 @@ export function createPublicApiAdapter({
       cache: 'no-store',
     })
     if (!response.ok) {
+      const responseKind = publicProbeHttpResponseKind(response.headers.get('Content-Type'))
       await response.body?.cancel().catch(() => undefined)
-      throw new PublicApiError(response.status)
+      throw new PublicApiError(response.status, responseKind)
     }
     return response
   }
@@ -387,9 +400,10 @@ export async function readResponsePrefix(response, maximumBytes) {
 }
 
 export class PublicApiError extends Error {
-  constructor(status) {
+  constructor(status, responseKind = 'missing') {
     super(`Public API responded ${status}`)
     this.status = status
+    this.responseKind = HTTP_RESPONSE_KINDS.has(responseKind) ? responseKind : 'missing'
   }
 }
 
