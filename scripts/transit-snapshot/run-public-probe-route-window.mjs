@@ -12,8 +12,7 @@ import {
 } from './run-public-probe.mjs'
 
 const ROUTE_PATH = '/api/v1/map/route'
-const ROUTE_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
-const RESPONSE_KINDS = new Set(['json', 'html', 'other', 'missing'])
+export const ROUTE_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 
 export function createRouteWindowPublicApi({
   baseUrl,
@@ -53,7 +52,7 @@ function publicResponseKind(value) {
   const mediaType = value.split(';', 1)[0].trim().toLowerCase()
   if (mediaType === 'application/json' || mediaType.endsWith('+json')) return 'json'
   if (mediaType === 'text/html' || mediaType === 'application/xhtml+xml') return 'html'
-  return RESPONSE_KINDS.has('other') ? 'other' : 'missing'
+  return 'other'
 }
 
 function storeFromEnvironment(env, resources) {
