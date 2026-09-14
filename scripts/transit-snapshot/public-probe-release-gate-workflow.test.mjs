@@ -26,4 +26,8 @@ describe('public probe push release gate workflow', () => {
   it('re-runs when the release gate implementation changes', () => {
     expect(workflow).toContain("- 'scripts/transit-snapshot/wait-public-release.mjs'")
   })
+
+  it('re-runs when the bounded public response reader changes', () => {
+    expect(workflow).toContain("- 'scripts/transit-snapshot/public-probe-response.mjs'")
+  })
 })
