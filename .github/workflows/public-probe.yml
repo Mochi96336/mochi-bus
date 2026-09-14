@@ -14,11 +14,13 @@ on:
       # themselves against the deployed surface instead of waiting for the next
       # daily schedule.
       - '.github/workflows/public-probe.yml'
+      - 'package.json'
       - 'scripts/transit-snapshot/public-probe.mjs'
       - 'scripts/transit-snapshot/public-probe-contract.mjs'
       - 'scripts/transit-snapshot/public-probe-d1.mjs'
       - 'scripts/transit-snapshot/public-probe-response.mjs'
       - 'scripts/transit-snapshot/run-public-probe.mjs'
+      - 'scripts/transit-snapshot/run-public-probe-route-window.mjs'
       - 'scripts/transit-snapshot/wait-public-release.mjs'
       - 'scripts/transit-snapshot/diagnose-route-fallback.mjs'
       - 'src/infrastructure/transit/snapshot-pattern-stop-repository.ts'
