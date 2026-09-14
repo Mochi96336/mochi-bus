@@ -138,21 +138,26 @@ describe('public probe route-sample detail', () => {
     const timeout = new Error('private timeout detail')
     timeout.name = 'TimeoutError'
     const cases = [
-      [new PublicApiError(503), 'http_error'],
-      [timeout, 'timeout'],
-      [new TypeError('private network detail'), 'network_failure'],
-      [new SyntaxError('private json detail'), 'json_parse'],
-      [new Error('Bounded response is too large'), 'body_limit'],
+      [new PublicApiError(503), 'http_error', '5xx'],
+      [new PublicApiError(404), 'http_error', '4xx'],
+      [timeout, 'timeout', null],
+      [new TypeError('private network detail'), 'network_failure', null],
+      [new SyntaxError('private json detail'), 'json_parse', null],
+      [new Error('Bounded response is too large'), 'body_limit', null],
     ]
 
-    for (const [routeError, requestFailureReason] of cases) {
+    for (const [routeError, requestFailureReason, requestHttpStatusClass] of cases) {
       const { routeSampleDetailEmitter } = await runFailure(api({ routeError }))
       expect(routeSampleDetailEmitter).toHaveBeenCalledWith(expect.objectContaining({
         stage: 'route_fetch_failed',
         requestFailureReason,
+        ...(requestHttpStatusClass ? { requestHttpStatusClass } : {}),
       }))
       const emitted = routeSampleDetailEmitter.mock.calls[0][0]
       expect(JSON.stringify(emitted)).not.toContain(routeError.message)
+      expect(emitted).not.toHaveProperty('status')
+      expect(emitted).not.toHaveProperty('httpStatus')
+      if (!requestHttpStatusClass) expect(emitted).not.toHaveProperty('requestHttpStatusClass')
     }
   })
 
