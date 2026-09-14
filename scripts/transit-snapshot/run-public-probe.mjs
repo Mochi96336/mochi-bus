@@ -254,10 +254,19 @@ export function classifyPublicProbeRequestFailureDetail(error) {
   const responseSizeDetail = requestFailureReason === 'body_limit'
     ? publicProbeBodyLimitDetail(error)
     : null
+  const httpStatusDetail = requestFailureReason === 'http_error' && error instanceof PublicApiError
+    ? { requestHttpStatusClass: publicProbeHttpStatusClass(error.status) }
+    : null
   return Object.freeze({
     requestFailureReason,
     ...(responseSizeDetail ?? {}),
+    ...(httpStatusDetail ?? {}),
   })
+}
+
+function publicProbeHttpStatusClass(status) {
+  if (!Number.isInteger(status) || status < 200 || status > 599) return 'none'
+  return `${Math.floor(status / 100)}xx`
 }
 
 function classifyRouteSampleResponse(route, sample) {
