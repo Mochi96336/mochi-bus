@@ -31,7 +31,8 @@ describe('public probe push release gate workflow', () => {
     expect(workflow).toContain("- 'scripts/transit-snapshot/public-probe-response.mjs'")
   })
 
-  it('re-runs when the R2-first route repository changes', () => {
+  it('re-runs when either public route repository changes', () => {
     expect(workflow).toContain("- 'src/infrastructure/transit/snapshot-pattern-stop-repository.ts'")
+    expect(workflow).toContain("- 'src/infrastructure/transit/snapshot-repository.ts'")
   })
 })
