@@ -200,8 +200,6 @@ jobs:
                 echo 'Legacy previous repair requires an explicit window_date' >&2
                 exit 1
               fi
-              npm run snapshot:repair-legacy-previous -- \
-                preflight "$INPUT_CITY" "$INPUT_EXPECTED_ACTIVE" "$INPUT_EXPECTED_PREVIOUS" "$SNAPSHOT_WINDOW_DATE"
             fi
           else
             if [ "$repair_mode" = "true" ]; then
@@ -209,22 +207,34 @@ jobs:
               exit 1
             fi
             cities="$(node scripts/transit-snapshot/scheduled-cities.mjs)"
-            if [ -n "$cities" ]; then
-              if [ "${GITHUB_RUN_ATTEMPT:-}" = "1" ]; then
-                if node scripts/transit-snapshot/high-card-retirement-readiness.mjs; then
-                  retirement_report="$SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT"
-                else
-                  echo '{"event":"scheduled_native_authority_refresh_unavailable","action":"continue_without_force_publish"}' >&2
-                fi
-              else
-                echo '{"event":"scheduled_native_authority_refresh_skipped","reason":"workflow_rerun_or_unknown_attempt","action":"continue_without_force_publish"}' >&2
-              fi
-            fi
           fi
           if [ -z "$cities" ]; then
             echo "今天沒有排程的城市"
             exit 0
           fi
+
+          # Authenticate once before any readiness scan or city publication so
+          # invalid external credentials fail fast without recording per-city
+          # source-fetch failures. The preflight never persists the access token.
+          npm run snapshot:tdx-preflight
+
+          if [ -z "$INPUT_CITY" ]; then
+            if [ "${GITHUB_RUN_ATTEMPT:-}" = "1" ]; then
+              if node scripts/transit-snapshot/high-card-retirement-readiness.mjs; then
+                retirement_report="$SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT"
+              else
+                echo '{"event":"scheduled_native_authority_refresh_unavailable","action":"continue_without_force_publish"}' >&2
+              fi
+            else
+              echo '{"event":"scheduled_native_authority_refresh_skipped","reason":"workflow_rerun_or_unknown_attempt","action":"continue_without_force_publish"}' >&2
+            fi
+          fi
+
+          if [ "$repair_mode" = "true" ]; then
+            npm run snapshot:repair-legacy-previous -- \
+              preflight "$INPUT_CITY" "$INPUT_EXPECTED_ACTIVE" "$INPUT_EXPECTED_PREVIOUS" "$SNAPSHOT_WINDOW_DATE"
+          fi
+
           failed=""
           for city in $cities; do
             if [ -n "$retirement_report" ]; then
