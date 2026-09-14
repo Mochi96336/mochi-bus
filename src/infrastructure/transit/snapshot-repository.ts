@@ -12,6 +12,10 @@ import { memoryCacheGet, memoryCacheSet } from '../../lib/memory-cache'
 // 這裡是小城市(<=40 patterns,沒有預生成 network.json)即時組裝的 fallback 路徑。
 const NETWORK_LOD_TOLERANCE_METERS = 8
 const ROUTING_AUTHORITY_TTL_SECONDS = 60
+// A legacy route variant performs one D1 stop read and one R2 shape read. Keep
+// those operations sequential inside each worker so total route fan-out stays
+// below the same bounded concurrency used by the R2-first repository.
+const LEGACY_ROUTE_VARIANT_CONCURRENCY = 4
 const ROUTING_MANIFEST_SHA256 = /^[a-f0-9]{64}$/
 const ROUTING_COMPLETION_MANIFEST_NAMES = [
   'pattern-stops-export.json',
@@ -58,6 +62,24 @@ type ReachableLegRow = {
 }
 
 type ReachableLeg<T extends ReachableLegRow> = T & { stop_count: number }
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, concurrency), values.length)
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await mapper(values[index], index)
+    }
+  }))
+  return results
+}
 
 function journeyStopCount(row: ReachableLegRow): number {
   if (row.alight_sequence > row.board_sequence) return row.alight_sequence - row.board_sequence
@@ -288,47 +310,50 @@ export async function getSnapshotRouteVariants(
   `).bind(version, city, routeName).all<PatternRow>()
   if (!patterns.results.length) return []
 
-  return (await Promise.all(patterns.results.map(async (pattern) => {
-    const [stops, shapeObject] = await Promise.all([
-      env.TRANSIT_DB.prepare(`
+  const variants = await mapWithConcurrency(
+    patterns.results,
+    LEGACY_ROUTE_VARIANT_CONCURRENCY,
+    async (pattern): Promise<RouteMapVariant | null> => {
+      const stops = await env.TRANSIT_DB.prepare(`
         SELECT s.stop_uid, s.stop_name, ps.stop_sequence, s.latitude, s.longitude
         FROM pattern_stops ps
         JOIN stops s ON s.version = ps.version AND s.stop_uid = ps.stop_uid
         WHERE ps.version = ? AND ps.pattern_id = ?
         ORDER BY ps.stop_sequence
-      `).bind(version, pattern.pattern_id).all<StopRow>(),
-      env.TRANSIT_SHAPES.get(pattern.shape_key),
-    ])
-    if (!shapeObject) return null
-    const shape = await shapeObject.json<ShapeFeature>()
-    const variant: RouteMapVariant = {
-      variantKey: pattern.pattern_id,
-      routeName: pattern.route_name,
-      routeUid: pattern.route_uid,
-      subRouteUid: pattern.subroute_uid ?? undefined,
-      direction: pattern.direction,
-      label: `${pattern.departure_name} → ${pattern.destination_name}`,
-      subRouteName: pattern.subroute_name,
-      shape,
-      stops: {
-        type: 'FeatureCollection' as const,
-        features: stops.results.map((stop) => ({
-          type: 'Feature' as const,
-          properties: {
-            stopUid: stop.stop_uid,
-            stopName: stop.stop_name,
-            sequence: stop.stop_sequence,
-          },
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [stop.longitude, stop.latitude] as [number, number],
-          },
-        })),
-      },
-      updatedAt: pattern.updated_at,
-    }
-    return variant
-  }))).filter((variant): variant is RouteMapVariant => variant !== null)
+      `).bind(version, pattern.pattern_id).all<StopRow>()
+      const shapeObject = await env.TRANSIT_SHAPES.get(pattern.shape_key)
+      if (!shapeObject) return null
+      const shape = await shapeObject.json<ShapeFeature>()
+      const variant: RouteMapVariant = {
+        variantKey: pattern.pattern_id,
+        routeName: pattern.route_name,
+        routeUid: pattern.route_uid,
+        subRouteUid: pattern.subroute_uid ?? undefined,
+        direction: pattern.direction,
+        label: `${pattern.departure_name} → ${pattern.destination_name}`,
+        subRouteName: pattern.subroute_name,
+        shape,
+        stops: {
+          type: 'FeatureCollection' as const,
+          features: stops.results.map((stop) => ({
+            type: 'Feature' as const,
+            properties: {
+              stopUid: stop.stop_uid,
+              stopName: stop.stop_name,
+              sequence: stop.stop_sequence,
+            },
+            geometry: {
+              type: 'Point' as const,
+              coordinates: [stop.longitude, stop.latitude] as [number, number],
+            },
+          })),
+        },
+        updatedAt: pattern.updated_at,
+      }
+      return variant
+    },
+  )
+  return variants.filter((variant): variant is RouteMapVariant => variant !== null)
 }
 
 export async function getSnapshotRouteCatalog(env: TransitBindings, city: string) {
