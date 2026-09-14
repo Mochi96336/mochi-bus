@@ -11,6 +11,7 @@ import {
 import {
   getSnapshotRouteVariants,
   type PatternStopFallbackObserver,
+  type PatternStopFallbackReason,
 } from '../infrastructure/transit/snapshot-pattern-stop-repository'
 import { getSnapshotSchedule } from '../infrastructure/transit/snapshot-repository'
 import { getBusSchedule } from '../lib/tdx'
@@ -90,6 +91,7 @@ function selectRouteVariant(
 }
 
 export async function readRouteMap(c: Context<MapEnv>) {
+  let snapshotFallbackReason: PatternStopFallbackReason | null = null
   try {
     const city = c.req.query('city')?.trim()
     const routeName = c.req.query('route')?.trim()
@@ -97,11 +99,15 @@ export async function readRouteMap(c: Context<MapEnv>) {
     if (!routeName || routeName.length > 40) throw new QueryValidationError('請選擇有效路線')
 
     const requestedVersion = await requestedProbeSnapshotVersion(c, city)
-    const requestedIdentity = requestedProbeRouteIdentity(c, requestedVersion)
-    const observeFallback = createSnapshotFallbackReporter({
+    const reportFallback = createSnapshotFallbackReporter({
       operation: 'map_route',
       versionMetadata: c.env.CF_VERSION_METADATA,
     })
+    const observeFallback: PatternStopFallbackObserver = (observation) => {
+      snapshotFallbackReason ??= observation.reason
+      reportFallback(observation)
+    }
+    const requestedIdentity = requestedProbeRouteIdentity(c, requestedVersion)
     const { variants, source } = await loadRouteVariants(
       c,
       city,
@@ -136,7 +142,11 @@ export async function readRouteMap(c: Context<MapEnv>) {
         error,
       })
     }
-    return mapJsonError(c, error, '暫時無法取得路線地圖')
+    const response = mapJsonError(c, error, '暫時無法取得路線地圖')
+    if (response.status >= 500 && snapshotFallbackReason) {
+      response.headers.set('X-Mochi-Snapshot-Fallback-Reason', snapshotFallbackReason)
+    }
+    return response
   }
 }
 
