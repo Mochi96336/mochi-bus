@@ -10,7 +10,7 @@ on:
     branches:
       - main
     paths:
-      # Probe logic and the critical public route repository should prove
+      # Probe logic and the critical public route repositories should prove
       # themselves against the deployed surface instead of waiting for the next
       # daily schedule.
       - '.github/workflows/public-probe.yml'
@@ -22,6 +22,7 @@ on:
       - 'scripts/transit-snapshot/wait-public-release.mjs'
       - 'scripts/transit-snapshot/diagnose-route-fallback.mjs'
       - 'src/infrastructure/transit/snapshot-pattern-stop-repository.ts'
+      - 'src/infrastructure/transit/snapshot-repository.ts'
       - 'src/routes/map-route-reads.ts'
 
 concurrency:
