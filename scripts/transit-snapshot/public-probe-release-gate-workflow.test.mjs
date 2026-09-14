@@ -33,6 +33,11 @@ describe('public probe push release gate workflow', () => {
     expect(workflow).toContain("- 'package.json'")
   })
 
+  it('attributes route fallback evidence inline without post-hoc requests', () => {
+    expect(workflow).not.toContain('diagnose-route-fallback.mjs')
+    expect(workflow).not.toContain('Attribute Hsinchu route fallback failures')
+  })
+
   it('re-runs when either public route repository changes', () => {
     expect(workflow).toContain("- 'src/infrastructure/transit/snapshot-pattern-stop-repository.ts'")
     expect(workflow).toContain("- 'src/infrastructure/transit/snapshot-repository.ts'")
