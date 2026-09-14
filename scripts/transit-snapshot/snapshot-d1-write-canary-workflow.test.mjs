@@ -29,4 +29,14 @@ describe('snapshot D1 write canary workflow', () => {
     expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
     expect(workflow).toContain('retention-days: 14')
   })
+
+  it('requires current-run published acceptance evidence instead of only a zero publisher exit', () => {
+    const summarize = workflow.indexOf('summarize-d1-write-telemetry.mjs')
+    const enforce = workflow.indexOf('assert-d1-write-canary-acceptance.mjs snapshot-d1-write-evidence.json')
+    const cleanup = workflow.indexOf('Cleanup canary workspace')
+    expect(summarize).toBeGreaterThan(-1)
+    expect(enforce).toBeGreaterThan(summarize)
+    expect(cleanup).toBeGreaterThan(enforce)
+    expect(workflow).toContain('test "${PUBLISHER_STATUS}" = \'0\'')
+  })
 })
