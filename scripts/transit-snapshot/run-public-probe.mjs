@@ -254,9 +254,23 @@ export function classifyPublicProbeRequestFailureDetail(error) {
   const responseSizeDetail = requestFailureReason === 'body_limit'
     ? publicProbeBodyLimitDetail(error)
     : null
+  const httpErrorDetail = requestFailureReason === 'http_error' && error instanceof PublicApiError
+    ? publicProbeHttpErrorDetail(error.status)
+    : null
   return Object.freeze({
     requestFailureReason,
     ...(responseSizeDetail ?? {}),
+    ...(httpErrorDetail ?? {}),
+  })
+}
+
+function publicProbeHttpErrorDetail(status) {
+  const httpStatusClass = Number.isInteger(status) && status >= 200 && status <= 599
+    ? `${Math.floor(status / 100)}xx`
+    : 'none'
+  return Object.freeze({
+    httpStatusClass,
+    rateLimited: status === 429,
   })
 }
 
