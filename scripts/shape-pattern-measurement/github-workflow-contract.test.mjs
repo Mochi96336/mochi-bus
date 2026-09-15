@@ -91,7 +91,7 @@ describe('credentialed Shape matcher measurement workflow', () => {
   })
 
   it('pins checkout, setup-node, and artifact upload actions and does not persist credentials', () => {
-    expect(source).toContain('actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0')
+    expect(source).toContain('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1')
     expect(source).toContain('actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e')
     expect(source).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
     expect(source).toContain('persist-credentials: false')
