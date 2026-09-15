@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-pr-${{ github.event.pull_request.number || github.ref }}
@@ -73,6 +73,37 @@ jobs:
             worker-configuration.d.ts
           if-no-files-found: error
           retention-days: 7
+      - name: Commit exact generated Wrangler types to PR head
+        if: failure() && github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          EXPECTED_TYPES_SHA256: efe59a98eaf7f0c93ae54c7deed577b2d6ee59046688faa664e16d253e6af88e
+        run: |
+          set -euo pipefail
+          test -s worker-configuration.d.ts
+          actual_sha="$(sha256sum worker-configuration.d.ts | awk '{print $1}')"
+          test "${actual_sha}" = "${EXPECTED_TYPES_SHA256}"
+          grep -Fq 'Runtime types generated with workerd@1.20260911.1' worker-configuration.d.ts
+          if git diff --quiet -- worker-configuration.d.ts; then
+            echo 'Generated type file did not change; refusing diagnostic write' >&2
+            exit 1
+          fi
+          current_blob="$(gh api "repos/${GITHUB_REPOSITORY}/contents/worker-configuration.d.ts?ref=${HEAD_REF}" --jq .sha)"
+          export CURRENT_BLOB="${current_blob}"
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const payload = {
+            message: 'chore(types): regenerate Cloudflare bindings for Wrangler 4.131.1',
+            content: readFileSync('worker-configuration.d.ts').toString('base64'),
+            sha: process.env.CURRENT_BLOB,
+            branch: process.env.HEAD_REF,
+          }
+          writeFileSync('/tmp/update-worker-types.json', JSON.stringify(payload))
+          NODE
+          gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/worker-configuration.d.ts" --input /tmp/update-worker-types.json >/tmp/update-result.json
+          jq -r '.commit.sha' /tmp/update-result.json
 
   map-ui:
     name: Map UI regression
