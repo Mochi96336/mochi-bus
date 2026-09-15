@@ -54,7 +54,7 @@ jobs:
         run: node scripts/transit-snapshot/weekly-d1-write-budget.mjs
       - name: Upload weekly D1 budget evidence
         if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snapshot-weekly-d1-budget-proof
           path: .transit-snapshot/weekly-d1-write-budget.json

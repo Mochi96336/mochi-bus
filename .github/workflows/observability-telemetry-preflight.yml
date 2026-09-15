@@ -35,7 +35,7 @@ jobs:
         run: node scripts/transit-snapshot/observability-telemetry-preflight.mjs
       - name: Upload bounded telemetry preflight evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: observability-telemetry-preflight
           path: .transit-snapshot/observability-telemetry-preflight.json
