@@ -9,6 +9,7 @@ import {
 const origin = 'https://bus.example.test'
 const initialArrivals = `${origin}/api/v1/map/place/place-1/arrivals?city=Taipei&release_smoke=run:sha:initial-arrivals`
 const finalArrivals = `${origin}/api/v1/map/place/place-1/arrivals?city=Taipei&release_smoke=run:sha:final-arrivals`
+const releaseIdentity = `${origin}/api/v1/health/release?release_smoke=run:sha:release`
 const authoritativeSource = readFileSync(new URL('./run-authoritative-post-deploy.mjs', import.meta.url), 'utf8')
 
 describe('release smoke fetch policy', () => {
@@ -52,6 +53,42 @@ describe('release smoke fetch policy', () => {
 
     await wrapped(initialArrivals, init)
     expect(fetchImpl).toHaveBeenCalledWith(initialArrivals, init)
+  })
+
+  it('retries only transient release identity transport and HTTP failures', async () => {
+    const sleep = vi.fn(async () => undefined)
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(new TypeError('synthetic transport failure'))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{"releaseSha":"expected"}', { status: 200 }))
+    const wrapped = createReleaseSmokeFetch({ fetchImpl, sleep })
+
+    const response = await wrapped(releaseIdentity)
+    expect(response.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+
+    fetchImpl.mockClear()
+    sleep.mockClear()
+    fetchImpl.mockResolvedValueOnce(new Response('{}', { status: 503 }))
+    await wrapped(`${origin}/api/v1/map/routes?city=Taipei`)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('does not retry a successful release identity response whose body may later fail identity validation', async () => {
+    const sleep = vi.fn(async () => undefined)
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      schemaVersion: 1,
+      releaseSha: 'f'.repeat(40),
+      workerVersionId: 'other-version',
+      workerCreatedAt: '2026-09-15T13:20:39.198Z',
+    }), { status: 200 }))
+    const wrapped = createReleaseSmokeFetch({ fetchImpl, sleep })
+
+    expect((await wrapped(releaseIdentity)).status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(sleep).not.toHaveBeenCalled()
   })
 
   it('restores the original fetch even when the smoke operation throws', async () => {
