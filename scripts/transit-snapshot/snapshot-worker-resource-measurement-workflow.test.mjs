@@ -83,7 +83,7 @@ describe('snapshot Worker resource measurement workflow', () => {
   it('uploads bounded credential or measurement evidence and then removes the workspace', () => {
     expect(workflow).toContain('cloudflare-analytics-credential-preflight.json')
     expect(workflow).toContain('worker-resource-measurement.json')
-    expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    expect(workflow).toContain('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')
     expect(workflow).toContain('retention-days: 14')
     expect(workflow).toContain('if-no-files-found: warn')
     expect(workflow).toContain('rm -rf "${RESOURCE_MEASUREMENT_ROOT}"')

@@ -25,7 +25,7 @@ describe('scheduled D1 write evidence workflow contract', () => {
     expect(workflow).toContain("if: always() && github.event_name == 'schedule' && steps.operation.outputs.enabled == 'true'")
     expect(workflow).toContain('summarize-scheduled-d1-write-evidence.mjs')
     expect(workflow).toContain('snapshot-scheduled-d1-write-${{ github.run_id }}-${{ github.run_attempt }}')
-    expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    expect(workflow).toContain('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')
     expect(workflow).toContain('retention-days: 14')
 
     const summaryBlock = workflow.slice(summarize, upload)

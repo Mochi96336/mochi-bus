@@ -69,7 +69,7 @@ jobs:
         run: node scripts/transit-snapshot/high-card-retirement-plan-report.mjs
       - name: Upload retirement readiness evidence
         if: ${{ always() && steps.operation.outputs.enabled == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: snapshot-high-card-retirement-readiness
           path: |

@@ -67,7 +67,7 @@ jobs:
         run: node scripts/transit-snapshot/d1-read-insights.mjs
       - name: Upload sanitized D1 read evidence
         if: ${{ always() && steps.analytics.outputs.available == 'true' && steps.operation.outputs.enabled == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: d1-read-insights
           path: .transit-snapshot/d1-read-insights.json

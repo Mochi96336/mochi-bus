@@ -36,7 +36,7 @@ describe('merged reviewed bundle reconciliation contracts', () => {
     expect(workflow).toContain('actions/setup-node@820762786026740c76f36085b0efc47a31fe5020')
     expect(workflow).toContain('actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c')
     expect(workflow).toContain('actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3')
-    expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    expect(workflow).toContain('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')
     const preflight = workflow.indexOf('--preflight')
     const download = workflow.indexOf('Download exact apply evidence')
     const prepare = workflow.indexOf('--prepare')

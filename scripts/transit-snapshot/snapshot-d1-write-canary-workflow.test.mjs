@@ -26,7 +26,7 @@ describe('snapshot D1 write canary workflow', () => {
     expect(workflow).toContain('SNAPSHOT_D1_WRITE_TELEMETRY_FILE: snapshot-d1-write-telemetry.jsonl')
     expect(workflow).not.toContain('.transit-snapshot/d1-write-telemetry.jsonl')
     expect(workflow).toContain('summarize-d1-write-telemetry.mjs')
-    expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    expect(workflow).toContain('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')
     expect(workflow).toContain('retention-days: 14')
   })
 

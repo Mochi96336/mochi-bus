@@ -65,7 +65,7 @@ jobs:
           npm run check 2>&1 | tee quality-check.log
       - name: Upload quality diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quality-check-log
           path: quality-check.log
@@ -110,7 +110,7 @@ jobs:
           --reporter=line,html
       - name: Upload Playwright diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: map-ui-playwright-report
           path: |
@@ -147,7 +147,7 @@ jobs:
           --reporter=line,html
       - name: Upload visual diff diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-playwright-report
           path: |
