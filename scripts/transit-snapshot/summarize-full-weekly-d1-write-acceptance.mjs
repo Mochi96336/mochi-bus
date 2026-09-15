@@ -6,6 +6,7 @@ import { scheduledCitiesForTaipeiDate, validDateOnly } from './snapshot-schedule
 const DAILY_EVENT = 'snapshot_scheduled_d1_write_evidence'
 const WEEKLY_EVENT = 'snapshot_full_weekly_d1_write_acceptance'
 const DAY_COUNT = 7
+const ACCEPTANCE_DAILY_BUDGET = 75_000
 const MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 const GIT_SHA = /^[a-f0-9]{40}$/
 
@@ -37,9 +38,12 @@ export function summarizeFullWeeklyD1WriteAcceptance(dailyEvidence) {
     const cityEvidenceComplete = day.cities.length === scheduledCities.length
       && sameSet(day.cities.map((city) => city.city), scheduledCities)
       && day.cities.every((city) => city.successfulWindow && city.metricsComplete)
+    const dailyBudgetMatchesAcceptanceLimit = day.budgetLimit === ACCEPTANCE_DAILY_BUDGET
     const budgetConsistent = day.totalRowsWritten === cityRowsTotal
       && day.headroom === day.budgetLimit - day.totalRowsWritten
-    const withinDailyBudget = budgetConsistent && day.totalRowsWritten <= day.budgetLimit
+    const withinDailyBudget = dailyBudgetMatchesAcceptanceLimit
+      && budgetConsistent
+      && day.totalRowsWritten <= ACCEPTANCE_DAILY_BUDGET
     const provenanceComplete = day.workflowRunId !== null
       && day.workflowRunAttempt !== null
       && day.scriptGitSha !== null
@@ -59,11 +63,13 @@ export function summarizeFullWeeklyD1WriteAcceptance(dailyEvidence) {
       expectedCities: Object.freeze(scheduledCities),
       actualCities: Object.freeze([...day.actualCities]),
       budgetLimit: day.budgetLimit,
+      acceptanceDailyBudget: ACCEPTANCE_DAILY_BUDGET,
       totalRowsWritten: day.totalRowsWritten,
       headroom: day.headroom,
       expectedCitiesMatchSchedule,
       actualCitySetMatches,
       cityEvidenceComplete,
+      dailyBudgetMatchesAcceptanceLimit,
       budgetConsistent,
       withinDailyBudget,
       provenanceComplete,
@@ -99,6 +105,7 @@ export function summarizeFullWeeklyD1WriteAcceptance(dailyEvidence) {
     dayCount: DAY_COUNT,
     expectedCityCount: expectedWeekCities.length,
     observedCityCount: observedWeekCities.length,
+    acceptanceDailyBudget: ACCEPTANCE_DAILY_BUDGET,
     totalRowsWritten,
     maxDailyRowsWritten,
     minDailyHeadroom,
@@ -145,6 +152,7 @@ export async function main(argv = process.argv.slice(2)) {
       dayCount: 0,
       expectedCityCount: 0,
       observedCityCount: 0,
+      acceptanceDailyBudget: ACCEPTANCE_DAILY_BUDGET,
       totalRowsWritten: null,
       maxDailyRowsWritten: null,
       minDailyHeadroom: null,
