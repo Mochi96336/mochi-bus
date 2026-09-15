@@ -35,6 +35,25 @@ describe('snapshot Worker resource measurement workflow', () => {
     expect(workflow.slice(validate, build)).toContain('test -n "${CLOUDFLARE_ANALYTICS_API_TOKEN}"')
   })
 
+  it('probes Account Analytics authorization before any measurement Worker can be deployed', () => {
+    const validate = workflow.indexOf('name: Validate manual measurement scope')
+    const preflight = workflow.indexOf('name: Require Cloudflare Account Analytics READY before Worker deployment')
+    const build = workflow.indexOf('name: Build production bundle')
+    const measure = workflow.indexOf('name: Measure direct and transfer Worker resources')
+    expect(preflight).toBeGreaterThan(validate)
+    expect(build).toBeGreaterThan(preflight)
+    expect(measure).toBeGreaterThan(build)
+
+    const guard = workflow.slice(preflight, build)
+    expect(guard).toContain('cloudflare-analytics-credential-preflight.mjs')
+    expect(guard).toContain('CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}')
+    expect(guard).toContain('CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}')
+    expect(guard).toContain('/artifact/cloudflare-analytics-credential-preflight.json')
+    expect(guard).toContain("report?.ready !== true || report?.outcome !== 'ready'")
+    expect(guard).toContain('no measurement Worker was deployed')
+    expect(guard).not.toContain('workersInvocationsAdaptive')
+  })
+
   it('requires the dedicated Analytics token inside the runner and never falls back to the operational token', () => {
     expect(runner).toContain("const analyticsToken = required(env.CLOUDFLARE_ANALYTICS_API_TOKEN, 'CLOUDFLARE_ANALYTICS_API_TOKEN')")
     expect(runner).not.toContain('env.CLOUDFLARE_ANALYTICS_API_TOKEN?.trim() || apiToken')
@@ -61,7 +80,8 @@ describe('snapshot Worker resource measurement workflow', () => {
     expect(workflow.slice(cleanup, upload)).toContain('--cleanup-registry')
   })
 
-  it('uploads only bounded report evidence and then removes the workspace', () => {
+  it('uploads bounded credential or measurement evidence and then removes the workspace', () => {
+    expect(workflow).toContain('cloudflare-analytics-credential-preflight.json')
     expect(workflow).toContain('worker-resource-measurement.json')
     expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
     expect(workflow).toContain('retention-days: 14')
