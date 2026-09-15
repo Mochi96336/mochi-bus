@@ -8,11 +8,12 @@ import { scheduledCitiesForTaipeiDate } from './snapshot-schedule.mjs'
 const WINDOW_ID = /^v1:([A-Za-z][A-Za-z0-9]{0,63}):(\d{4}-\d{2}-\d{2}):0317$/
 const PUBLISHER_D1_FILE = /^(?:import-\d+\.sql|cleanup\.sql)$/
 const DEFAULT_BUDGET = 75_000
+const DEFAULT_PUBLISHER_ROOT = '.transit-snapshot'
 const MAX_RAW_BYTES = 16 * 1024 * 1024
 
 export async function summarizeScheduledD1WriteEvidence({
   summaryRoot,
-  publisherRoot,
+  publisherRoot = DEFAULT_PUBLISHER_ROOT,
   observedFile,
   env = process.env,
 } = {}) {
@@ -120,13 +121,18 @@ export async function summarizeScheduledD1WriteEvidence({
 }
 
 export async function main(env = process.env, argv = process.argv.slice(2)) {
-  const [summaryRoot, publisherRoot, observedFile, outputFile] = argv
-  if (!summaryRoot || !publisherRoot || !observedFile || !outputFile) {
-    throw new Error('Usage: summarize-scheduled-d1-write-evidence.mjs <summary-root> <publisher-root> <observed-jsonl> <output-json>')
+  const [summaryRoot, observedFile, outputFile] = argv
+  if (!summaryRoot || !observedFile || !outputFile) {
+    throw new Error('Usage: summarize-scheduled-d1-write-evidence.mjs <summary-root> <observed-jsonl> <output-json>')
   }
   let evidence
   try {
-    evidence = await summarizeScheduledD1WriteEvidence({ summaryRoot, publisherRoot, observedFile, env })
+    evidence = await summarizeScheduledD1WriteEvidence({
+      summaryRoot,
+      publisherRoot: env.SNAPSHOT_D1_PUBLISHER_ROOT ?? DEFAULT_PUBLISHER_ROOT,
+      observedFile,
+      env,
+    })
   } catch {
     evidence = {
       schemaVersion: 1,
@@ -179,7 +185,6 @@ async function readObservedRecords(file) {
 }
 
 async function readExpectedPublisherFiles(root, city) {
-  if (!root) return []
   let names
   try {
     names = await readdir(join(root, city))
