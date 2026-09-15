@@ -63,6 +63,7 @@ jobs:
             metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
             event="$(jq -r '.event' <<< "$metadata")"
             head_branch="$(jq -r '.head_branch' <<< "$metadata")"
+            head_sha="$(jq -r '.head_sha' <<< "$metadata")"
             workflow_path="$(jq -r '.path' <<< "$metadata")"
             status="$(jq -r '.status' <<< "$metadata")"
             conclusion="$(jq -r '.conclusion' <<< "$metadata")"
@@ -73,15 +74,19 @@ jobs:
             test "$workflow_path" = '.github/workflows/sync-transit.yml'
             test "$status" = 'completed'
             test "$conclusion" = 'success'
+            if ! [[ "$head_sha" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "Invalid head SHA for $run_id" >&2
+              exit 1
+            fi
             if ! [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]]; then
               echo "Invalid run attempt for $run_id" >&2
               exit 1
             fi
 
             artifact_name="snapshot-scheduled-d1-write-${run_id}-${run_attempt}"
-            artifact_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?name=$artifact_name" --jq '.total_count')"
+            artifact_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?name=$artifact_name" --jq '[.artifacts[] | select(.expired == false)] | length')"
             if [ "$artifact_count" != '1' ]; then
-              echo "Expected exactly one $artifact_name artifact for run $run_id, found $artifact_count" >&2
+              echo "Expected exactly one live $artifact_name artifact for run $run_id, found $artifact_count" >&2
               exit 1
             fi
 
@@ -92,6 +97,17 @@ jobs:
               echo "Scheduled D1 evidence JSON missing for run $run_id" >&2
               exit 1
             fi
+
+            evidence_run_id="$(jq -r '.workflowRunId' "$evidence_file")"
+            evidence_run_attempt="$(jq -r '.workflowRunAttempt' "$evidence_file")"
+            evidence_git_sha="$(jq -r '.scriptGitSha' "$evidence_file")"
+            if [ "$evidence_run_id" != "$run_id" ] \
+              || [ "$evidence_run_attempt" != "$run_attempt" ] \
+              || [ "$evidence_git_sha" != "$head_sha" ]; then
+              echo "Scheduled D1 evidence provenance mismatch for run $run_id" >&2
+              exit 1
+            fi
+
             cp "$evidence_file" "$evidence_root/$run_id.json"
           done
       - name: Summarize full-week acceptance
