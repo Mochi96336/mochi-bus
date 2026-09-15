@@ -6,7 +6,6 @@ import { scheduledCitiesForTaipeiDate, validDateOnly } from './snapshot-schedule
 const DAILY_EVENT = 'snapshot_scheduled_d1_write_evidence'
 const WEEKLY_EVENT = 'snapshot_full_weekly_d1_write_acceptance'
 const DAY_COUNT = 7
-const DEFAULT_BUDGET = 75_000
 const MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 const GIT_SHA = /^[a-f0-9]{40}$/
 
@@ -38,9 +37,7 @@ export function summarizeFullWeeklyD1WriteAcceptance(dailyEvidence) {
     const cityEvidenceComplete = day.cities.length === scheduledCities.length
       && sameSet(day.cities.map((city) => city.city), scheduledCities)
       && day.cities.every((city) => city.successfulWindow && city.metricsComplete)
-    const budgetConsistent = day.budgetLimit >= 1
-      && day.totalRowsWritten >= 0
-      && day.totalRowsWritten === cityRowsTotal
+    const budgetConsistent = day.totalRowsWritten === cityRowsTotal
       && day.headroom === day.budgetLimit - day.totalRowsWritten
     const withinDailyBudget = budgetConsistent && day.totalRowsWritten <= day.budgetLimit
     const provenanceComplete = day.workflowRunId !== null
@@ -179,10 +176,12 @@ function normalizeDailyEvidence(value) {
   const workflowRunId = boundedString(value.workflowRunId, 64)
   const workflowRunAttempt = positiveInteger(value.workflowRunAttempt)
   const scriptGitSha = typeof value.scriptGitSha === 'string' && GIT_SHA.test(value.scriptGitSha) ? value.scriptGitSha : null
-  const budgetLimit = positiveInteger(value.budgetLimit) ?? DEFAULT_BUDGET
+  const budgetLimit = positiveInteger(value.budgetLimit)
   const totalRowsWritten = nonNegativeInteger(value.totalRowsWritten)
   const headroom = safeInteger(value.headroom)
-  if (totalRowsWritten === null || headroom === null) throw new Error('Daily D1 evidence write totals are invalid')
+  if (budgetLimit === null || totalRowsWritten === null || headroom === null) {
+    throw new Error('Daily D1 evidence write budget or totals are invalid')
+  }
 
   return Object.freeze({
     scheduleDate,
