@@ -1,0 +1,139 @@
+name: Snapshot full-week observed D1 acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_ids:
+        description: Exactly seven scheduled Sync transit snapshots run IDs, separated by commas or spaces
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: snapshot-full-week-d1-acceptance
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Collect exact scheduled daily evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RUN_IDS: ${{ inputs.run_ids }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          normalized="$(printf '%s' "$INPUT_RUN_IDS" | tr ',\n\t' '   ')"
+          read -r -a run_ids <<< "$normalized"
+          if [ "${#run_ids[@]}" -ne 7 ]; then
+            echo 'Full-week acceptance requires exactly seven scheduled workflow run IDs' >&2
+            exit 1
+          fi
+
+          evidence_root='.transit-snapshot/full-week-d1-evidence'
+          download_root='.transit-snapshot/full-week-d1-downloads'
+          mkdir -p "$evidence_root" "$download_root"
+          seen=' '
+
+          for run_id in "${run_ids[@]}"; do
+            if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Invalid workflow run ID: $run_id" >&2
+              exit 1
+            fi
+            if [[ "$seen" == *" $run_id "* ]]; then
+              echo "Duplicate workflow run ID: $run_id" >&2
+              exit 1
+            fi
+            seen+="$run_id "
+
+            metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            event="$(jq -r '.event' <<< "$metadata")"
+            head_branch="$(jq -r '.head_branch' <<< "$metadata")"
+            head_sha="$(jq -r '.head_sha' <<< "$metadata")"
+            workflow_path="$(jq -r '.path' <<< "$metadata")"
+            status="$(jq -r '.status' <<< "$metadata")"
+            conclusion="$(jq -r '.conclusion' <<< "$metadata")"
+            run_attempt="$(jq -r '.run_attempt' <<< "$metadata")"
+
+            test "$event" = 'schedule'
+            test "$head_branch" = 'main'
+            test "$workflow_path" = '.github/workflows/sync-transit.yml'
+            test "$status" = 'completed'
+            test "$conclusion" = 'success'
+            if ! [[ "$head_sha" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "Invalid head SHA for $run_id" >&2
+              exit 1
+            fi
+            if ! [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Invalid run attempt for $run_id" >&2
+              exit 1
+            fi
+
+            artifact_name="snapshot-scheduled-d1-write-${run_id}-${run_attempt}"
+            artifact_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?name=$artifact_name" --jq '[.artifacts[] | select(.expired == false)] | length')"
+            if [ "$artifact_count" != '1' ]; then
+              echo "Expected exactly one live $artifact_name artifact for run $run_id, found $artifact_count" >&2
+              exit 1
+            fi
+
+            run_root="$download_root/$run_id"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact_name" --dir "$run_root"
+            evidence_file="$run_root/snapshot-scheduled-d1-write-evidence.json"
+            if [ ! -f "$evidence_file" ]; then
+              echo "Scheduled D1 evidence JSON missing for run $run_id" >&2
+              exit 1
+            fi
+
+            evidence_run_id="$(jq -r '.workflowRunId' "$evidence_file")"
+            evidence_run_attempt="$(jq -r '.workflowRunAttempt' "$evidence_file")"
+            evidence_git_sha="$(jq -r '.scriptGitSha' "$evidence_file")"
+            if [ "$evidence_run_id" != "$run_id" ] \
+              || [ "$evidence_run_attempt" != "$run_attempt" ] \
+              || [ "$evidence_git_sha" != "$head_sha" ]; then
+              echo "Scheduled D1 evidence provenance mismatch for run $run_id" >&2
+              exit 1
+            fi
+
+            cp "$evidence_file" "$evidence_root/$run_id.json"
+          done
+      - name: Summarize full-week acceptance
+        run: >-
+          node scripts/transit-snapshot/summarize-full-weekly-d1-write-acceptance.mjs
+          .transit-snapshot/full-week-d1-evidence
+          snapshot-full-week-d1-acceptance.json
+      - name: Require accepted full week
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const evidence = JSON.parse(await readFile('snapshot-full-week-d1-acceptance.json', 'utf8'))
+          if (evidence.fullWeeklyShardAcceptance !== true) {
+            console.error(JSON.stringify(evidence))
+            process.exit(1)
+          }
+          console.log(JSON.stringify(evidence))
+          NODE
+      - name: Upload full-week acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: snapshot-full-week-d1-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            snapshot-full-week-d1-acceptance.json
+            .transit-snapshot/full-week-d1-evidence/*.json
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 9
