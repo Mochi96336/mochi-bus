@@ -103,6 +103,12 @@ describe('full weekly observed D1 write acceptance', () => {
     expect(evidence.fullWeeklyShardAcceptance).toBe(false)
   })
 
+  it('rejects a daily artifact whose budget limit is missing instead of assuming the default', () => {
+    const week = acceptedWeek()
+    delete week[1].budgetLimit
+    expect(() => summarizeFullWeeklyD1WriteAcceptance(week)).toThrow(/budget or totals/)
+  })
+
   it('requires a Sunday-to-Saturday calendar boundary, not merely seven accepted dates', () => {
     const mondayStart = '2026-09-14'
     const week = Array.from({ length: 7 }, (_, index) => dailyEvidence(addDays(mondayStart, index), index))
