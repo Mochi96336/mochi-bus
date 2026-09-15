@@ -6,11 +6,13 @@ import { parseWindowSummary } from './window-contract.mjs'
 import { scheduledCitiesForTaipeiDate } from './snapshot-schedule.mjs'
 
 const WINDOW_ID = /^v1:([A-Za-z][A-Za-z0-9]{0,63}):(\d{4}-\d{2}-\d{2}):0317$/
+const PUBLISHER_D1_FILE = /^(?:import-\d+\.sql|cleanup\.sql)$/
 const DEFAULT_BUDGET = 75_000
 const MAX_RAW_BYTES = 16 * 1024 * 1024
 
 export async function summarizeScheduledD1WriteEvidence({
   summaryRoot,
+  publisherRoot,
   observedFile,
   env = process.env,
 } = {}) {
@@ -53,7 +55,8 @@ export async function summarizeScheduledD1WriteEvidence({
   const expectedSorted = [...expectedCities].sort()
   const exactCitySet = actualCities.length === expectedSorted.length
     && actualCities.every((city, index) => city === expectedSorted[index])
-  const cities = expectedCities.map((city) => {
+  const cities = []
+  for (const city of expectedCities) {
     const summary = summaryByCity.get(city) ?? null
     const cityRecords = recordByCity.get(city) ?? []
     const stageRowsWritten = sum(cityRecords.filter((record) => record.phase === 'stage'), 'rowsWritten')
@@ -63,12 +66,17 @@ export async function summarizeScheduledD1WriteEvidence({
       && (summary.result === 'published' || summary.result === 'unchanged')
       && summary.durableRecordWrite === 'success'
       && (summary.activeProbeResult === 'success' || summary.activeProbeResult === 'degraded')
+    const expectedSourceFiles = summary?.result === 'published'
+      ? await readExpectedPublisherFiles(publisherRoot, city)
+      : []
+    const observedSourceFiles = cityRecords.map((record) => record.sourceFile).sort()
     const metricsComplete = summary?.result === 'published'
-      ? cityRecords.some((record) => record.phase === 'stage')
+      ? expectedSourceFiles.some((name) => name.startsWith('import-'))
+        && sameStrings(observedSourceFiles, expectedSourceFiles)
       : summary?.result === 'unchanged'
         ? cityRecords.length === 0
         : false
-    return Object.freeze({
+    cities.push(Object.freeze({
       city,
       windowId: summary?.windowId ?? `v1:${city}:${scheduleDate}:0317`,
       result: summary?.result ?? 'missing',
@@ -78,11 +86,14 @@ export async function summarizeScheduledD1WriteEvidence({
       stageRowsWritten,
       cleanupRowsWritten,
       rowsWritten,
+      expectedExecutions: expectedSourceFiles.length,
       observedExecutions: cityRecords.length,
+      expectedSourceFiles: Object.freeze(expectedSourceFiles),
+      observedSourceFiles: Object.freeze(observedSourceFiles),
       successfulWindow,
       metricsComplete,
-    })
-  })
+    }))
+  }
   const totalRowsWritten = cities.reduce((total, city) => total + city.rowsWritten, 0)
   const shardAcceptanceEvidence = exactCitySet
     && cities.every((city) => city.successfulWindow && city.metricsComplete)
@@ -109,13 +120,13 @@ export async function summarizeScheduledD1WriteEvidence({
 }
 
 export async function main(env = process.env, argv = process.argv.slice(2)) {
-  const [summaryRoot, observedFile, outputFile] = argv
-  if (!summaryRoot || !observedFile || !outputFile) {
-    throw new Error('Usage: summarize-scheduled-d1-write-evidence.mjs <summary-root> <observed-jsonl> <output-json>')
+  const [summaryRoot, publisherRoot, observedFile, outputFile] = argv
+  if (!summaryRoot || !publisherRoot || !observedFile || !outputFile) {
+    throw new Error('Usage: summarize-scheduled-d1-write-evidence.mjs <summary-root> <publisher-root> <observed-jsonl> <output-json>')
   }
   let evidence
   try {
-    evidence = await summarizeScheduledD1WriteEvidence({ summaryRoot, observedFile, env })
+    evidence = await summarizeScheduledD1WriteEvidence({ summaryRoot, publisherRoot, observedFile, env })
   } catch {
     evidence = {
       schemaVersion: 1,
@@ -165,6 +176,21 @@ async function readObservedRecords(file) {
   }
   if (Buffer.byteLength(text, 'utf8') > MAX_RAW_BYTES) throw new Error('Scheduled D1 observed metrics exceeded byte limit')
   return text.split('\n').filter(Boolean).map((line) => parseObservedD1WriteRecord(JSON.parse(line)))
+}
+
+async function readExpectedPublisherFiles(root, city) {
+  if (!root) return []
+  let names
+  try {
+    names = await readdir(join(root, city))
+  } catch {
+    return []
+  }
+  return names.filter((name) => PUBLISHER_D1_FILE.test(name)).sort()
+}
+
+function sameStrings(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function sum(records, field) {
