@@ -68,7 +68,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: quality-check-log
-          path: quality-check.log
+          path: |
+            quality-check.log
+            worker-configuration.d.ts
           if-no-files-found: error
           retention-days: 7
 
