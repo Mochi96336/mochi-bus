@@ -166,6 +166,11 @@ jobs:
           SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: ${{ steps.operation.outputs.static_intercity_shape_refresh_days }}
           SNAPSHOT_STATIC_SOURCE_BYPASS_FLOOR: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
           SNAPSHOT_HIGH_CARD_RETIREMENT_REPORT: .transit-snapshot/scheduled-retirement-readiness.json
+          # Scheduled runs observe the original whole-file D1 execution via Wrangler JSON.
+          # Metrics are fail-open and never split/retry a successful commit.
+          NODE_OPTIONS: ${{ github.event_name == 'schedule' && '--import=./scripts/transit-snapshot/install-observed-d1-write.mjs' || '' }}
+          SNAPSHOT_D1_OBSERVED_WRITE: ${{ github.event_name == 'schedule' && '1' || '' }}
+          SNAPSHOT_D1_OBSERVED_WRITE_FILE: snapshot-scheduled-d1-write-observed.jsonl
           # Free D1 is 100k rows_written/account/day. Scheduled publishers share
           # 75k and reserve whenever the source comparison leads to publication:
           # either changed content or a bounded native-authority refresh. Keep
@@ -227,6 +232,7 @@ jobs:
           fi
           failed=""
           for city in $cities; do
+            export SNAPSHOT_D1_OBSERVED_WRITE_CITY="$city"
             if [ -n "$retirement_report" ]; then
               refresh_flag="$(node scripts/transit-snapshot/scheduled-native-authority-refresh.mjs "$retirement_report" "$city")"
               if [ "$refresh_flag" = "1" ]; then
@@ -251,6 +257,29 @@ jobs:
             npm run snapshot:repair-legacy-previous -- \
               postflight "$INPUT_CITY" "$INPUT_EXPECTED_ACTIVE" "$INPUT_EXPECTED_PREVIOUS" "$SNAPSHOT_WINDOW_DATE"
           fi
+      - name: Build scheduled D1 write evidence
+        if: always() && github.event_name == 'schedule' && steps.operation.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          SNAPSHOT_D1_WRITE_BUDGET: '75000'
+        run: >-
+          node scripts/transit-snapshot/summarize-scheduled-d1-write-evidence.mjs
+          .transit-snapshot/window-results
+          snapshot-scheduled-d1-write-observed.jsonl
+          snapshot-scheduled-d1-write-evidence.json
+      - name: Upload scheduled D1 write evidence
+        if: always() && github.event_name == 'schedule' && steps.operation.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: snapshot-scheduled-d1-write-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            snapshot-scheduled-d1-write-evidence.json
+            snapshot-scheduled-d1-write-observed.jsonl
+            .transit-snapshot/window-results/*.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
       - name: Cleanup shared TDX snapshot token
         if: always()
         run: rm -f .transit-snapshot/tdx-access-token.json
