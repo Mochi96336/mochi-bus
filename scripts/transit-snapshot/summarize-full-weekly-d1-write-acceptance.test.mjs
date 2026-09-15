@@ -48,6 +48,7 @@ describe('full weekly observed D1 write acceptance', () => {
       dayCount: 7,
       expectedCityCount: 22,
       observedCityCount: 22,
+      acceptanceDailyBudget: 75000,
       weekIsConsecutive: true,
       startsSunday: true,
       endsSaturday: true,
@@ -57,6 +58,7 @@ describe('full weekly observed D1 write acceptance', () => {
     })
     expect(evidence.workflowRunIds).toEqual(['1000', '1001', '1002', '1003', '1004', '1005', '1006'])
     expect(evidence.days.every((day) => day.dailyAcceptance)).toBe(true)
+    expect(evidence.days.every((day) => day.dailyBudgetMatchesAcceptanceLimit)).toBe(true)
   })
 
   it('requires exactly seven daily evidence records', () => {
@@ -107,6 +109,26 @@ describe('full weekly observed D1 write acceptance', () => {
     const week = acceptedWeek()
     delete week[1].budgetLimit
     expect(() => summarizeFullWeeklyD1WriteAcceptance(week)).toThrow(/budget or totals/)
+  })
+
+  it('fails closed when a daily artifact inflates the acceptance ceiling above 75,000', () => {
+    const week = acceptedWeek()
+    const totalRowsWritten = 80000
+    week[5] = {
+      ...week[5],
+      budgetLimit: 100000,
+      totalRowsWritten,
+      headroom: 20000,
+      cities: week[5].cities.map((city, index) => ({
+        ...city,
+        rowsWritten: index === 0 ? totalRowsWritten : 0,
+      })),
+    }
+    const evidence = summarizeFullWeeklyD1WriteAcceptance(week)
+    expect(evidence.days[5].budgetConsistent).toBe(true)
+    expect(evidence.days[5].dailyBudgetMatchesAcceptanceLimit).toBe(false)
+    expect(evidence.days[5].withinDailyBudget).toBe(false)
+    expect(evidence.fullWeeklyShardAcceptance).toBe(false)
   })
 
   it('requires a Sunday-to-Saturday calendar boundary, not merely seven accepted dates', () => {
