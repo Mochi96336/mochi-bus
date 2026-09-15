@@ -51,7 +51,7 @@ describe('manual reviewed bundle apply-to-PR workflow contracts', () => {
     expect(uploadIndex).toBeGreaterThan(-1)
     expect(commitIndex).toBeGreaterThan(uploadIndex)
     expect(prIndex).toBeGreaterThan(commitIndex)
-    expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    expect(workflow).toContain('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')
     expect(workflow).toContain('.generated/apply-review-run.json')
     expect(workflow).toContain('if-no-files-found: error')
     expect(workflow).toContain('include-hidden-files: true')
