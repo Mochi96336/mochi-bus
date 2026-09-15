@@ -17,7 +17,7 @@ describe('full-week observed D1 acceptance workflow', () => {
   it('requires exactly seven unique numeric scheduled Sync run IDs', () => {
     expect(workflow).toContain("if [ \"${#run_ids[@]}\" -ne 7 ]; then")
     expect(workflow).toContain('Duplicate workflow run ID: $run_id')
-    expect(workflow).toContain('^[$')
+    expect(workflow).toContain('[[ "$run_id" =~ ^[1-9][0-9]*$ ]]')
     expect(workflow).toContain('test "$event" = \'schedule\'')
     expect(workflow).toContain('test "$head_branch" = \'main\'')
     expect(workflow).toContain('test "$workflow_path" = \'.github/workflows/sync-transit.yml\'')
@@ -36,13 +36,13 @@ describe('full-week observed D1 acceptance workflow', () => {
 
   it('uses the offline validator and fails closed unless the real weekly gate is true', () => {
     expect(workflow).toContain('summarize-full-weekly-d1-write-acceptance.mjs')
-    expect(workflow).toContain("evidence.fullWeeklyShardAcceptance !== true")
+    expect(workflow).toContain('evidence.fullWeeklyShardAcceptance !== true')
     expect(workflow).toContain('process.exit(1)')
     expect(workflow).toContain('snapshot-full-week-d1-acceptance-${{ github.run_id }}-${{ github.run_attempt }}')
     expect(workflow).toContain('retention-days: 14')
   })
 
-  it('has no production credential or mutation surface', () => {
+  it('has no production credential, dispatch, or mutation surface', () => {
     for (const forbidden of [
       'secrets.',
       'TDX_CLIENT_ID',
@@ -54,7 +54,8 @@ describe('full-week observed D1 acceptance workflow', () => {
       'wrangler',
       'snapshot:window',
       'force_publish',
-      'workflow_dispatches',
+      'gh workflow run',
+      '--method',
     ]) {
       expect(workflow).not.toContain(forbidden)
     }
