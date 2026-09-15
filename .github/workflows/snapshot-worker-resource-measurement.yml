@@ -50,6 +50,35 @@ jobs:
           node scripts/instance/assert-operation-city.mjs Taipei
           node scripts/instance/assert-operation-city.mjs NewTaipei
           node scripts/instance/assert-operation-city.mjs Taichung
+      - name: Require Cloudflare Account Analytics READY before Worker deployment
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}
+          CLOUDFLARE_ANALYTICS_PREFLIGHT_REPORT: ${{ runner.temp }}/snapshot-worker-resource-${{ github.run_id }}-${{ github.run_attempt }}/artifact/cloudflare-analytics-credential-preflight.json
+        run: |
+          set -euo pipefail
+          set +x
+          node scripts/transit-snapshot/cloudflare-analytics-credential-preflight.mjs
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+
+          const report = JSON.parse(await readFile(process.env.CLOUDFLARE_ANALYTICS_PREFLIGHT_REPORT, 'utf8'))
+          if (report?.ready !== true || report?.outcome !== 'ready') {
+            console.error(JSON.stringify({
+              event: report?.event ?? null,
+              outcome: report?.outcome ?? null,
+              ready: report?.ready ?? false,
+              httpStatus: report?.httpStatus ?? null,
+              dataset: report?.dataset ?? null,
+              operationName: report?.operationName ?? null,
+              errorDetail: report?.errorDetail ?? null,
+            }))
+            console.error('Cloudflare Account Analytics preflight: NOT READY; no measurement Worker was deployed')
+            process.exit(1)
+          }
+          console.log('Cloudflare Account Analytics preflight: READY; Worker measurement may proceed')
+          NODE
       - name: Build production bundle
         run: npm run build:map
       - name: Measure direct and transfer Worker resources
