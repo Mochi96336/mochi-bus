@@ -25,13 +25,25 @@ describe('full-week observed D1 acceptance workflow', () => {
     expect(workflow).toContain('test "$conclusion" = \'success\'')
   })
 
-  it('binds each download to the exact latest-attempt daily evidence artifact', () => {
+  it('binds each download to the exact latest-attempt live daily evidence artifact', () => {
+    expect(workflow).toContain("head_sha=\"$(jq -r '.head_sha' <<< \"$metadata\")\"")
     expect(workflow).toContain("run_attempt=\"$(jq -r '.run_attempt' <<< \"$metadata\")\"")
+    expect(workflow).toContain('[[ "$head_sha" =~ ^[a-f0-9]{40}$ ]]')
     expect(workflow).toContain('artifact_name="snapshot-scheduled-d1-write-${run_id}-${run_attempt}"')
-    expect(workflow).toContain('artifacts?name=$artifact_name')
-    expect(workflow).toContain('Expected exactly one $artifact_name artifact')
+    expect(workflow).toContain('select(.expired == false)')
+    expect(workflow).toContain('Expected exactly one live $artifact_name artifact')
     expect(workflow).toContain('gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact_name"')
     expect(workflow).toContain('snapshot-scheduled-d1-write-evidence.json')
+  })
+
+  it('rejects a daily artifact whose embedded provenance disagrees with GitHub run metadata', () => {
+    expect(workflow).toContain("evidence_run_id=\"$(jq -r '.workflowRunId' \"$evidence_file\")\"")
+    expect(workflow).toContain("evidence_run_attempt=\"$(jq -r '.workflowRunAttempt' \"$evidence_file\")\"")
+    expect(workflow).toContain("evidence_git_sha=\"$(jq -r '.scriptGitSha' \"$evidence_file\")\"")
+    expect(workflow).toContain('[ "$evidence_run_id" != "$run_id" ]')
+    expect(workflow).toContain('[ "$evidence_run_attempt" != "$run_attempt" ]')
+    expect(workflow).toContain('[ "$evidence_git_sha" != "$head_sha" ]')
+    expect(workflow).toContain('Scheduled D1 evidence provenance mismatch for run $run_id')
   })
 
   it('uses the offline validator and fails closed unless the real weekly gate is true', () => {
