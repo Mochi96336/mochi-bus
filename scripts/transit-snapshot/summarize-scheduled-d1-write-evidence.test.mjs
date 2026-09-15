@@ -56,8 +56,23 @@ function record(rowsWritten = 1200, overrides = {}) {
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'scheduled-d1-evidence-'))
   const summaries = join(root, 'window-results')
+  const publisher = join(root, 'Taichung')
   mkdirSync(summaries)
-  return { root, summaries, observed: join(root, 'observed.jsonl') }
+  mkdirSync(publisher)
+  return { root, summaries, publisherRoot: root, publisher, observed: join(root, 'observed.jsonl') }
+}
+
+function writePublisherFiles(files, names) {
+  for (const name of names) writeFileSync(join(files.publisher, name), '-- evidence fixture\n')
+}
+
+function summarize(files) {
+  return summarizeScheduledD1WriteEvidence({
+    summaryRoot: files.summaries,
+    publisherRoot: files.publisherRoot,
+    observedFile: files.observed,
+    env,
+  })
 }
 
 describe('scheduled D1 write shard evidence', () => {
@@ -65,14 +80,11 @@ describe('scheduled D1 write shard evidence', () => {
     const files = fixture()
     try {
       writeFileSync(join(files.summaries, 'Taichung.json'), JSON.stringify(summary()))
+      writePublisherFiles(files, ['import-0.sql', 'cleanup.sql'])
       writeFileSync(files.observed, `${JSON.stringify(record(1200))}\n${JSON.stringify(record(50, {
         phase: 'cleanup', sourceFile: 'cleanup.sql', recordedAt: '2026-09-18T03:24:00.000Z',
       }))}\n`)
-      const evidence = await summarizeScheduledD1WriteEvidence({
-        summaryRoot: files.summaries,
-        observedFile: files.observed,
-        env,
-      })
+      const evidence = await summarize(files)
       expect(evidence).toMatchObject({
         scheduleDate: date,
         workflowRunId: '123456789',
@@ -91,7 +103,10 @@ describe('scheduled D1 write shard evidence', () => {
         stageRowsWritten: 1200,
         cleanupRowsWritten: 50,
         rowsWritten: 1250,
+        expectedExecutions: 2,
         observedExecutions: 2,
+        expectedSourceFiles: ['cleanup.sql', 'import-0.sql'],
+        observedSourceFiles: ['cleanup.sql', 'import-0.sql'],
         successfulWindow: true,
         metricsComplete: true,
       })
@@ -104,13 +119,10 @@ describe('scheduled D1 write shard evidence', () => {
     const files = fixture()
     try {
       writeFileSync(join(files.summaries, 'Taichung.json'), JSON.stringify(summary('unchanged')))
-      const evidence = await summarizeScheduledD1WriteEvidence({
-        summaryRoot: files.summaries,
-        observedFile: files.observed,
-        env,
-      })
+      const evidence = await summarize(files)
       expect(evidence.totalRowsWritten).toBe(0)
       expect(evidence.unchangedCount).toBe(1)
+      expect(evidence.cities[0].expectedExecutions).toBe(0)
       expect(evidence.shardAcceptanceEvidence).toBe(true)
     } finally {
       rmSync(files.root, { recursive: true, force: true })
@@ -121,12 +133,31 @@ describe('scheduled D1 write shard evidence', () => {
     const files = fixture()
     try {
       writeFileSync(join(files.summaries, 'Taichung.json'), JSON.stringify(summary()))
-      const evidence = await summarizeScheduledD1WriteEvidence({
-        summaryRoot: files.summaries,
-        observedFile: files.observed,
-        env,
-      })
+      writePublisherFiles(files, ['import-0.sql'])
+      const evidence = await summarize(files)
+      expect(evidence.cities[0].expectedExecutions).toBe(1)
+      expect(evidence.cities[0].observedExecutions).toBe(0)
       expect(evidence.cities[0].metricsComplete).toBe(false)
+      expect(evidence.shardAcceptanceEvidence).toBe(false)
+    } finally {
+      rmSync(files.root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not accept partial metrics when one committed publisher file is missing observation', async () => {
+    const files = fixture()
+    try {
+      writeFileSync(join(files.summaries, 'Taichung.json'), JSON.stringify(summary()))
+      writePublisherFiles(files, ['import-0.sql', 'import-1.sql'])
+      writeFileSync(files.observed, `${JSON.stringify(record(1200))}\n`)
+      const evidence = await summarize(files)
+      expect(evidence.cities[0]).toMatchObject({
+        expectedExecutions: 2,
+        observedExecutions: 1,
+        expectedSourceFiles: ['import-0.sql', 'import-1.sql'],
+        observedSourceFiles: ['import-0.sql'],
+        metricsComplete: false,
+      })
       expect(evidence.shardAcceptanceEvidence).toBe(false)
     } finally {
       rmSync(files.root, { recursive: true, force: true })
@@ -137,12 +168,9 @@ describe('scheduled D1 write shard evidence', () => {
     const files = fixture()
     try {
       writeFileSync(join(files.summaries, 'Taichung.json'), JSON.stringify(summary()))
+      writePublisherFiles(files, ['import-0.sql'])
       writeFileSync(files.observed, `${JSON.stringify(record(10, { workflowRunId: '987654321' }))}\n`)
-      await expect(summarizeScheduledD1WriteEvidence({
-        summaryRoot: files.summaries,
-        observedFile: files.observed,
-        env,
-      })).rejects.toThrow(/provenance/)
+      await expect(summarize(files)).rejects.toThrow(/provenance/)
     } finally {
       rmSync(files.root, { recursive: true, force: true })
     }
@@ -152,12 +180,9 @@ describe('scheduled D1 write shard evidence', () => {
     const files = fixture()
     try {
       writeFileSync(join(files.summaries, 'Taichung.json'), JSON.stringify(summary()))
+      writePublisherFiles(files, ['import-0.sql'])
       writeFileSync(files.observed, `${JSON.stringify(record(75001))}\n`)
-      const evidence = await summarizeScheduledD1WriteEvidence({
-        summaryRoot: files.summaries,
-        observedFile: files.observed,
-        env,
-      })
+      const evidence = await summarize(files)
       expect(evidence.totalRowsWritten).toBe(75001)
       expect(evidence.headroom).toBe(-1)
       expect(evidence.shardAcceptanceEvidence).toBe(false)
