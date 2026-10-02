@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 
 const STATE_MAX_BYTES = 32 * 1024
 const PAYLOAD_MAX_BYTES = 64 * 1024 * 1024
-const LEGACY_PROMOTED_PAYLOAD_MAX_BYTES = 256 * 1024 * 1024
+const PAYLOAD_CHUNK_BYTES = 16 * 1024 * 1024
+const PROMOTED_PAYLOAD_MAX_BYTES = 256 * 1024 * 1024
 const OVERSIZE_CACHE_FAILURE = 'oversize_cache_unreadable'
 // Match the publisher-wide R2 ceiling so verified legacy payloads above 64 MiB have
 // enough time to stream from R2 while remaining strictly bounded.
@@ -26,6 +27,9 @@ export function createTdxStaticSourceCache({
   minimumRefreshMsForResource = () => 0,
   bypassMinimumRefresh = false,
   now = () => Date.now(),
+  singleBlobMaxBytes = PAYLOAD_MAX_BYTES,
+  chunkBytes = PAYLOAD_CHUNK_BYTES,
+  promotedPayloadMaxBytes = PROMOTED_PAYLOAD_MAX_BYTES,
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function')
   if (!storage) throw new TypeError('storage is required')
@@ -34,6 +38,13 @@ export function createTdxStaticSourceCache({
   if (!nonEmpty(eventName)) throw new TypeError('eventName is required')
   if (typeof minimumRefreshMsForResource !== 'function') throw new TypeError('minimumRefreshMsForResource must be a function')
   if (typeof now !== 'function') throw new TypeError('now must be a function')
+  if (!positiveSafeInteger(singleBlobMaxBytes)) throw new TypeError('singleBlobMaxBytes must be positive')
+  if (!positiveSafeInteger(chunkBytes)) throw new TypeError('chunkBytes must be positive')
+  if (!positiveSafeInteger(promotedPayloadMaxBytes) || promotedPayloadMaxBytes < singleBlobMaxBytes) {
+    throw new TypeError('promotedPayloadMaxBytes must be at least singleBlobMaxBytes')
+  }
+
+  const cacheLimits = Object.freeze({ singleBlobMaxBytes, chunkBytes, promotedPayloadMaxBytes })
 
   const resolve = async ({ resource, input, init }) => {
     try {
@@ -51,10 +62,10 @@ export function createTdxStaticSourceCache({
       if (!bypassMinimumRefresh && minimumRefreshMs > 0 && ageMs !== null && ageMs < minimumRefreshMs) {
         cachedBodyChecked = true
         try {
-          cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger)
+          cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger, cacheLimits)
         } catch (error) {
           logger?.warn?.(`TDX ${sourceLabel} persistent cache body read failed for ${resource}: ${errorMessage(error)}`)
-          if (isLegacyOversizeState(state, cachePrefix, resource)) {
+          if (isOversizePromotedState(state, cachePrefix, resource, singleBlobMaxBytes)) {
             return blockedOversizeResult({ state, eventName, resource, logger })
           }
         }
@@ -67,11 +78,12 @@ export function createTdxStaticSourceCache({
             bytes: cachedBody.byteLength,
             ageMs,
             minimumRefreshMs,
-            legacyOversize: cachedBody.byteLength > PAYLOAD_MAX_BYTES,
+            legacyOversize: state.schemaVersion === 1 && cachedBody.byteLength > singleBlobMaxBytes,
+            chunked: state.schemaVersion === 2,
           }))
           return { body: cachedBody, sourceVersion: state.sourceVersion }
         }
-        if (isLegacyOversizeState(state, cachePrefix, resource)) {
+        if (isOversizePromotedState(state, cachePrefix, resource, singleBlobMaxBytes)) {
           return blockedOversizeResult({ state, eventName, resource, logger })
         }
       }
@@ -109,17 +121,17 @@ export function createTdxStaticSourceCache({
 
       if (!cachedBodyChecked) {
         try {
-          cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger)
+          cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger, cacheLimits)
         } catch (error) {
           logger?.warn?.(`TDX ${sourceLabel} persistent cache body read failed for ${resource}: ${errorMessage(error)}`)
-          if (isLegacyOversizeState(state, cachePrefix, resource)) {
+          if (isOversizePromotedState(state, cachePrefix, resource, singleBlobMaxBytes)) {
             return blockedOversizeResult({ state, eventName, resource, logger, sourceVersion })
           }
           return { body: null, sourceVersion }
         }
       }
       if (cachedBody === null) {
-        if (isLegacyOversizeState(state, cachePrefix, resource)) {
+        if (isOversizePromotedState(state, cachePrefix, resource, singleBlobMaxBytes)) {
           return blockedOversizeResult({ state, eventName, resource, logger, sourceVersion })
         }
         return { body: null, sourceVersion }
@@ -149,7 +161,8 @@ export function createTdxStaticSourceCache({
         resolution: 'hit',
         sourceVersion,
         bytes: cachedBody.byteLength,
-        legacyOversize: cachedBody.byteLength > PAYLOAD_MAX_BYTES,
+        legacyOversize: state.schemaVersion === 1 && cachedBody.byteLength > singleBlobMaxBytes,
+            chunked: state.schemaVersion === 2,
       }))
       return { body: cachedBody, sourceVersion }
     } catch (error) {
@@ -167,22 +180,31 @@ export function createTdxStaticSourceCache({
     if (!sourceVersion) return null
     try {
       const bytes = Buffer.from(body)
-      if (bytes.byteLength > PAYLOAD_MAX_BYTES) throw new Error(`payload exceeds ${PAYLOAD_MAX_BYTES} bytes`)
+      if (bytes.byteLength > promotedPayloadMaxBytes) {
+        throw new Error(`payload exceeds ${promotedPayloadMaxBytes} bytes`)
+      }
       if (!validStaticPayload(resource, bytes)) throw new Error('payload failed static source validation')
       const digest = sha256(bytes)
       const semanticHash = semanticSourceHash(bytes)
-      const payloadKey = `${cachePrefix}/${resource}/payload-${digest}.json`
       const previous = await storage.getJson(stateKey(cachePrefix, resource), STATE_MAX_BYTES).catch(() => null)
-      const previousSemanticHash = await stateSemanticHash(previous, cachePrefix, resource, storage)
-      await storage.putBuffer(payloadKey, bytes, 'application/json')
-      const candidate = Object.freeze({
-        schemaVersion: 1,
+      const previousSemanticHash = await stateSemanticHash(
+        previous,
+        cachePrefix,
+        resource,
+        storage,
+        sourceLabel,
+        logger,
+        cacheLimits,
+      )
+      const candidate = await stagePayloadCandidate({
+        storage,
+        cachePrefix,
         resource,
         sourceVersion,
-        payloadKey,
-        sha256: digest,
+        bytes,
+        digest,
         semanticHash,
-        bytes: bytes.byteLength,
+        cacheLimits,
       })
       logger?.log?.(JSON.stringify({
         event: eventName,
@@ -190,6 +212,8 @@ export function createTdxStaticSourceCache({
         resolution: 'staged',
         sourceVersion,
         bytes: bytes.byteLength,
+        storageLayout: candidate.schemaVersion === 2 ? 'chunked' : 'single',
+        chunkCount: candidate.schemaVersion === 2 ? candidate.chunks.length : 1,
       }))
       if (previousSemanticHash && previousSemanticHash === semanticHash) {
         await promote(candidate)
@@ -199,6 +223,7 @@ export function createTdxStaticSourceCache({
           resolution: 'equivalent-promoted',
           sourceVersion,
           bytes: bytes.byteLength,
+          storageLayout: candidate.schemaVersion === 2 ? 'chunked' : 'single',
         }))
       }
       return candidate
@@ -213,32 +238,29 @@ export function createTdxStaticSourceCache({
     try {
       const key = stateKey(cachePrefix, candidate.resource)
       const previous = await storage.getJson(key, STATE_MAX_BYTES).catch(() => null)
-      await storage.putJson(key, {
-        schemaVersion: 1,
-        resource: candidate.resource,
-        sourceVersion: candidate.sourceVersion,
-        payloadKey: candidate.payloadKey,
-        sha256: candidate.sha256,
-        semanticHash: candidate.semanticHash,
-        bytes: candidate.bytes,
-        refreshedAt: new Date(currentTimeMs(now)).toISOString(),
-      })
+      const nextState = candidateState(candidate, now)
+      await storage.putJson(key, nextState)
       logger?.log?.(JSON.stringify({
         event: eventName,
         resource: candidate.resource,
         resolution: 'promoted',
         sourceVersion: candidate.sourceVersion,
         bytes: candidate.bytes,
+        storageLayout: candidate.schemaVersion === 2 ? 'chunked' : 'single',
+        chunkCount: candidate.schemaVersion === 2 ? candidate.chunks.length : 1,
       }))
 
-      // state.json is committed first. Old content-addressed bytes are now unreachable and
-      // can be removed best-effort without risking the new cache authority.
+      // state.json is committed first. Content-addressed objects no longer referenced by
+      // the promoted state can then be removed best-effort without risking authority.
       if (validState(previous, cachePrefix, candidate.resource)
-        && previous.payloadKey !== candidate.payloadKey
         && typeof storage.deleteObject === 'function') {
-        await storage.deleteObject(previous.payloadKey).catch((error) => {
-          logger?.warn?.(`TDX ${sourceLabel} old cache cleanup failed for ${candidate.resource}: ${errorMessage(error)}`)
-        })
+        const nextKeys = new Set(stateObjectKeys(nextState))
+        for (const oldKey of stateObjectKeys(previous)) {
+          if (nextKeys.has(oldKey)) continue
+          await storage.deleteObject(oldKey).catch((error) => {
+            logger?.warn?.(`TDX ${sourceLabel} old cache cleanup failed for ${candidate.resource}: ${errorMessage(error)}`)
+          })
+        }
       }
       return true
     } catch (error) {
@@ -361,6 +383,10 @@ function stateKey(cachePrefix, resource) {
 }
 
 function validState(value, cachePrefix, resource) {
+  return validSingleState(value, cachePrefix, resource) || validChunkedState(value, cachePrefix, resource)
+}
+
+function validSingleState(value, cachePrefix, resource) {
   return value && value.schemaVersion === 1
     && value.resource === resource
     && nonEmpty(value.sourceVersion)
@@ -371,21 +397,53 @@ function validState(value, cachePrefix, resource) {
     && value.bytes >= 0
 }
 
-function validCandidate(value, cachePrefix) {
-  return value && value.schemaVersion === 1
-    && typeof value.resource === 'string'
+function validChunkedState(value, cachePrefix, resource) {
+  return value && value.schemaVersion === 2
+    && value.resource === resource
     && nonEmpty(value.sourceVersion)
-    && typeof value.payloadKey === 'string'
-    && value.payloadKey.startsWith(`${cachePrefix}/${value.resource}/payload-`)
     && /^[a-f0-9]{64}$/.test(value.sha256)
-    && /^[a-f0-9]{64}$/.test(value.semanticHash)
     && Number.isSafeInteger(value.bytes)
-    && value.bytes >= 0
+    && value.bytes > 0
+    && validChunks(value.chunks, cachePrefix, resource, value.bytes)
 }
 
-async function verifiedCachedBody(storage, state, sourceLabel, resource, logger) {
-  const maximumBytes = promotedPayloadReadLimit(state)
-  const body = await storage.getBuffer(state.payloadKey, maximumBytes)
+function validCandidate(value, cachePrefix) {
+  if (!value || typeof value.resource !== 'string' || !nonEmpty(value.sourceVersion)) return false
+  if (!/^[a-f0-9]{64}$/.test(value.sha256) || !/^[a-f0-9]{64}$/.test(value.semanticHash)) return false
+  if (!Number.isSafeInteger(value.bytes) || value.bytes <= 0) return false
+  if (value.schemaVersion === 1) {
+    return typeof value.payloadKey === 'string'
+      && value.payloadKey.startsWith(`${cachePrefix}/${value.resource}/payload-`)
+  }
+  if (value.schemaVersion === 2) {
+    return validChunks(value.chunks, cachePrefix, value.resource, value.bytes)
+  }
+  return false
+}
+
+function validChunks(chunks, cachePrefix, resource, expectedBytes) {
+  if (!Array.isArray(chunks) || chunks.length === 0) return false
+  let total = 0
+  for (const chunk of chunks) {
+    if (!chunk || typeof chunk.key !== 'string'
+      || !chunk.key.startsWith(`${cachePrefix}/${resource}/chunks/`)
+      || !/^[a-f0-9]{64}$/.test(chunk.sha256)
+      || !Number.isSafeInteger(chunk.bytes)
+      || chunk.bytes <= 0) return false
+    total += chunk.bytes
+    if (!Number.isSafeInteger(total)) return false
+  }
+  return total === expectedBytes
+}
+
+async function verifiedCachedBody(storage, state, sourceLabel, resource, logger, cacheLimits) {
+  let body
+  if (state.schemaVersion === 2) {
+    body = await readChunkedPayload(storage, state, sourceLabel, resource, logger, cacheLimits)
+  } else {
+    const maximumBytes = promotedPayloadReadLimit(state, cacheLimits)
+    body = await storage.getBuffer(state.payloadKey, maximumBytes)
+  }
   if (body === null) return null
   const digest = sha256(body)
   if (digest !== state.sha256 || body.byteLength !== state.bytes) {
@@ -395,14 +453,39 @@ async function verifiedCachedBody(storage, state, sourceLabel, resource, logger)
   return body
 }
 
-function promotedPayloadReadLimit(state) {
-  if (state.bytes <= PAYLOAD_MAX_BYTES) return PAYLOAD_MAX_BYTES
-  if (state.bytes <= LEGACY_PROMOTED_PAYLOAD_MAX_BYTES) return state.bytes
-  throw new Error(`legacy promoted payload exceeds ${LEGACY_PROMOTED_PAYLOAD_MAX_BYTES} bytes`)
+async function readChunkedPayload(storage, state, sourceLabel, resource, logger, cacheLimits) {
+  if (state.bytes > cacheLimits.promotedPayloadMaxBytes) {
+    throw new Error(`chunked promoted payload exceeds ${cacheLimits.promotedPayloadMaxBytes} bytes`)
+  }
+  const parts = []
+  let total = 0
+  for (const chunk of state.chunks) {
+    const body = await storage.getBuffer(chunk.key, chunk.bytes)
+    if (body === null || body.byteLength !== chunk.bytes || sha256(body) !== chunk.sha256) {
+      logger?.warn?.(`TDX ${sourceLabel} persistent cache chunk integrity mismatch for ${resource}`)
+      return null
+    }
+    total += body.byteLength
+    if (total > cacheLimits.promotedPayloadMaxBytes) {
+      throw new Error(`chunked promoted payload exceeds ${cacheLimits.promotedPayloadMaxBytes} bytes`)
+    }
+    parts.push(body)
+  }
+  if (total !== state.bytes) {
+    logger?.warn?.(`TDX ${sourceLabel} persistent cache chunk byte total mismatch for ${resource}`)
+    return null
+  }
+  return Buffer.concat(parts, total)
 }
 
-function isLegacyOversizeState(state, cachePrefix, resource) {
-  return validState(state, cachePrefix, resource) && state.bytes > PAYLOAD_MAX_BYTES
+function promotedPayloadReadLimit(state, cacheLimits) {
+  if (state.bytes <= cacheLimits.singleBlobMaxBytes) return cacheLimits.singleBlobMaxBytes
+  if (state.bytes <= cacheLimits.promotedPayloadMaxBytes) return state.bytes
+  throw new Error(`legacy promoted payload exceeds ${cacheLimits.promotedPayloadMaxBytes} bytes`)
+}
+
+function isOversizePromotedState(state, cachePrefix, resource, singleBlobMaxBytes) {
+  return validState(state, cachePrefix, resource) && state.bytes > singleBlobMaxBytes
 }
 
 function blockedOversizeResult({ state, eventName, resource, logger, sourceVersion = state.sourceVersion }) {
@@ -413,6 +496,7 @@ function blockedOversizeResult({ state, eventName, resource, logger, sourceVersi
     sourceVersion,
     bytes: state.bytes,
     failureClass: OVERSIZE_CACHE_FAILURE,
+    storageLayout: state.schemaVersion === 2 ? 'chunked' : 'legacy-single',
   }))
   return {
     body: null,
@@ -420,6 +504,73 @@ function blockedOversizeResult({ state, eventName, resource, logger, sourceVersi
     blockUpstream: true,
     cacheFailure: OVERSIZE_CACHE_FAILURE,
   }
+}
+
+async function stagePayloadCandidate({
+  storage,
+  cachePrefix,
+  resource,
+  sourceVersion,
+  bytes,
+  digest,
+  semanticHash,
+  cacheLimits,
+}) {
+  if (bytes.byteLength <= cacheLimits.singleBlobMaxBytes) {
+    const payloadKey = `${cachePrefix}/${resource}/payload-${digest}.json`
+    await storage.putBuffer(payloadKey, bytes, 'application/json')
+    return Object.freeze({
+      schemaVersion: 1,
+      resource,
+      sourceVersion,
+      payloadKey,
+      sha256: digest,
+      semanticHash,
+      bytes: bytes.byteLength,
+    })
+  }
+
+  const chunks = []
+  const stagedKeys = new Set()
+  for (let offset = 0; offset < bytes.byteLength; offset += cacheLimits.chunkBytes) {
+    const chunkBody = bytes.subarray(offset, Math.min(bytes.byteLength, offset + cacheLimits.chunkBytes))
+    const chunkDigest = sha256(chunkBody)
+    const key = `${cachePrefix}/${resource}/chunks/${chunkDigest}.bin`
+    if (!stagedKeys.has(key)) {
+      await storage.putBuffer(key, chunkBody, 'application/octet-stream')
+      stagedKeys.add(key)
+    }
+    chunks.push(Object.freeze({ key, sha256: chunkDigest, bytes: chunkBody.byteLength }))
+  }
+  return Object.freeze({
+    schemaVersion: 2,
+    resource,
+    sourceVersion,
+    sha256: digest,
+    semanticHash,
+    bytes: bytes.byteLength,
+    chunks: Object.freeze(chunks),
+  })
+}
+
+function candidateState(candidate, now) {
+  const common = {
+    schemaVersion: candidate.schemaVersion,
+    resource: candidate.resource,
+    sourceVersion: candidate.sourceVersion,
+    sha256: candidate.sha256,
+    semanticHash: candidate.semanticHash,
+    bytes: candidate.bytes,
+    refreshedAt: new Date(currentTimeMs(now)).toISOString(),
+  }
+  return candidate.schemaVersion === 2
+    ? { ...common, chunks: candidate.chunks.map((chunk) => ({ ...chunk })) }
+    : { ...common, payloadKey: candidate.payloadKey }
+}
+
+function stateObjectKeys(state) {
+  if (state?.schemaVersion === 2 && Array.isArray(state.chunks)) return state.chunks.map((chunk) => chunk.key)
+  return typeof state?.payloadKey === 'string' ? [state.payloadKey] : []
 }
 
 async function renewRevalidationLease({ storage, state, cachePrefix, resource, sourceLabel, logger, now }) {
@@ -459,13 +610,20 @@ function currentTimeMs(now) {
   return Number.isFinite(milliseconds) ? milliseconds : Date.now()
 }
 
-async function stateSemanticHash(state, cachePrefix, resource, storage) {
+async function stateSemanticHash(
+  state,
+  cachePrefix,
+  resource,
+  storage,
+  sourceLabel,
+  logger,
+  cacheLimits,
+) {
   if (!validState(state, cachePrefix, resource)) return null
   if (/^[a-f0-9]{64}$/.test(state.semanticHash)) return state.semanticHash
   try {
-    const body = await storage.getBuffer(state.payloadKey, PAYLOAD_MAX_BYTES)
-    if (!body || body.byteLength !== state.bytes || sha256(body) !== state.sha256) return null
-    return semanticSourceHash(body)
+    const body = await verifiedCachedBody(storage, state, sourceLabel, resource, logger, cacheLimits)
+    return body ? semanticSourceHash(body) : null
   } catch {
     return null
   }
@@ -498,6 +656,10 @@ function sha256(value) {
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function positiveSafeInteger(value) {
+  return Number.isSafeInteger(value) && value > 0
 }
 
 function parseContentLength(value) {
