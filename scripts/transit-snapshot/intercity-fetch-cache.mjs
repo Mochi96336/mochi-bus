@@ -66,16 +66,16 @@ export function createIntercityFetchCache({
         const resolved = await persistent.resolve({ resource, input, init })
         sourceVersion = resolved?.sourceVersion ?? null
         if (resolved?.blockUpstream) {
-        logger?.log?.(JSON.stringify({
-          event: 'tdx_intercity_cache',
-          resource,
-          resolution: 'persistent-blocked',
-          sourceVersion,
-          failureClass: resolved.cacheFailure ?? 'persistent_cache_unavailable',
-        }))
-        return blockedPersistentResponse(resolved.cacheFailure)
-      }
-      if (resolved?.body) {
+          logger?.log?.(JSON.stringify({
+            event: 'tdx_intercity_cache',
+            resource,
+            resolution: 'persistent-blocked',
+            sourceVersion,
+            failureClass: resolved.cacheFailure ?? 'persistent_cache_unavailable',
+          }))
+          return blockedPersistentResponse(resolved.cacheFailure)
+        }
+        if (resolved?.body) {
           // Only promoted persistent bytes are allowed into the cross-process run cache.
           // A fresh upstream candidate stays process-local until snapshot validation succeeds.
           await writeCacheFailOpen(cachePath, resolved.body, resource, logger)
