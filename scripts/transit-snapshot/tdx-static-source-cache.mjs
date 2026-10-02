@@ -79,7 +79,7 @@ export function createTdxStaticSourceCache({
             ageMs,
             minimumRefreshMs,
             legacyOversize: state.schemaVersion === 1 && cachedBody.byteLength > singleBlobMaxBytes,
-        chunked: state.schemaVersion === 2,
+            chunked: state.schemaVersion === 2,
           }))
           return { body: cachedBody, sourceVersion: state.sourceVersion }
         }
@@ -162,7 +162,7 @@ export function createTdxStaticSourceCache({
         sourceVersion,
         bytes: cachedBody.byteLength,
         legacyOversize: state.schemaVersion === 1 && cachedBody.byteLength > singleBlobMaxBytes,
-            chunked: state.schemaVersion === 2,
+        chunked: state.schemaVersion === 2,
       }))
       return { body: cachedBody, sourceVersion }
     } catch (error) {
