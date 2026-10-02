@@ -1,5 +1,4 @@
 import { assertPublisherManifestBudget } from './publisher-manifest-budget.mjs'
-import { promotePendingTdxStaticSources } from './tdx-static-source-promotion.mjs'
 
 export class SnapshotValidationError extends Error {
   constructor(issues) {
@@ -107,10 +106,6 @@ export function validateSnapshot(snapshot, previousState = null) {
 
   validateNetwork(snapshot, patternIds, issues)
   if (issues.length) throw new SnapshotValidationError(issues)
-  // Fresh static payloads were only staged in R2 while this model was being built.
-  // Crossing the complete local validation boundary makes them safe cache authority.
-  // Promotion is an optimization and stays fail-open for publication correctness.
-  void promotePendingTdxStaticSources()
   // #280 made routing artifacts part of the main manifest. Bound its worst-case serialized
   // size now, while the process is still entirely local, instead of discovering the 16 MiB
   // validator ceiling after R2 objects and D1 rows have already been staged.

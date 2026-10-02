@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { loadOperationalResources } from './instance/operational-resources.mjs'
 import { validateSnapshot } from './transit-snapshot/validate.mjs'
+import { promotePendingTdxStaticSources } from './transit-snapshot/tdx-static-source-promotion.mjs'
 import { createStopPlaceRegistry } from './transit-snapshot/stop-place-registry.mjs'
 import { manifestReadLimit, readManifestJson } from './transit-snapshot/manifest-read-limit.mjs'
 import { parseContentLength } from './transit-snapshot/r2-metadata.mjs'
@@ -454,6 +455,14 @@ const validation = validateSnapshot({
   schedules: schedulesByRouteUid, placeBundles, network,
 }, previousState)
 console.log(JSON.stringify({ city: CITY, version, phase: 'local-validation', ...validation }))
+
+// Static TDX bytes are staged while the model is built but must not become shared
+// cache authority until every local validation gate above has passed. Await the
+// commit so the next city process in this sequential workflow can reuse the
+// promoted InterCity source instead of racing into another full TDX download.
+// Promotion remains fail-open for publication correctness; individual failures
+// are contained and reported by the promotion registry.
+await promotePendingTdxStaticSources()
 
 // Build the high-cardinality routing/search artifacts from the exact in-memory
 // source model before any remote write. Existing backfill exporters remain useful
