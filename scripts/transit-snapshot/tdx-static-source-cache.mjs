@@ -183,9 +183,10 @@ export function createTdxStaticSourceCache({
       if (bytes.byteLength > promotedPayloadMaxBytes) {
         throw new Error(`payload exceeds ${promotedPayloadMaxBytes} bytes`)
       }
-      if (!validStaticPayload(resource, bytes)) throw new Error('payload failed static source validation')
+      const parsedPayload = parseStaticPayload(resource, bytes)
+      if (!parsedPayload) throw new Error('payload failed static source validation')
       const digest = sha256(bytes)
-      const semanticHash = semanticSourceHash(bytes)
+      const semanticHash = semanticSourceHash(parsedPayload)
       const previous = await storage.getJson(stateKey(cachePrefix, resource), STATE_MAX_BYTES).catch(() => null)
       const previousSemanticHash = await stateSemanticHash(
         previous,
@@ -629,24 +630,26 @@ async function stateSemanticHash(
   }
 }
 
-function validStaticPayload(resource, bytes) {
+function parseStaticPayload(resource, bytes) {
   const identity = STATIC_RESOURCE_IDENTITY[resource]
-  if (!identity) return false
+  if (!identity) return null
   let value
   try {
     value = JSON.parse(bytes.toString('utf8'))
   } catch {
-    return false
+    return null
   }
   return Array.isArray(value)
     && value.length > 0
     && value.every((item) => item !== null && typeof item === 'object' && !Array.isArray(item))
     && value.some(identity)
+    ? value
+    : null
 }
 
-function semanticSourceHash(bytes) {
-  const parsed = JSON.parse(bytes.toString('utf8'))
-  const stable = JSON.stringify(parsed, (key, value) => VOLATILE_SOURCE_KEYS.has(key) ? undefined : value)
+function semanticSourceHash(value) {
+  const parsed = Buffer.isBuffer(value) ? JSON.parse(value.toString('utf8')) : value
+  const stable = JSON.stringify(parsed, (key, item) => VOLATILE_SOURCE_KEYS.has(key) ? undefined : item)
   return sha256(stable)
 }
 
