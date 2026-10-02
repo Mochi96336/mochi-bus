@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto'
 
 const STATE_MAX_BYTES = 32 * 1024
 const PAYLOAD_MAX_BYTES = 64 * 1024 * 1024
-const R2_REQUEST_TIMEOUT_MS = 10_000
+const LEGACY_PROMOTED_PAYLOAD_MAX_BYTES = 256 * 1024 * 1024
+const OVERSIZE_CACHE_FAILURE = 'oversize_cache_unreadable'
+// Match the publisher-wide R2 ceiling so verified legacy payloads above 64 MiB have
+// enough time to stream from R2 while remaining strictly bounded.
+const R2_REQUEST_TIMEOUT_MS = 20_000
 const VOLATILE_SOURCE_KEYS = new Set(['UpdateTime', 'SrcUpdateTime', 'SrcTransTime', 'VersionID'])
 const STATIC_RESOURCE_IDENTITY = Object.freeze({
   Route: (item) => nonEmpty(item?.RouteUID),
@@ -50,6 +54,9 @@ export function createTdxStaticSourceCache({
           cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger)
         } catch (error) {
           logger?.warn?.(`TDX ${sourceLabel} persistent cache body read failed for ${resource}: ${errorMessage(error)}`)
+          if (isLegacyOversizeState(state, cachePrefix, resource)) {
+            return blockedOversizeResult({ state, eventName, resource, logger })
+          }
         }
         if (cachedBody !== null) {
           logger?.log?.(JSON.stringify({
@@ -60,8 +67,12 @@ export function createTdxStaticSourceCache({
             bytes: cachedBody.byteLength,
             ageMs,
             minimumRefreshMs,
+            legacyOversize: cachedBody.byteLength > PAYLOAD_MAX_BYTES,
           }))
           return { body: cachedBody, sourceVersion: state.sourceVersion }
+        }
+        if (isLegacyOversizeState(state, cachePrefix, resource)) {
+          return blockedOversizeResult({ state, eventName, resource, logger })
         }
       }
 
@@ -101,10 +112,18 @@ export function createTdxStaticSourceCache({
           cachedBody = await verifiedCachedBody(storage, state, sourceLabel, resource, logger)
         } catch (error) {
           logger?.warn?.(`TDX ${sourceLabel} persistent cache body read failed for ${resource}: ${errorMessage(error)}`)
+          if (isLegacyOversizeState(state, cachePrefix, resource)) {
+            return blockedOversizeResult({ state, eventName, resource, logger, sourceVersion })
+          }
           return { body: null, sourceVersion }
         }
       }
-      if (cachedBody === null) return { body: null, sourceVersion }
+      if (cachedBody === null) {
+        if (isLegacyOversizeState(state, cachePrefix, resource)) {
+          return blockedOversizeResult({ state, eventName, resource, logger, sourceVersion })
+        }
+        return { body: null, sourceVersion }
+      }
 
       // A successful same-version probe is a real revalidation of the promoted
       // payload, but only after the cached bytes have passed size + SHA-256.
@@ -130,6 +149,7 @@ export function createTdxStaticSourceCache({
         resolution: 'hit',
         sourceVersion,
         bytes: cachedBody.byteLength,
+        legacyOversize: cachedBody.byteLength > PAYLOAD_MAX_BYTES,
       }))
       return { body: cachedBody, sourceVersion }
     } catch (error) {
@@ -364,7 +384,8 @@ function validCandidate(value, cachePrefix) {
 }
 
 async function verifiedCachedBody(storage, state, sourceLabel, resource, logger) {
-  const body = await storage.getBuffer(state.payloadKey, PAYLOAD_MAX_BYTES)
+  const maximumBytes = promotedPayloadReadLimit(state)
+  const body = await storage.getBuffer(state.payloadKey, maximumBytes)
   if (body === null) return null
   const digest = sha256(body)
   if (digest !== state.sha256 || body.byteLength !== state.bytes) {
@@ -372,6 +393,33 @@ async function verifiedCachedBody(storage, state, sourceLabel, resource, logger)
     return null
   }
   return body
+}
+
+function promotedPayloadReadLimit(state) {
+  if (state.bytes <= PAYLOAD_MAX_BYTES) return PAYLOAD_MAX_BYTES
+  if (state.bytes <= LEGACY_PROMOTED_PAYLOAD_MAX_BYTES) return state.bytes
+  throw new Error(`legacy promoted payload exceeds ${LEGACY_PROMOTED_PAYLOAD_MAX_BYTES} bytes`)
+}
+
+function isLegacyOversizeState(state, cachePrefix, resource) {
+  return validState(state, cachePrefix, resource) && state.bytes > PAYLOAD_MAX_BYTES
+}
+
+function blockedOversizeResult({ state, eventName, resource, logger, sourceVersion = state.sourceVersion }) {
+  logger?.log?.(JSON.stringify({
+    event: eventName,
+    resource,
+    resolution: 'blocked',
+    sourceVersion,
+    bytes: state.bytes,
+    failureClass: OVERSIZE_CACHE_FAILURE,
+  }))
+  return {
+    body: null,
+    sourceVersion,
+    blockUpstream: true,
+    cacheFailure: OVERSIZE_CACHE_FAILURE,
+  }
 }
 
 async function renewRevalidationLease({ storage, state, cachePrefix, resource, sourceLabel, logger, now }) {

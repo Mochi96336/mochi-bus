@@ -65,6 +65,16 @@ export function createIntercityFetchCache({
       try {
         const resolved = await persistent.resolve({ resource, input, init })
         sourceVersion = resolved?.sourceVersion ?? null
+        if (resolved?.blockUpstream) {
+          logger?.log?.(JSON.stringify({
+            event: 'tdx_intercity_cache',
+            resource,
+            resolution: 'persistent-blocked',
+            sourceVersion,
+            failureClass: resolved.cacheFailure ?? 'persistent_cache_unavailable',
+          }))
+          return blockedPersistentResponse(resolved.cacheFailure)
+        }
         if (resolved?.body) {
           // Only promoted persistent bytes are allowed into the cross-process run cache.
           // A fresh upstream candidate stays process-local until snapshot validation succeeds.
@@ -163,6 +173,19 @@ function jsonResponse(body, status = 200) {
   return new Response(body, {
     status,
     headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function blockedPersistentResponse(failureClass) {
+  return new Response(JSON.stringify({
+    error: 'persistent_cache_unavailable',
+    failureClass: failureClass ?? 'persistent_cache_unavailable',
+  }), {
+    status: 503,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
   })
 }
 

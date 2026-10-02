@@ -50,6 +50,33 @@ describe('City fetch cache', () => {
     expect(registerCandidate).not.toHaveBeenCalled()
   })
 
+  it('does not hit upstream when persistent storage blocks an unsafe oversized fallback', async () => {
+    const upstream = vi.fn()
+    const persistent = {
+      resolve: vi.fn(async () => ({
+        body: null,
+        sourceVersion: 'v1',
+        blockUpstream: true,
+        cacheFailure: 'oversize_cache_unreadable',
+      })),
+      stage: vi.fn(),
+    }
+    const cachedFetch = createCityFetchCache({
+      fetchImpl: upstream,
+      persistentForCity: () => persistent,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    })
+
+    const response = await cachedFetch(routeUrl)
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({
+      error: 'persistent_cache_unavailable',
+      failureClass: 'oversize_cache_unreadable',
+    })
+    expect(upstream).not.toHaveBeenCalled()
+    expect(persistent.stage).not.toHaveBeenCalled()
+  })
+
   it('stages and registers a full payload after a persistent miss without promoting it', async () => {
     const upstream = vi.fn(async () => new Response('[{"RouteUID":"TPE2"}]', { status: 200 }))
     const candidate = { resource: 'Route', sourceVersion: 'v2', payloadKey: 'candidate' }

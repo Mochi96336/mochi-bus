@@ -85,6 +85,38 @@ describe('intercity fetch cache', () => {
     expect(upstream).not.toHaveBeenCalled()
   })
 
+  it('does not hit upstream when persistent storage blocks an unsafe oversized fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mochi-intercity-cache-'))
+    roots.push(root)
+    const upstream = vi.fn()
+    const persistent = {
+      resolve: vi.fn(async () => ({
+        body: null,
+        sourceVersion: 'v1',
+        blockUpstream: true,
+        cacheFailure: 'oversize_cache_unreadable',
+      })),
+      stage: vi.fn(),
+    }
+    const fetchCached = createIntercityFetchCache({
+      fetchImpl: upstream,
+      root,
+      scope: 'run-blocked',
+      persistent,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    })
+    const url = 'https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/InterCity?$format=JSON'
+
+    const response = await fetchCached(url)
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({
+      error: 'persistent_cache_unavailable',
+      failureClass: 'oversize_cache_unreadable',
+    })
+    expect(upstream).not.toHaveBeenCalled()
+    expect(persistent.stage).not.toHaveBeenCalled()
+  })
+
   it('does not put an unvalidated upstream candidate into the cross-process run cache', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mochi-intercity-cache-'))
     roots.push(root)
