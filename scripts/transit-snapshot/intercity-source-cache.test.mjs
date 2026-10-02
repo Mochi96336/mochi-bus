@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { createIntercitySourceCache, intercityProbeUrl } from './intercity-source-cache.mjs'
 
@@ -5,15 +6,23 @@ const shapeUrl = 'https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/InterCity?
 
 function memoryStorage() {
   const objects = new Map()
+  const reads = []
   return {
     objects,
+    reads,
     async getJson(key) {
       const value = objects.get(key)
       return value === undefined ? null : JSON.parse(Buffer.from(value).toString('utf8'))
     },
-    async getBuffer(key) {
+    async getBuffer(key, maximumBytes) {
+      reads.push({ key, maximumBytes })
       const value = objects.get(key)
-      return value === undefined ? null : Buffer.from(value)
+      if (value === undefined) return null
+      const body = Buffer.isBuffer(value) ? value : Buffer.from(value)
+      if (maximumBytes !== undefined && body.byteLength > maximumBytes) {
+        throw new Error(`test storage read exceeds ${maximumBytes} bytes`)
+      }
+      return body
     },
     async putBuffer(key, body) {
       objects.set(key, Buffer.from(body))
@@ -130,6 +139,81 @@ describe('InterCity persistent source cache', () => {
     const resolved = await cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} })
     expect(resolved).toEqual({ body: null, sourceVersion: first.sourceVersion })
     expect(logger.warn).toHaveBeenCalled()
+  })
+
+  it('serves a verified legacy oversized promoted payload without probing or restaging it', async () => {
+    const storage = memoryStorage()
+    const logger = { log: vi.fn(), warn: vi.fn() }
+    const nowMs = Date.parse('2026-10-02T00:00:00.000Z')
+    const payload = Buffer.alloc(64 * 1024 * 1024 + 1, 0x61)
+    const digest = createHash('sha256').update(payload).digest('hex')
+    const payloadKey = `tdx-source-cache/v1/intercity/Shape/payload-${digest}.json`
+    storage.objects.set(payloadKey, payload)
+    storage.objects.set('tdx-source-cache/v1/intercity/Shape/state.json', Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      resource: 'Shape',
+      sourceVersion: '2026-09-05T00:00:00+08:00',
+      payloadKey,
+      sha256: digest,
+      bytes: payload.byteLength,
+      refreshedAt: new Date(nowMs).toISOString(),
+    })))
+
+    const fetchImpl = vi.fn()
+    const cache = createIntercitySourceCache({
+      fetchImpl,
+      storage,
+      logger,
+      env: { SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: '56' },
+      now: () => nowMs,
+    })
+
+    const resolved = await cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} })
+    expect(resolved.sourceVersion).toBe('2026-09-05T00:00:00+08:00')
+    expect(resolved.body).toBe(payload)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(storage.reads).toContainEqual({ key: payloadKey, maximumBytes: payload.byteLength })
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining('"legacyOversize":true'))
+
+    await expect(cache.stage({
+      resource: 'Shape',
+      body: payload,
+      sourceVersion: '2026-10-02T00:00:00+08:00',
+    })).resolves.toBeNull()
+  })
+
+  it('blocks upstream fallback when a legacy oversized promoted payload exceeds the compatibility cap', async () => {
+    const storage = memoryStorage()
+    const logger = { log: vi.fn(), warn: vi.fn() }
+    const nowMs = Date.parse('2026-10-02T00:00:00.000Z')
+    const payloadKey = `tdx-source-cache/v1/intercity/Shape/payload-${'0'.repeat(64)}.json`
+    storage.objects.set('tdx-source-cache/v1/intercity/Shape/state.json', Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      resource: 'Shape',
+      sourceVersion: '2026-09-05T00:00:00+08:00',
+      payloadKey,
+      sha256: '0'.repeat(64),
+      bytes: 256 * 1024 * 1024 + 1,
+      refreshedAt: new Date(nowMs).toISOString(),
+    })))
+
+    const fetchImpl = vi.fn()
+    const cache = createIntercitySourceCache({
+      fetchImpl,
+      storage,
+      logger,
+      env: { SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: '56' },
+      now: () => nowMs,
+    })
+
+    await expect(cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} })).resolves.toEqual({
+      body: null,
+      sourceVersion: '2026-09-05T00:00:00+08:00',
+      blockUpstream: true,
+      cacheFailure: 'oversize_cache_unreadable',
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(storage.reads.some(({ key }) => key === payloadKey)).toBe(false)
   })
 
   it('does not stage malformed or empty upstream payloads', async () => {
