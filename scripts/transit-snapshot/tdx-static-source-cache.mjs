@@ -4,7 +4,9 @@ const STATE_MAX_BYTES = 32 * 1024
 const PAYLOAD_MAX_BYTES = 64 * 1024 * 1024
 const LEGACY_PROMOTED_PAYLOAD_MAX_BYTES = 256 * 1024 * 1024
 const OVERSIZE_CACHE_FAILURE = 'oversize_cache_unreadable'
-const R2_REQUEST_TIMEOUT_MS = 10_000
+// Match the publisher-wide R2 ceiling so verified legacy payloads above 64 MiB have
+// enough time to stream from R2 while remaining strictly bounded.
+const R2_REQUEST_TIMEOUT_MS = 20_000
 const VOLATILE_SOURCE_KEYS = new Set(['UpdateTime', 'SrcUpdateTime', 'SrcTransTime', 'VersionID'])
 const STATIC_RESOURCE_IDENTITY = Object.freeze({
   Route: (item) => nonEmpty(item?.RouteUID),
