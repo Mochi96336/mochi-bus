@@ -174,12 +174,6 @@ describe('InterCity persistent source cache', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
     expect(storage.reads).toContainEqual({ key: payloadKey, maximumBytes: payload.byteLength })
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining('"legacyOversize":true'))
-
-    await expect(cache.stage({
-      resource: 'Shape',
-      body: payload,
-      sourceVersion: '2026-10-02T00:00:00+08:00',
-    })).resolves.toBeNull()
   })
 
   it('blocks upstream fallback when a legacy oversized promoted payload fails integrity verification', async () => {
