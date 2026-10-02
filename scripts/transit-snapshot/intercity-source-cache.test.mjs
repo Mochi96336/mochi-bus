@@ -182,6 +182,43 @@ describe('InterCity persistent source cache', () => {
     })).resolves.toBeNull()
   })
 
+  it('blocks upstream fallback when a legacy oversized promoted payload fails integrity verification', async () => {
+    const storage = memoryStorage()
+    const logger = { log: vi.fn(), warn: vi.fn() }
+    const nowMs = Date.parse('2026-10-02T00:00:00.000Z')
+    const body = Buffer.from('[{"RouteUID":"THB1"}]')
+    const digest = createHash('sha256').update(body).digest('hex')
+    const payloadKey = `tdx-source-cache/v1/intercity/Shape/payload-${digest}.json`
+    storage.objects.set(payloadKey, body)
+    storage.objects.set('tdx-source-cache/v1/intercity/Shape/state.json', Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      resource: 'Shape',
+      sourceVersion: '2026-09-05T00:00:00+08:00',
+      payloadKey,
+      sha256: digest,
+      bytes: 64 * 1024 * 1024 + 1,
+      refreshedAt: new Date(nowMs).toISOString(),
+    })))
+
+    const fetchImpl = vi.fn()
+    const cache = createIntercitySourceCache({
+      fetchImpl,
+      storage,
+      logger,
+      env: { SNAPSHOT_INTERCITY_SHAPE_REFRESH_DAYS: '56' },
+      now: () => nowMs,
+    })
+
+    await expect(cache.resolve({ resource: 'Shape', input: shapeUrl, init: {} })).resolves.toEqual({
+      body: null,
+      sourceVersion: '2026-09-05T00:00:00+08:00',
+      blockUpstream: true,
+      cacheFailure: 'oversize_cache_unreadable',
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('integrity mismatch'))
+  })
+
   it('blocks upstream fallback when a legacy oversized promoted payload exceeds the compatibility cap', async () => {
     const storage = memoryStorage()
     const logger = { log: vi.fn(), warn: vi.fn() }
