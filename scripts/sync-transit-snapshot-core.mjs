@@ -4,7 +4,11 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { loadOperationalResources } from './instance/operational-resources.mjs'
 import { validateSnapshot } from './transit-snapshot/validate.mjs'
-import { carryForwardSchedules, shouldCarryForwardSchedules } from './transit-snapshot/schedule-carry-forward.mjs'
+import {
+  SCHEDULE_CARRY_FORWARD_MAX_BYTES,
+  carryForwardSchedules,
+  shouldCarryForwardSchedules,
+} from './transit-snapshot/schedule-carry-forward.mjs'
 import { promotePendingTdxStaticSources } from './transit-snapshot/tdx-static-source-promotion.mjs'
 import { createStopPlaceRegistry } from './transit-snapshot/stop-place-registry.mjs'
 import { manifestReadLimit, readManifestJson } from './transit-snapshot/manifest-read-limit.mjs'
@@ -147,7 +151,7 @@ if (r2 && shouldCarryForwardSchedules({ cityRouteUids, cityScheduleItems: schedu
     city: CITY,
     cityRouteUids,
     previousVersion: activeState?.version,
-    readJson: (key) => s3GetJson(key),
+    readJson: (key) => s3GetJson(key, SCHEDULE_CARRY_FORWARD_MAX_BYTES),
     mapParallel,
   })
   scheduleItems.push(...carried.items)

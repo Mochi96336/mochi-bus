@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  SCHEDULE_CARRY_FORWARD_MAX_BYTES,
   carryForwardSchedules,
   previousScheduleArtifactKey,
   shouldCarryForwardSchedules,
@@ -153,6 +154,12 @@ describe('publisher wiring', () => {
     expect(carryIndex).toBeGreaterThan(fetchIndex)
     expect(intercityIndex).toBeGreaterThan(carryIndex)
     expect(hashIndex).toBeGreaterThan(carryIndex)
+  })
+
+  it('reads previous schedule artifacts with a limit sized for raw route timetables', () => {
+    // 回歸：曾用 s3GetJson 預設 1 MiB 上限，高雄 1.7 MB 的路線時刻表被 body_limit 擋下。
+    expect(publisher).toContain('readJson: (key) => s3GetJson(key, SCHEDULE_CARRY_FORWARD_MAX_BYTES)')
+    expect(SCHEDULE_CARRY_FORWARD_MAX_BYTES).toBeGreaterThanOrEqual(16 * 1024 * 1024)
   })
 
   it('still validates the carried snapshot against the previous counts', () => {
