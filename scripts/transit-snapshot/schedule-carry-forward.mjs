@@ -10,6 +10,9 @@
 // - 沿用的內容會寫進新版本 artifact，下一輪可繼續沿用；TDX 一恢復就自動改用新資料。
 
 export const SCHEDULE_CARRY_FORWARD_CONCURRENCY = 8
+// 每路線時刻表 artifact 是原始 TDX Schedule，大路線很容易超過 s3GetJson 預設的 1 MiB
+// （高雄 KHH100 就有 1.7 MB）；Worker 端讀它也不設上限，這裡只留一個寬鬆的防爆上限。
+export const SCHEDULE_CARRY_FORWARD_MAX_BYTES = 64 * 1024 * 1024
 
 export function shouldCarryForwardSchedules({ cityRouteUids, cityScheduleItems }) {
   return cityRouteUids.length > 0 && cityScheduleItems.length === 0
