@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { loadOperationalResources } from './instance/operational-resources.mjs'
 import { validateSnapshot } from './transit-snapshot/validate.mjs'
+import { carryForwardSchedules, shouldCarryForwardSchedules } from './transit-snapshot/schedule-carry-forward.mjs'
 import { promotePendingTdxStaticSources } from './transit-snapshot/tdx-static-source-promotion.mjs'
 import { createStopPlaceRegistry } from './transit-snapshot/stop-place-registry.mjs'
 import { manifestReadLimit, readManifestJson } from './transit-snapshot/manifest-read-limit.mjs'
@@ -137,6 +138,23 @@ const routeItems = await get('Route')
 const stopOfRouteItems = await get('StopOfRoute')
 const shapeItems = await get('Shape')
 const scheduleItems = await get('Schedule')
+
+// TDX 整份市區時刻表為空時，沿用已發布版本的時刻表，讓路網仍能更新（細節見 schedule-carry-forward.mjs）。
+const cityRouteUids = routeItems.map((item) => item.RouteUID).filter(Boolean)
+if (r2 && shouldCarryForwardSchedules({ cityRouteUids, cityScheduleItems: scheduleItems })) {
+  const activeState = await s3GetJson(`snapshots/state/${CITY}.json`)
+  const carried = await carryForwardSchedules({
+    city: CITY,
+    cityRouteUids,
+    previousVersion: activeState?.version,
+    readJson: (key) => s3GetJson(key),
+    mapParallel,
+  })
+  scheduleItems.push(...carried.items)
+  console.log(JSON.stringify(carried.report))
+  console.log(`::warning title=${CITY} schedules carried forward::TDX Schedule/City/${CITY} is empty; `
+    + `reused ${carried.report.carriedRoutes}/${carried.report.cityRoutes} route schedules from ${carried.report.sourceVersion ?? 'none'}`)
+}
 
 // 公路客運(InterCity 端點,RouteUID 為 THB 開頭)在不少縣市就是日常公車:
 // 苗栗的 City 端點只有 27 個站位,公路客運卻有 733 站。把「至少一站落在本縣市」的
