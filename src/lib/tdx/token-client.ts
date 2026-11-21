@@ -3,6 +3,12 @@ import {
   observeTDXResponseSuccess,
   transportFailureClass,
 } from './error-classification'
+import type { BackgroundTaskScheduler } from '../edge-cache'
+import {
+  createEdgeSharedTokenStore,
+  type SharedTokenEntry,
+  type SharedTokenStore,
+} from './shared-token-store'
 
 const TDX_TOKEN_ENDPOINT = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token'
 const TDX_TOKEN_MAX_RESPONSE_BYTES = 16 * 1024
@@ -17,6 +23,7 @@ export type TDXCredentialEnv = {
   TDX_CLIENT_SECRET: string
   // 瀏覽器直接向 TDX 換取短效 token；Worker 永遠不接觸 Client Secret。
   TDX_USER_ACCESS_TOKEN?: string
+  TDX_BACKGROUND_TASKS?: BackgroundTaskScheduler
 }
 
 export type TDXTokenResult = {
@@ -72,9 +79,11 @@ export type TDXTokenClientDependencies = {
   random?: () => number
   maxTokenCacheEntries?: number
   maxTokenSingleflightEntries?: number
+  // 跨 isolate 共用的 token 快取；預設是同機房 Cache API（沒有 caches 的環境自動變成 no-op）。
+  sharedTokenStore?: SharedTokenStore
 }
 
-type TokenCacheEntry = { value: string; expiresAt: number }
+type TokenCacheEntry = SharedTokenEntry
 
 // Token credential/cache ownership lives here. Circuit state and bounded response reading remain injected
 // by the TDX client façade; the fallback log is credential-safe and can be replaced in tests.
@@ -91,6 +100,7 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     : new Promise<void>((resolve) => { setTimeout(resolve, ms) })
   const random = () => dependencies.random ? dependencies.random() : Math.random()
   const emitRequestFailure = dependencies.logRequestFailure ?? defaultLogRequestFailure
+  const sharedTokenStore = dependencies.sharedTokenStore ?? createEdgeSharedTokenStore(undefined, now)
   const maxTokenCacheEntries = dependencies.maxTokenCacheEntries ?? DEFAULT_MAX_TOKEN_CACHE_ENTRIES
   const maxTokenSingleflightEntries = dependencies.maxTokenSingleflightEntries
     ?? DEFAULT_MAX_TOKEN_SINGLEFLIGHT_ENTRIES
@@ -159,6 +169,7 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     clientSecret: string,
     credentialKey: string,
     isShared: boolean,
+    schedule?: BackgroundTaskScheduler,
   ): Promise<string> => {
     const circuitKey = tokenCircuitKey(credentialKey)
     const body = new URLSearchParams({
@@ -250,10 +261,12 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
 
       dependencies.recordCircuitSuccess(circuitKey)
       const expiresIn = Math.max(60, data.expires_in ?? 3600)
-      cacheToken(credentialKey, {
+      const entry = {
         value: data.access_token,
         expiresAt: now() + Math.max(30, expiresIn - 60) * 1000,
-      })
+      }
+      cacheToken(credentialKey, entry)
+      if (isShared) await writeSharedToken(credentialKey, entry, schedule)
       return data.access_token
     }
 
@@ -265,17 +278,46 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
     clientSecret: string,
     credentialKey: string,
     isShared: boolean,
+    schedule?: BackgroundTaskScheduler,
   ): Promise<string> => {
     const existing = tokenFlights.get(credentialKey)
     if (existing) return existing
 
-    dependencies.assertCircuitClosed(tokenCircuitKey(credentialKey))
+    // 手上已有有效 token 就直接用：熔斷器只該擋「向 token 端點換新 token」，不該擋已拿到的 token。
     const cached = cachedToken(credentialKey)
     if (cached) return cached
-    return joinTokenSingleflight(
-      credentialKey,
-      () => fetchTDXToken(clientId, clientSecret, credentialKey, isShared),
-    )
+    return joinTokenSingleflight(credentialKey, async () => {
+      if (isShared) {
+        const shared = await readSharedToken(credentialKey)
+        if (shared) return shared
+      }
+      dependencies.assertCircuitClosed(tokenCircuitKey(credentialKey))
+      return fetchTDXToken(clientId, clientSecret, credentialKey, isShared, schedule)
+    })
+  }
+
+  const readSharedToken = async (credentialKey: string): Promise<string | undefined> => {
+    let entry: TokenCacheEntry | undefined
+    try {
+      entry = await sharedTokenStore.read(credentialKey)
+    } catch {
+      return undefined
+    }
+    if (!entry || entry.expiresAt <= now()) return undefined
+    cacheToken(credentialKey, entry)
+    return entry.value
+  }
+
+  const writeSharedToken = async (
+    credentialKey: string,
+    entry: TokenCacheEntry,
+    schedule?: BackgroundTaskScheduler,
+  ): Promise<void> => {
+    try {
+      await sharedTokenStore.write(credentialKey, entry, schedule)
+    } catch {
+      // fail-open：寫不進共用快取只是少了跨 isolate 共用，這張 token 本身仍然有效。
+    }
   }
 
   const getTDXToken = async (env: TDXCredentialEnv): Promise<TDXTokenResult> => {
@@ -290,7 +332,13 @@ export function createTDXTokenClient(dependencies: TDXTokenClientDependencies): 
 
     const credentialKey = await credentialFingerprint(env.TDX_CLIENT_ID, env.TDX_CLIENT_SECRET)
     return {
-      token: await tokenFor(env.TDX_CLIENT_ID, env.TDX_CLIENT_SECRET, credentialKey, true),
+      token: await tokenFor(
+        env.TDX_CLIENT_ID,
+        env.TDX_CLIENT_SECRET,
+        credentialKey,
+        true,
+        env.TDX_BACKGROUND_TASKS,
+      ),
       isShared: true,
       credentialKey,
     }

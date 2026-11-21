@@ -138,7 +138,7 @@ describe('TDX credential cache resilience', () => {
     expect(first).toEqual([{ id: 'result' }])
     expect(second).toEqual(first)
     expect(dataRequests).toBe(2)
-    expect(cachePut).toHaveBeenCalledTimes(2)
+    expect(dataCachePuts(cachePut)).toHaveLength(2)
   })
 
   it('returns TDX data before a scheduled edge-cache write finishes', async () => {
@@ -160,11 +160,11 @@ describe('TDX credential cache resilience', () => {
       })
     }))
 
-    let scheduled: Promise<unknown> | undefined
+    const scheduled: Array<Promise<unknown>> = []
     const env: TDXEnv = {
       TDX_CLIENT_ID: 'background-id',
       TDX_CLIENT_SECRET: 'background-secret',
-      TDX_BACKGROUND_TASKS: (task) => { scheduled = task },
+      TDX_BACKGROUND_TASKS: (task) => { scheduled.push(task) },
     }
 
     await expect(fetchTDXJson<Array<{ id: string }>>(
@@ -173,10 +173,12 @@ describe('TDX credential cache resilience', () => {
       30,
     )).resolves.toEqual([{ id: 'fast-result' }])
 
-    expect(cachePut).toHaveBeenCalledTimes(1)
-    expect(scheduled).toBeDefined()
+    // 共用 token 與資料快取的寫入都交給背景，兩者都不能擋住回應。
+    expect(dataCachePuts(cachePut)).toHaveLength(1)
+    expect(cachePut).toHaveBeenCalledTimes(2)
+    expect(scheduled).toHaveLength(2)
     finishWrite()
-    await scheduled
+    await Promise.all(scheduled)
   })
 
   it('does not share an in-flight data failure across different secrets', async () => {
@@ -530,3 +532,8 @@ describe('TDX circular route directions', () => {
     expect(groups[0].stops.every((stop) => stop.direction === 2)).toBe(true)
   })
 })
+
+// 共用 token 也寫進 Cache API；這裡只看資料快取的寫入次數。
+function dataCachePuts(cachePut: { mock: { calls: unknown[][] } }): unknown[][] {
+  return cachePut.mock.calls.filter(([key]) => !(key as Request).url.includes('/tdx/token/'))
+}
